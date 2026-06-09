@@ -1,0 +1,65 @@
+{
+  "name": "webgal-vscode",
+  "displayName": "WebGAL Language Support",
+  "description": "Language server for WebGAL scenario files",
+  "version": "0.1.0",
+  "publisher": "webgal",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "webgal",
+        "aliases": [
+          "WebGAL",
+          "webgal"
+        ],
+        "extensions": [
+          ".txt"
+        ],
+        "filenamePatterns": [
+          "**/scene/**/*.txt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "WebGAL Language Server",
+      "properties": {
+        "webgal-ls.trace.server": {
+          "type": "string",
+          "scope": "window",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "rolldown -c",
+    "watch": "rolldown -c --watch",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "rolldown": "^1.0.0-rc.6",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.0.0"
+  }
+}

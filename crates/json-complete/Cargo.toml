@@ -1,0 +1,17 @@
+[package]
+name = "json-complete"
+version = "0.1.0"
+edition.workspace = true
+readme.workspace = true
+description = "简单 JSON 字符串自动补全"
+
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+lsp = ["lsp-types"] # LSP 类型转换
+
+[dependencies]
+lsp-types = { workspace = true, optional = true }

@@ -1,0 +1,22 @@
+[package]
+name = "path-tree"
+version = "0.1.0"
+edition.workspace = true
+readme.workspace = true
+description = "基于二分查找的分段虚拟路径路径树"
+
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+derive_more.workspace = true
+
+itertools.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "path_tree_bench"
+harness = false
