@@ -1,211 +1,32 @@
+//! 单语句资源及全局上下文诊断
+
 use std::{borrow::Borrow, ops};
 
 use path_tree::{Folder, Node, canonicalize};
-use tower_lsp::lsp_types::*;
-use webgal_model::sentence::{self, *};
+use webgal_model::sentence::*;
 
-use crate::context::Context;
+use crate::{
+    context::Context,
+    service::diagnose::{DiagnosticLevel, PrimaryDiagnostic},
+};
 
-/// 生成一个场景的诊断
-///
-/// # Behavior
-/// * 存在 ERROR, WARNING, INFORMATION 三种级别, 仅当不存在前两者时才推送 INFO 级别的诊断.
-pub fn diagnose_scene(scene: &Scene, context: &Context) -> Vec<Diagnostic> {
-    let mut filter_info = false;
-    let mut diagnostics = Vec::new();
-
-    for (line, sentence) in scene.sentences().iter().enumerate() {
-        diagnose_sentence(sentence, context, |diagnostic| match diagnostic.level {
-            DiagnosticLevel::Information => {
-                if !filter_info {
-                    diagnostics.push(diagnostic.into_diagnostic(line));
-                }
-            }
-            DiagnosticLevel::Error | DiagnosticLevel::Warning => {
-                if !filter_info {
-                    filter_info = true;
-                    diagnostics.clear();
-                }
-                diagnostics.push(diagnostic.into_diagnostic(line));
-            }
-        });
-    }
-
-    diagnostics
-}
-
-/// 生成一条语句的诊断
-fn diagnose_sentence<F>(sentence: &SentenceInfo, context: &Context, mut diagnose: F)
-where
+/// 语句环境诊断 (资源 + 全局上下文)
+pub fn diagnose_environment<F>(
+    content: &str,
+    primary: &PrimarySentence,
+    sentence: &Sentence,
+    context: &Context,
+    mut diagnose: F,
+) where
     F: FnMut(PrimaryDiagnostic),
 {
-    // 包装提交函数, 过滤 nolints
-    let mut diagnose = |diagnostic: PrimaryDiagnostic| {
-        if !sentence.contains_nolint(diagnostic.code) {
-            diagnose(diagnostic);
-        }
-    };
-
-    // 语法检查
-    for error in &sentence.errors {
-        if let Some(diagnostic) = PrimaryDiagnostic::from_syntax_error(&sentence.primary, error) {
-            diagnose(diagnostic);
-        }
-    }
-    if let Some(diagnostic) = diagnose_format(sentence) {
-        diagnose(diagnostic);
-    }
-
-    // 环境诊断
-    diagnose_environment(
-        sentence.content,
-        &sentence.primary,
-        &sentence.sentence,
-        context,
-        &mut diagnose,
-    );
+    diagnose_resource(content, primary, sentence, context, &mut diagnose);
 }
 
-struct PrimaryDiagnostic {
-    span: ops::Range<usize>,
-    code: &'static str,
-    level: DiagnosticLevel,
-    message: String,
-}
+// -------- resource --------
 
-impl PrimaryDiagnostic {
-    fn into_diagnostic(self, line: usize) -> Diagnostic {
-        let Self {
-            span: ops::Range { start, end },
-            code,
-            level,
-            message,
-        } = self;
-
-        Diagnostic {
-            range: Range {
-                start: Position {
-                    line: line as u32,
-                    character: start as u32,
-                },
-                end: Position {
-                    line: line as u32,
-                    character: end as u32,
-                },
-            },
-            severity: Some(level.into()),
-            code: Some(NumberOrString::String(code.to_string())),
-            source: Some("webgal-ls".to_string()),
-            message,
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum DiagnosticLevel {
-    Information,
-    Warning,
-    Error,
-}
-
-impl From<DiagnosticLevel> for DiagnosticSeverity {
-    fn from(value: DiagnosticLevel) -> Self {
-        match value {
-            DiagnosticLevel::Error => Self::ERROR,
-            DiagnosticLevel::Warning => Self::WARNING,
-            DiagnosticLevel::Information => Self::INFORMATION,
-        }
-    }
-}
-
-// -------- syntax --------
-
-impl PrimaryDiagnostic {
-    fn from_syntax_error(primary: &PrimarySentence, error: &sentence::Error) -> Option<Self> {
-        use sentence::Error::*;
-
-        let PrimarySentence {
-            content, arguments, ..
-        } = primary;
-
-        match error {
-            ContentType(error) => {
-                let content = (*content)?;
-                Some(Self {
-                    span: primary.get_span(content),
-                    code: "WG002",
-                    level: DiagnosticLevel::Error,
-                    message: format!("语句主参数值 `{content}` 类型错误: {error}"),
-                })
-            }
-            ArgumentType(index, error) => {
-                let (name, value) = *arguments.get(*index)?;
-                Some(Self {
-                    span: primary.get_span(primary.get_full_argument(*index)),
-                    code: "WG002",
-                    level: DiagnosticLevel::Error,
-                    message: match value {
-                        Some(value) => {
-                            format!("语句参数 `{name}` 的值 `{value}` 类型错误: {error}")
-                        }
-                        None => format!("语句参数 `{name}` 的值类型错误: {error}"),
-                    },
-                })
-            }
-            ArgumentRepeated(index) => {
-                let (name, _) = *arguments.get(*index)?;
-                Some(Self {
-                    span: primary.get_span(primary.get_full_argument(*index)),
-                    code: "WG003",
-                    level: DiagnosticLevel::Warning,
-                    message: format!("语句参数 `{name}` 重复设置或与其他参数冲突"),
-                })
-            }
-            ArgumentMissingDependencies(index, missings) => {
-                let (name, _) = *arguments.get(*index)?;
-                Some(Self {
-                    span: primary.get_span(primary.get_full_argument(*index)),
-                    code: "WG004",
-                    level: DiagnosticLevel::Error,
-                    message: format!("语句中缺少参数 `{name}` 所依赖的相关参数: {missings:?}"),
-                })
-            }
-            ArgumentObsolete(index, reason) => {
-                let (name, _) = *arguments.get(*index)?;
-                Some(Self {
-                    span: primary.get_span(primary.get_full_argument(*index)),
-                    code: "WG005",
-                    level: DiagnosticLevel::Warning,
-                    message: format!("语句参数 `{name}` 已被弃用或不建议使用, 理由: {reason}"),
-                })
-            }
-            ArgumentUnknown(index) => {
-                let (name, _) = *arguments.get(*index)?;
-                Some(Self {
-                    span: primary.get_span(primary.get_full_argument(*index)),
-                    code: "WG006",
-                    level: DiagnosticLevel::Warning,
-                    message: format!("语句参数 `{name}` 未知或无法识别"),
-                })
-            }
-        }
-    }
-}
-
-fn diagnose_format(sentence: &SentenceInfo) -> Option<PrimaryDiagnostic> {
-    let expected = sentence.to_string();
-    expected.ne(sentence.content).then(|| PrimaryDiagnostic {
-        span: 0..sentence.content.len(),
-        code: "WG001",
-        level: DiagnosticLevel::Information,
-        message: format!("语句格式不规范，应为：`{expected}`"),
-    })
-}
-
-// -------- environment --------
-
-fn diagnose_environment<F>(
+/// 语句资源依赖检查
+fn diagnose_resource<F>(
     content: &str,
     primary: &PrimarySentence,
     sentence: &Sentence,
@@ -540,12 +361,6 @@ fn diagnose_environment<F>(
     }
 }
 
-fn argument_span_of(name: &str, primary: &PrimarySentence) -> Option<ops::Range<usize>> {
-    let (index, _) = primary.get_argument(name)?;
-    let argument = primary.get_full_argument(index);
-    Some(primary.get_span(argument))
-}
-
 fn diagnose_content_resource<T>(
     primary: &PrimarySentence,
     path: &str,
@@ -589,4 +404,12 @@ where
     } else {
         None
     }
+}
+
+// -------- util --------
+
+fn argument_span_of(name: &str, primary: &PrimarySentence) -> Option<ops::Range<usize>> {
+    let (index, _) = primary.get_argument(name)?;
+    let argument = primary.get_full_argument(index);
+    Some(primary.get_span(argument))
 }

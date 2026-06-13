@@ -4,19 +4,32 @@ use tower_lsp::lsp_types::*;
 use webgal_model::sentence::{PrimarySentence, Scene, SentenceInfo};
 
 use crate::{
-    complete::{argument::Complete, command::complete_command},
     context::Context,
+    service::complete::{argument::Complete, command::complete_command},
 };
 
 mod argument;
 mod command;
 
+pub fn complete_capability() -> CompletionOptions {
+    CompletionOptions {
+        trigger_characters: Some(vec![
+            ":".to_string(),  // 主参数
+            "-".to_string(),  // 参数名
+            "=".to_string(),  // 参数值
+            "/".to_string(),  // 路径 / 立绘动作表情
+            "\\".to_string(), // 路径 / 立绘动作表情
+            "\"".to_string(), // JSON
+        ]),
+        completion_item: Some(CompletionOptionsCompletionItem {
+            label_details_support: Some(true),
+        }),
+        ..Default::default()
+    }
+}
+
 /// 语句补全
-pub fn complete_sentence(
-    scene: &Scene,
-    position: Position,
-    context: &Context,
-) -> Vec<CompletionItem> {
+pub fn complete(scene: &Scene, position: Position, context: &Context) -> Vec<CompletionItem> {
     // 定位输入
     let SentenceInfo {
         primary, sentence, ..

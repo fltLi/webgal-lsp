@@ -12,7 +12,7 @@ use webgal_model::{
     sentence::*,
 };
 
-use crate::{complete::make_span, context::Context};
+use crate::{context::Context, service::complete::make_span};
 
 /// 语句的代码补全服务
 ///

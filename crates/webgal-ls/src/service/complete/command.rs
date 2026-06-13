@@ -3,7 +3,7 @@ use std::iter;
 use ranked_count::Counter;
 use tower_lsp::lsp_types::*;
 
-use crate::{complete::make_span, context::Context};
+use crate::{context::Context, service::complete::make_span};
 
 /// 补全语句类型
 pub fn complete_command(input: &str, position: Position, context: &Context) -> Vec<CompletionItem> {

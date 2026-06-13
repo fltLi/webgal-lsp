@@ -12,11 +12,9 @@ use tower_lsp::{
 use webgal_model::sentence::Scene;
 
 use crate::{
-    complete::complete_sentence,
     context::Context,
-    diagnose::diagnose_scene,
     encode::{position_utf16_to_utf8, range_utf8_to_utf16, semantic_tokens_utf8_to_utf16},
-    highlight::{highlight_scene, supported_token_types},
+    service::*,
 };
 
 /// 将 URI path 转为项目/文件键（使用文件系统路径，统一为 / 分隔符）
@@ -288,7 +286,7 @@ impl Backend {
             let mut out = Vec::new();
             for (path, node) in ctx.resource.scene.iter_recursively() {
                 if let Some(scene) = node.as_item() {
-                    let diags = diagnose_scene(scene, &ctx);
+                    let diags = diagnose(scene, &ctx);
                     out.push((path.clone(), diags));
                 }
             }
@@ -529,44 +527,9 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
-                completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![
-                        ":".to_string(),
-                        "-".to_string(),
-                        "=".to_string(),
-                        "/".to_string(),
-                        "\\".to_string(),
-                        "\"".to_string(),
-                    ]),
-                    completion_item: Some(CompletionOptionsCompletionItem {
-                        label_details_support: Some(true),
-                    }),
-                    ..Default::default()
-                }),
+                completion_provider: Some(complete_capability()), // complete
                 document_formatting_provider: Some(OneOf::Left(true)),
-                semantic_tokens_provider: Some(
-                    SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                        SemanticTokensRegistrationOptions {
-                            text_document_registration_options: TextDocumentRegistrationOptions {
-                                document_selector: Some(vec![DocumentFilter {
-                                    language: Some("webgal".to_string()),
-                                    scheme: Some("file".to_string()),
-                                    pattern: Some("**/scene/**/*.txt".to_string()),
-                                }]),
-                            },
-                            semantic_tokens_options: SemanticTokensOptions {
-                                work_done_progress_options: WorkDoneProgressOptions::default(),
-                                legend: SemanticTokensLegend {
-                                    token_types: supported_token_types().to_vec(),
-                                    token_modifiers: vec![],
-                                },
-                                range: Some(false),
-                                full: Some(SemanticTokensFullOptions::Bool(true)),
-                            },
-                            static_registration_options: StaticRegistrationOptions::default(),
-                        },
-                    ),
-                ),
+                semantic_tokens_provider: Some(highlight_capability()), // highlight
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -728,7 +691,7 @@ impl LanguageServer for Backend {
             if let Some(scene_key) = self.find_scene_key_for_uri(&uri).await {
                 let ctx = ctx_arc.read().await;
                 if let Some(scene) = ctx.resource.scene.get(&scene_key).and_then(Node::as_item) {
-                    let tokens = highlight_scene(scene);
+                    let tokens = highlight(scene);
                     let tokens16 = semantic_tokens_utf8_to_utf16(scene, tokens);
                     return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                         result_id: None,
@@ -817,7 +780,7 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        let mut items = complete_sentence(scene, utf8_pos, &ctx);
+        let mut items = complete(scene, utf8_pos, &ctx);
         // 将补全项中可能存在的 TextEdit.range 从 UTF-8 转回 UTF-16
         for item in &mut items {
             if let Some(te) = &mut item.text_edit
