@@ -35,6 +35,34 @@ pub fn canonicalize<P: AsRef<str>>(path: P) -> Option<String> {
     Some(route.join("/"))
 }
 
+/// 合并两段路径
+///
+/// 该函数会去除每个组件首尾多余的分隔符, 然后以单个 `/` 连接.
+///
+/// # Examples
+/// ```
+/// # use path_tree::join;
+///
+/// assert_eq!(join("a", "b"), "a/b");
+/// assert_eq!(join("a/", "b"), "a/b");
+/// assert_eq!(join("a", "/b"), "a/b");
+/// assert_eq!(join("a/", "/b"), "a/b");
+/// assert_eq!(join("", "b"), "b");
+/// assert_eq!(join("a", ""), "a");
+/// assert_eq!(join("", ""), "");
+/// assert_eq!(join("a/", ""), "a");
+/// ```
+pub fn join<P: AsRef<str>, Q: AsRef<str>>(parent: P, path: Q) -> String {
+    let parent = parent.as_ref().trim_end_matches(PATH_SEPARATORS);
+    let path = path.as_ref().trim_start_matches(PATH_SEPARATORS);
+    match (parent.is_empty(), path.is_empty()) {
+        (true, true) => "".to_string(),
+        (true, false) => path.to_string(),
+        (false, true) => parent.to_string(),
+        (false, false) => format!("{parent}/{path}"),
+    }
+}
+
 /// 返回路径的各个祖先段的迭代器
 ///
 /// 此函数将路径按分隔符 (`/` 或 `\`) 拆分, 并过滤掉所有空段 (例如由连续分隔符造成的空字符串).
