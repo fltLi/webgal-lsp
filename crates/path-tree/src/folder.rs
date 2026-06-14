@@ -34,7 +34,7 @@ impl<T> Folder<T> {
     /// 依据路径构造节点树
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.` 等非法节点名.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     /// * 节点路径不应重复, 重复则将去重且只保留第一个.
     ///
     /// # Performance
@@ -145,18 +145,20 @@ impl<T> Folder<T> {
     /// 按路径查找节点是否存在
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 即不处理相对路径 `.` 跳转和不规范分隔符等情况.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 若路径为空, 将返回 `true`.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 复杂度介于 `O(\log n)` ~ `O(n)`.
     pub fn contains(&self, path: &str) -> bool {
-        self.get(path).is_some()
+        path.is_empty() || self.get(path).is_some()
     }
 
     /// 按路径查找节点
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 即不处理相对路径 `.` 跳转和不规范分隔符等情况.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 若路径为空, 将不返回节点.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 复杂度介于 `O(\log n)` ~ `O(n)`.
@@ -173,7 +175,8 @@ impl<T> Folder<T> {
     /// 按路径查找节点
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 即不处理相对路径 `.` 跳转和不规范分隔符等情况.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 若路径为空, 将不执行插入.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 复杂度介于 `O(\log n)` ~ `O(n)`.
@@ -192,7 +195,8 @@ impl<T> Folder<T> {
     /// 插入新节点, 若节点存在则同时返回旧节点
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.`, `\` 等非法节点名.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 若路径为空, 将不返回节点.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 替换节点或插入子链, 复杂度介于 `O(\log n)` ~ `O(n)`.
@@ -225,12 +229,16 @@ impl<T> Folder<T> {
     /// 查找并弹出节点
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.`, `\` 等非法节点名.
-    /// * 删除节点时, 若该层级目录变为空, 则一并移除目录节点. // TODO
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 若路径为空, 将视为清空整个目录.
+    /// * 删除节点时, 若该层级目录变为空, 则一并移除目录节点.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 复杂度介于 `O(\log n)` ~ `O(n)`.
     pub fn remove(&mut self, path: &str) -> Option<Node<T>> {
+        if path.is_empty() {
+            return Some(Node::Folder(mem::take(self)));
+        }
         let (name, path) = split_path_once(path);
         let index = self.binary_search_child(name).ok()?;
         match path {
@@ -257,7 +265,7 @@ impl<T> Folder<T> {
     /// 路径上已存在资源节点时, 返回该节点路径及该其引用.
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.`, `\` 等非法节点名.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 不执行修改, 复杂度介于 `O(\log n)` ~ `O(n)`.
@@ -346,7 +354,7 @@ impl<P: AsRef<str>, T> FromIterator<(P, T)> for Folder<T> {
     /// 依据路径构造节点树
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.`, `\` 等非法节点名.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     /// * 节点路径不应重复, 重复则将去重且只保留第一个.
     ///
     /// # Performance
@@ -360,7 +368,7 @@ impl<P: AsRef<str>, T> Extend<(P, T)> for Folder<T> {
     /// 逐一插入新节点
     ///
     /// # Behavior
-    /// * 此函数假设路径规范 ([`crate::canonicalize`]), 若否将出现 `.`, `\` 等非法节点名.
+    /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 替换节点或插入子链, 单次插入复杂度介于 `O(\log n)` ~ `O(n)`.
