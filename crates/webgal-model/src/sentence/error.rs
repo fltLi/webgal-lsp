@@ -9,10 +9,10 @@ pub type Result<T> = result::Result<T, Error>;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("语句主参数值类型错误: {0}")]
-    ContentType(anyhow::Error),
+    ContentType(#[source] anyhow::Error),
 
     #[error("语句第 {} 条参数值类型错误: {}", .0 + 1, .1)]
-    ArgumentType(usize, anyhow::Error),
+    ArgumentType(usize, #[source] anyhow::Error),
 
     #[error("语句第 {} 条参数重复定义", .0 + 1)]
     ArgumentRepeated(usize),
