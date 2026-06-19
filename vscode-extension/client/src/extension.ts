@@ -27,7 +27,7 @@ export async function activate(context: vscode.ExtensionContext) {
         options: {
             env: {
                 ...process.env,
-                RUST_LOG: 'info',
+                RUST_LOG: 'debug',
             },
         },
     };

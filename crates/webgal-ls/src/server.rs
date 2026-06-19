@@ -78,6 +78,7 @@ impl Backend {
     }
 
     async fn initialize_workspace(&self, root: &str) -> anyhow::Result<()> {
+        debug!(%root, "Scanning workspace root");
         let mut errors = Vec::new();
 
         let mut stack = vec![root.to_string()];
@@ -114,6 +115,7 @@ impl Backend {
     async fn initialize_workspace_folders(&self, folders: Vec<WorkspaceFolder>) {
         for WorkspaceFolder { uri, name } in folders {
             let root = uri.to_string();
+            info!(%name, %root, "Initializing workspace folder");
             if let Err(error) = self.initialize_workspace(&root).await {
                 error!(%name, %root, %error, "Failed to initialize workspace folder");
             }
@@ -121,6 +123,7 @@ impl Backend {
     }
 
     async fn change_file(&self, path: &str, kind: FileChangeKind) -> anyhow::Result<()> {
+        debug!(%path, %kind, "Changing file");
         let is_config = name_of(path) == "config.txt";
 
         match kind {
@@ -165,7 +168,10 @@ impl Backend {
                     project,
                 } = match self.workspace.read().await.get(path) {
                     Some(v) => v,
-                    None => return Ok(()), // 忽略无关资源
+                    None => {
+                        debug!(%path, "File event ignored: not in any project");
+                        return Ok(());
+                    }
                 };
                 debug!(project = %project_path, path = %resource_path, "Updating resource");
 
@@ -188,7 +194,10 @@ impl Backend {
                     project,
                 } = match self.workspace.read().await.get(path) {
                     Some(v) => v,
-                    None => return Ok(()), // 忽略无关资源
+                    None => {
+                        debug!(%path, "File event ignored: not in any project");
+                        return Ok(());
+                    }
                 };
                 debug!(project = %project_path, path = %resource_path, "Removing resource");
 
@@ -202,7 +211,9 @@ impl Backend {
     }
 
     fn diagnose_project(&self, path: &str, project: Arc<RwLock<Project>>) {
-        self.diagnose.send((path.to_string(), project)).unwrap();
+        if let Err(error) = self.diagnose.send((path.to_string(), project)) {
+            warn!(project = %path, %error, "Failed to send diagnostic request");
+        }
     }
 }
 
@@ -272,6 +283,8 @@ impl LanguageServer for Backend {
         };
         if let Err(error) = self.client.register_capability(vec![registration]).await {
             error!(%error, "Failed to register file watchers");
+        } else {
+            info!("File watcher registered for all files");
         }
     }
 
@@ -290,7 +303,10 @@ impl LanguageServer for Backend {
             project,
         } = match self.workspace.read().await.get(&path) {
             Some(v) => v,
-            None => return,
+            None => {
+                debug!(%path, "Document opened but not in any project");
+                return;
+            }
         };
 
         // 更新资源
@@ -300,8 +316,12 @@ impl LanguageServer for Backend {
             .insert(&resource_path, || async { Ok(content) })
             .await
         {
-            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource");
+            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on open");
+            return;
         }
+
+        debug!(project = %project_path, path = %resource_path, "Updated resource via open");
+        self.diagnose_project(&project_path, project);
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
@@ -318,7 +338,10 @@ impl LanguageServer for Backend {
             project,
         } = match self.workspace.read().await.get(&path) {
             Some(v) => v,
-            None => return,
+            None => {
+                debug!(%path, "Document changed but not in any project");
+                return;
+            }
         };
 
         // 更新资源
@@ -328,8 +351,12 @@ impl LanguageServer for Backend {
             .insert(&resource_path, || async { Ok(content) })
             .await
         {
-            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource");
+            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on change");
+            return;
         }
+
+        debug!(project = %project_path, path = %resource_path, "Updated resource via change");
+        self.diagnose_project(&project_path, project);
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
@@ -353,9 +380,13 @@ impl LanguageServer for Backend {
         let WorkspaceFoldersChangeEvent { added, removed } = params.event;
         let server = self.clone();
         task::spawn(async move {
-            server.initialize_workspace_folders(added).await;
-            for WorkspaceFolder { uri, .. } in removed {
+            if !added.is_empty() {
+                info!(count = added.len(), "Workspace folders added");
+                server.initialize_workspace_folders(added).await;
+            }
+            for WorkspaceFolder { uri, name } in removed {
                 let root = uri.to_string();
+                info!(%name, %root, "Workspace folder removed");
                 server.workspace.write().await.remove_all_under(&root);
             }
         });
@@ -374,14 +405,20 @@ impl LanguageServer for Backend {
             project,
         } = match self.workspace.read().await.get(&path) {
             Some(v) => v,
-            None => return Ok(None),
+            None => {
+                debug!(%path, "Highlighting requested but not in any project");
+                return Ok(None);
+            }
         };
 
         // 查找场景
         let project = project.read().await;
         let scene = match project.resource().scene.get(&resource_path) {
             Some(Node::Item(v)) => v,
-            _ => return Ok(None),
+            _ => {
+                debug!(project = %project_path, path = %resource_path, "Scene not found for highlighting");
+                return Ok(None);
+            }
         };
 
         // 生成补全
@@ -408,14 +445,20 @@ impl LanguageServer for Backend {
             project,
         } = match self.workspace.read().await.get(&path) {
             Some(v) => v,
-            None => return Ok(None),
+            None => {
+                debug!(%path, "Completion requested but not in any project");
+                return Ok(None);
+            }
         };
 
         // 查找场景
         let project = project.read().await;
         let scene = match project.resource().scene.get(&resource_path) {
             Some(Node::Item(v)) => v,
-            _ => return Ok(None),
+            _ => {
+                debug!(project = %project_path, path = %resource_path, "Scene not found for completion");
+                return Ok(None);
+            }
         };
 
         // 生成补全
@@ -441,14 +484,20 @@ impl LanguageServer for Backend {
             project,
         } = match self.workspace.read().await.get(&path) {
             Some(v) => v,
-            None => return Ok(None),
+            None => {
+                debug!(%path, "Formatting requested but not in any project");
+                return Ok(None);
+            }
         };
 
         // 查找场景
         let project = project.read().await;
         let scene = match project.resource().scene.get(&resource_path) {
             Some(Node::Item(v)) => v,
-            _ => return Ok(None),
+            _ => {
+                debug!(project = %project_path, path = %resource_path, "Scene not found for formatting");
+                return Ok(None);
+            }
         };
 
         // 生成补全
@@ -494,11 +543,15 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
         loop {
             select! {
                 Some((path, project)) = receiver.recv() => {
+                    debug!(project = %path, "Diagnostic request enqueued");
                     pending.insert(path, project);
                 }
 
                 _ = interval.tick() => {
-                    // 逐一推送诊断
+                    if pending.is_empty() {
+                        continue;
+                    }
+                    debug!(count = pending.len(), "Processing diagnostic batch");
                     for (path, project) in pending.drain() {
                         publish_project_diagnostics(&path, project, &client).await;
                     }
@@ -511,6 +564,7 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
 }
 
 async fn clean_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, client: &Client) {
+    debug!(project = %path, "Cleaning diagnostics for project");
     let scene_folder_path = join(path, "scene");
     for (path, _) in project.read().await.resource().scene.iter_recursively() {
         let uri = join(&scene_folder_path, path).parse().unwrap();
