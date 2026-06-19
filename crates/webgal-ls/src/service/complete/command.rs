@@ -3,11 +3,11 @@ use std::iter;
 use ranked_count::Counter;
 use tower_lsp::lsp_types::*;
 
-use crate::{context::Context, service::complete::make_span};
+use crate::{project::Project, service::complete::make_span};
 
 /// 补全语句类型
-pub fn complete_command(input: &str, position: Position, context: &Context) -> Vec<CompletionItem> {
-    let mut completions = complete_speaker(&context.ident.speaker, input, position);
+pub fn complete_command(input: &str, position: Position, project: &Project) -> Vec<CompletionItem> {
+    let mut completions = complete_speaker(&project.ident().speaker, input, position);
     default_commands()
         .iter()
         .for_each(|command| command.complete(input, position, &mut completions));

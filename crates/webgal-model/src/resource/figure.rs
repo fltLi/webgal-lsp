@@ -193,36 +193,55 @@ mod lsp_ext {
 
     use super::*;
 
-    /// 解析模型文件名和类型
-    pub fn figure_type_of(model: &str) -> (&str, FigureKind) {
-        if let Some(model) = model.strip_suffix("?type=spine") {
-            return (model, FigureKind::Spine);
+    impl FigureKind {
+        /// 依据路径识别模型类型
+        ///
+        /// # Returns
+        /// 模型类型及其路径 (例如去掉部分模型的 `?type=...` 标识).
+        pub fn from_path(model: &str) -> (Self, &str) {
+            if let Some(model) = model.strip_suffix("?type=spine") {
+                return (Self::Spine, model);
+            }
+            let kind = [
+                (".skel", Self::Spine),
+                (".json", Self::Live2d),
+                (".wmdl", Self::Wmdl),
+                (".jsonl", Self::Composite),
+            ]
+            .iter()
+            .find_map(|&(extension, kind)| model.ends_with(extension).then_some(kind))
+            .unwrap_or(Self::Image);
+            (kind, model)
         }
-        let kind = [
-            (".skel", FigureKind::Spine),
-            (".json", FigureKind::Live2d),
-            (".wmdl", FigureKind::Wmdl),
-            (".jsonl", FigureKind::Composite),
-        ]
-        .iter()
-        .find_map(|&(extension, kind)| model.ends_with(extension).then_some(kind))
-        .unwrap_or(FigureKind::Image);
-        (model, kind)
     }
 
     // -------- motion --------
 
     /// 立绘模型立绘 / 表情调用信息
     #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct FigureInfo {
-        pub kind: FigureKind,
-        pub motions: Folder<()>,
-        pub expressions: Folder<()>,
+    pub enum FigureInfo {
+        #[default]
+        Image,
+        Spine,
+        Live2d {
+            motions: Folder<()>,
+            expressions: Folder<()>,
+        },
+        Wmdl {
+            import: String,
+        },
+        Composite,
     }
 
     impl FigureInfo {
-        pub fn new() -> Self {
-            Self::default()
+        pub fn from_figure(model: &Figure) -> Self {
+            match model {
+                Figure::Image => Self::Image,
+                Figure::Spine => Self::Spine,
+                Figure::Live2d(model) => Self::from_live2d(model),
+                Figure::Wmdl(model) => Self::from_wmdl(model),
+                Figure::Composite => Self::Composite,
+            }
         }
 
         pub fn from_live2d(model: &Live2dModel) -> Self {
@@ -236,27 +255,59 @@ mod lsp_ext {
                 .iter()
                 .map(|Live2dExpression { name, .. }| (name, ()))
                 .collect();
-            Self {
-                kind: FigureKind::Live2d,
+            Self::Live2d {
                 motions,
                 expressions,
             }
         }
 
-        pub fn extend_motions(&mut self, motions: &Folder<()>) {
-            self.motions.extend(
-                motions
-                    .iter_recursively()
-                    .filter_map(|(path, node)| node.is_item().then_some((path, ()))),
-            );
+        pub fn from_wmdl(model: &WmdlModel) -> Self {
+            Self::Wmdl {
+                import: model.model.clone(),
+            }
         }
 
-        pub fn extend_expressions(&mut self, expressions: &Folder<()>) {
-            self.expressions.extend(
-                expressions
-                    .iter_recursively()
-                    .filter_map(|(path, node)| node.is_item().then_some((path, ()))),
-            );
+        pub fn try_from_type(kind: &FigureKind) -> Option<Self> {
+            match kind {
+                FigureKind::Image => Some(Self::Image),
+                FigureKind::Spine => Some(Self::Spine),
+                FigureKind::Composite => Some(Self::Composite),
+                _ => None,
+            }
+        }
+
+        pub fn get_type(&self) -> FigureKind {
+            match self {
+                Self::Image => FigureKind::Image,
+                Self::Spine => FigureKind::Spine,
+                Self::Live2d { .. } => FigureKind::Live2d,
+                Self::Wmdl { .. } => FigureKind::Wmdl,
+                Self::Composite => FigureKind::Composite,
+            }
+        }
+    }
+
+    impl Figure {
+        pub fn to_info(&self) -> FigureInfo {
+            FigureInfo::from_figure(self)
+        }
+    }
+
+    impl Live2dModel {
+        pub fn to_info(&self) -> FigureInfo {
+            FigureInfo::from_live2d(self)
+        }
+    }
+
+    impl WmdlModel {
+        pub fn to_info(&self) -> FigureInfo {
+            FigureInfo::from_wmdl(self)
+        }
+    }
+
+    impl FigureKind {
+        pub fn try_to_info(&self) -> Option<FigureInfo> {
+            FigureInfo::try_from_type(self)
         }
     }
 }

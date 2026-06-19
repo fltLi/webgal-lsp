@@ -4,7 +4,7 @@ use tower_lsp::lsp_types::*;
 use webgal_model::sentence::{PrimarySentence, Scene, SentenceInfo};
 
 use crate::{
-    context::Context,
+    project::Project,
     service::complete::{argument::Complete, command::complete_command},
 };
 
@@ -29,7 +29,7 @@ pub fn complete_capability() -> CompletionOptions {
 }
 
 /// 语句补全
-pub fn complete(scene: &Scene, position: Position, context: &Context) -> Vec<CompletionItem> {
+pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<CompletionItem> {
     // 定位输入
     let SentenceInfo {
         primary, sentence, ..
@@ -39,11 +39,11 @@ pub fn complete(scene: &Scene, position: Position, context: &Context) -> Vec<Com
     };
     // 转发补全
     match Location::locate(primary, position) {
-        Location::Command(input) => complete_command(input, position, context),
-        Location::Content(input) => sentence.complete_content(input, position, context),
-        Location::ArgumentName(input) => sentence.complete_argument_name(input, position, context),
+        Location::Command(input) => complete_command(input, position, project),
+        Location::Content(input) => sentence.complete_content(input, position, project),
+        Location::ArgumentName(input) => sentence.complete_argument_name(input, position, project),
         Location::ArgumentValue(name, input) => {
-            sentence.complete_argument_value(name, input, position, context)
+            sentence.complete_argument_value(name, input, position, project)
         }
         Location::Other => Vec::default(),
     }

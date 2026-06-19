@@ -1,111 +1,11 @@
-use path_tree::{Entry, Folder, Node, canonicalize};
+//! 全场景符号收集与维护
+
 use ranked_count::Counter;
-use webgal_model::{
-    resource::{
-        Config, FigureInfo, FigureKind, Live2dModel, WmdlModel, WmdlSubModel, figure_type_of,
-    },
-    sentence::*,
-};
+use webgal_model::sentence::*;
 
-/// WebGAL 单项目信息
-#[derive(Debug, Default)]
-pub struct Context {
-    pub resource: Resource,
-    pub ident: IdentTable,
-}
-
-impl Context {
-    pub fn new() -> Self {
-        Self {
-            resource: Resource::new(),
-            ident: IdentTable::new(),
-        }
-    }
-
-    pub fn update_scene(&mut self, path: &str, scene: Scene) -> anyhow::Result<()> {
-        let entry = self.resource.scene.entry(path).map_err(|(last, _)| {
-            anyhow::anyhow!("尝试修改位于 `{path}` 的场景, 但路径上已存在场景 `{last}`")
-        })?;
-        // 记录符号
-        for SentenceInfo { sentence, .. } in scene.sentences() {
-            self.ident.insert(sentence);
-        }
-        // 移除符号
-        if let Entry::Occupied(o) = &entry
-            && let Node::Item(scene) = o.get()
-        {
-            for SentenceInfo { sentence, .. } in scene.sentences() {
-                self.ident.remove(sentence);
-            }
-        }
-        // 添加场景
-        entry.insert_entry(Node::Item(scene));
-        Ok(())
-    }
-}
-
-/// 配置和资源
-#[derive(Debug, Default)]
-pub struct Resource {
-    pub config: Config,
-    // 场景
-    pub scene: Folder<Scene>,
-    // 动画
-    pub animation: Folder<()>,
-    // 立绘和图像
-    pub background: Folder<()>,
-    pub figure: Folder<FigureInfo>,
-    // 音视频
-    pub bgm: Folder<()>,
-    pub vocal: Folder<()>,
-    pub video: Folder<()>,
-}
-
-impl Resource {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// 插入 / 修改立绘文件
-    pub fn insert_figure(&mut self, path: &str, data: &str) -> anyhow::Result<()> {
-        let (path, kind) = figure_type_of(path);
-        let info = match kind {
-            FigureKind::Live2d => {
-                let model: Live2dModel = serde_json::from_str(data)?;
-                FigureInfo::from_live2d(&model)
-            }
-            FigureKind::Wmdl => {
-                let WmdlModel { sub_models, .. } = serde_json::from_str(data)?;
-                let mut info = FigureInfo::new();
-                // 逐一添加子模型
-                for FigureInfo {
-                    motions,
-                    expressions,
-                    ..
-                } in sub_models.iter().filter_map(|WmdlSubModel { model, .. }| {
-                    self.figure.get(model).and_then(Node::as_item)
-                }) {
-                    info.extend_motions(motions);
-                    info.extend_expressions(expressions);
-                }
-                info
-            }
-            _ => Default::default(),
-        };
-        // 加入模型
-        self.figure.insert(path, Node::Item(info));
-        Ok(())
-    }
-
-    pub fn contains_animation(&self, animation: &str) -> bool {
-        let animation = canonicalize(animation).unwrap_or(animation.to_string());
-        self.animation.contains(&format!("{animation}.json"))
-    }
-}
-
-/// 符号表
+/// 场景符号表
 ///
-/// 同步维护, 用于自动补全
+/// 场景更改时实时维护, 用于记录全局符号信息.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdentTable {
     pub id: Counter<String>,
@@ -134,8 +34,15 @@ impl IdentTable {
         }
     }
 
+    /// 记录一个场景的符号
+    pub fn insert_scene(&mut self, scene: &Scene) {
+        for SentenceInfo { sentence, .. } in scene.sentences() {
+            self.insert_sentence(sentence);
+        }
+    }
+
     /// 记录一条语句的符号
-    pub fn insert(&mut self, sentence: &Sentence) {
+    pub fn insert_sentence(&mut self, sentence: &Sentence) {
         ident_of(sentence, |ident| {
             match ident {
                 IdentKind::Id(id) => self.id.insert(id.to_string()),
@@ -147,8 +54,15 @@ impl IdentTable {
         });
     }
 
+    /// 移除一个场景的符号
+    pub fn remove_scene(&mut self, scene: &Scene) {
+        for SentenceInfo { sentence, .. } in scene.sentences() {
+            self.remove_sentence(sentence);
+        }
+    }
+
     /// 移除一条语句的符号
-    pub fn remove(&mut self, sentence: &Sentence) {
+    pub fn remove_sentence(&mut self, sentence: &Sentence) {
         ident_of(sentence, |ident| {
             match ident {
                 IdentKind::Id(id) => self.id.remove(&id),

@@ -4,7 +4,7 @@ use tower_lsp::lsp_types::*;
 use webgal_model::sentence::*;
 
 use crate::{
-    context::Context,
+    project::Project,
     service::diagnose::{
         environment::diagnose_environment,
         syntax::{diagnose_format, diagnose_sentence_error},
@@ -18,12 +18,12 @@ mod syntax;
 ///
 /// # Behavior
 /// * 存在 ERROR, WARNING, INFORMATION 三种级别, 仅当不存在前两者时才推送 INFO 级别的诊断.
-pub fn diagnose(scene: &Scene, context: &Context) -> Vec<Diagnostic> {
+pub fn diagnose(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
     let mut filter_info = false;
     let mut diagnostics = Vec::new();
 
     for (line, sentence) in scene.sentences().iter().enumerate() {
-        diagnose_sentence(sentence, context, |diagnostic| match diagnostic.level {
+        diagnose_sentence(sentence, project, |diagnostic| match diagnostic.level {
             DiagnosticLevel::Information => {
                 if !filter_info {
                     diagnostics.push(diagnostic.into_diagnostic(line));
@@ -43,7 +43,7 @@ pub fn diagnose(scene: &Scene, context: &Context) -> Vec<Diagnostic> {
 }
 
 /// 生成一条语句的诊断
-fn diagnose_sentence<F>(sentence: &SentenceInfo, context: &Context, mut diagnose: F)
+fn diagnose_sentence<F>(sentence: &SentenceInfo, project: &Project, mut diagnose: F)
 where
     F: FnMut(PrimaryDiagnostic),
 {
@@ -69,7 +69,7 @@ where
         sentence.content,
         &sentence.primary,
         &sentence.sentence,
-        context,
+        project,
         &mut diagnose,
     );
 }

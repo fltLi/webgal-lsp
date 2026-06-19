@@ -2,11 +2,11 @@
 
 use std::{borrow::Borrow, ops};
 
-use path_tree::{Folder, Node, canonicalize};
-use webgal_model::sentence::*;
+use path_tree::{Folder, canonicalize};
+use webgal_model::{resource::FigureInfo, sentence::*};
 
 use crate::{
-    context::Context,
+    project::Project,
     service::diagnose::{DiagnosticLevel, PrimaryDiagnostic},
 };
 
@@ -15,12 +15,12 @@ pub fn diagnose_environment<F>(
     content: &str,
     primary: &PrimarySentence,
     sentence: &Sentence,
-    context: &Context,
+    project: &Project,
     mut diagnose: F,
 ) where
     F: FnMut(PrimaryDiagnostic),
 {
-    diagnose_resource(content, primary, sentence, context, &mut diagnose);
+    diagnose_resource(content, primary, sentence, project, &mut diagnose);
 }
 
 // -------- resource --------
@@ -30,7 +30,7 @@ fn diagnose_resource<F>(
     content: &str,
     primary: &PrimarySentence,
     sentence: &Sentence,
-    context: &Context,
+    project: &Project,
     mut diagnose: F,
 ) where
     F: FnMut(PrimaryDiagnostic),
@@ -41,8 +41,8 @@ fn diagnose_resource<F>(
         // 常规演出
         Say(SaySentence {
             vocal: Some(vocal), ..
-        }) if !context
-            .resource
+        }) if !project
+            .resource()
             .vocal
             .contains(canonicalize(vocal).as_ref().unwrap_or(vocal)) =>
         {
@@ -67,8 +67,8 @@ fn diagnose_resource<F>(
             } = &**sentence;
 
             if !matches!(background.as_str(), "" | "none")
-                && !context
-                    .resource
+                && !project
+                    .resource()
                     .background
                     .contains(canonicalize(background).as_ref().unwrap_or(background))
                 && let Some(content) = primary.content
@@ -82,7 +82,7 @@ fn diagnose_resource<F>(
             }
 
             if let Some(enter) = enter
-                && !context.resource.contains_animation(enter)
+                && !project.resource().contains_animation(enter)
                 && let Some(span) = argument_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -93,7 +93,7 @@ fn diagnose_resource<F>(
                 })
             }
             if let Some(exit) = exit
-                && !context.resource.contains_animation(exit)
+                && !project.resource().contains_animation(exit)
                 && let Some(span) = argument_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -124,7 +124,7 @@ fn diagnose_resource<F>(
                 "mouthOpen",
                 primary,
                 mouth_open,
-                &context.resource.figure,
+                &project.resource().figure,
                 "图片立绘",
             )
             .map(&mut diagnose);
@@ -132,7 +132,7 @@ fn diagnose_resource<F>(
                 "mouthHalfOpen",
                 primary,
                 mouth_half_open,
-                &context.resource.figure,
+                &project.resource().figure,
                 "图片立绘",
             )
             .map(&mut diagnose);
@@ -140,7 +140,7 @@ fn diagnose_resource<F>(
                 "mouthClose",
                 primary,
                 mouth_close,
-                &context.resource.figure,
+                &project.resource().figure,
                 "图片立绘",
             )
             .map(&mut diagnose);
@@ -148,7 +148,7 @@ fn diagnose_resource<F>(
                 "eyesOpen",
                 primary,
                 eyes_open,
-                &context.resource.figure,
+                &project.resource().figure,
                 "图片立绘",
             )
             .map(&mut diagnose);
@@ -156,17 +156,15 @@ fn diagnose_resource<F>(
                 "eyesClose",
                 primary,
                 eyes_close,
-                &context.resource.figure,
+                &project.resource().figure,
                 "图片立绘",
             )
             .map(&mut diagnose);
 
             if !matches!(figure.as_str(), "" | "none") {
-                let info = match context
-                    .resource
-                    .figure
-                    .get(canonicalize(figure).as_ref().unwrap_or(figure))
-                    .and_then(Node::as_item)
+                let info = match project
+                    .resource()
+                    .get_figure(canonicalize(figure).as_ref().unwrap_or(figure))
                 {
                     Some(info) => info,
                     None => {
@@ -183,7 +181,8 @@ fn diagnose_resource<F>(
                 };
 
                 if let Some(motion) = motion
-                    && !info.motions.contains(motion)
+                    && let FigureInfo::Live2d { motions, .. } = info
+                    && !motions.contains(motion)
                     && let Some(span) = argument_span_of("motion", primary)
                 {
                     diagnose(PrimaryDiagnostic {
@@ -194,7 +193,8 @@ fn diagnose_resource<F>(
                     })
                 }
                 if let Some(expression) = expression
-                    && !info.expressions.contains(expression)
+                    && let FigureInfo::Live2d { expressions, .. } = info
+                    && !expressions.contains(expression)
                     && let Some(span) = argument_span_of("expression", primary)
                 {
                     diagnose(PrimaryDiagnostic {
@@ -207,7 +207,7 @@ fn diagnose_resource<F>(
             }
 
             if let Some(enter) = enter
-                && !context.resource.contains_animation(enter)
+                && !project.resource().contains_animation(enter)
                 && let Some(span) = argument_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -218,7 +218,7 @@ fn diagnose_resource<F>(
                 })
             }
             if let Some(exit) = exit
-                && !context.resource.contains_animation(exit)
+                && !project.resource().contains_animation(exit)
                 && let Some(span) = argument_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -231,25 +231,25 @@ fn diagnose_resource<F>(
         }
 
         Bgm(BgmSentence { bgm, .. }) if !matches!(bgm.as_str(), "" | "none") => {
-            diagnose_content_resource(primary, bgm, &context.resource.bgm, "音乐")
+            diagnose_content_resource(primary, bgm, &project.resource().bgm, "音乐")
                 .map(&mut diagnose);
         }
 
         PlayVideo(PlayVideoSentence { video, .. }) => {
-            diagnose_content_resource(primary, video, &context.resource.video, "视频")
+            diagnose_content_resource(primary, video, &project.resource().video, "视频")
                 .map(&mut diagnose);
         }
 
         PlayEffect(PlayEffectSentence { vocal, id, .. })
             if !matches!(vocal.as_str(), "" | "none") && id.is_none() =>
         {
-            diagnose_content_resource(primary, vocal, &context.resource.bgm, "语音 (音效)")
+            diagnose_content_resource(primary, vocal, &project.resource().bgm, "语音 (音效)")
                 .map(&mut diagnose);
         }
 
         // 舞台对象控制
         SetAnimation(SetAnimationSentence { animation, .. })
-            if !context.resource.contains_animation(animation)
+            if !project.resource().contains_animation(animation)
                 && let Some(content) = primary.content =>
         {
             diagnose(PrimaryDiagnostic {
@@ -274,7 +274,7 @@ fn diagnose_resource<F>(
 
         SetTransition(SetTransitionSentence { enter, exit, .. }) => {
             if let Some(enter) = enter
-                && !context.resource.contains_animation(enter)
+                && !project.resource().contains_animation(enter)
                 && let Some(span) = argument_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -285,7 +285,7 @@ fn diagnose_resource<F>(
                 })
             }
             if let Some(exit) = exit
-                && !context.resource.contains_animation(exit)
+                && !project.resource().contains_animation(exit)
                 && let Some(span) = argument_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
@@ -305,25 +305,25 @@ fn diagnose_resource<F>(
                 "backgroundImage",
                 primary,
                 background_image,
-                &context.resource.background,
+                &project.resource().background,
                 "背景",
             )
             .map(&mut diagnose);
         }
 
         MiniAvatar(MiniAvatarSentence { avatar, .. }) => {
-            diagnose_content_resource(primary, avatar, &context.resource.figure, "小头像")
+            diagnose_content_resource(primary, avatar, &project.resource().figure, "小头像")
                 .map(&mut diagnose);
         }
 
         // 场景与分支
         CallScene(CallSceneSentence { scene, .. }) => {
-            diagnose_content_resource(primary, scene, &context.resource.scene, "场景")
+            diagnose_content_resource(primary, scene, &project.resource().scene, "场景")
                 .map(&mut diagnose);
         }
 
         ChangeScene(ChangeSceneSentence { scene, .. }) => {
-            diagnose_content_resource(primary, scene, &context.resource.scene, "场景")
+            diagnose_content_resource(primary, scene, &project.resource().scene, "场景")
                 .map(&mut diagnose);
         }
 
@@ -333,8 +333,8 @@ fn diagnose_resource<F>(
                 .filter_map(|choice| choice.split_once(':'))
                 .map(|(_, scene)| scene.trim())
                 .filter(|scene| {
-                    !context.ident.label.contains(&scene.to_string())
-                        && !context.resource.scene.contains(scene)
+                    !project.ident().label.contains(&scene.to_string())
+                        && !project.resource().scene.contains(scene)
                 })
                 .for_each(|scene| {
                     diagnose(PrimaryDiagnostic {
@@ -348,12 +348,12 @@ fn diagnose_resource<F>(
 
         // 鉴赏
         UnlockCg(UnlockCgSentence { image, .. }) => {
-            diagnose_content_resource(primary, image, &context.resource.background, "图片")
+            diagnose_content_resource(primary, image, &project.resource().background, "图片")
                 .map(&mut diagnose);
         }
 
         UnlockBgm(UnlockBgmSentence { bgm, .. }) => {
-            diagnose_content_resource(primary, bgm, &context.resource.bgm, "音乐")
+            diagnose_content_resource(primary, bgm, &project.resource().bgm, "音乐")
                 .map(&mut diagnose);
         }
 
