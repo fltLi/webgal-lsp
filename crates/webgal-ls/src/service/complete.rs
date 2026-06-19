@@ -4,19 +4,32 @@ use tower_lsp::lsp_types::*;
 use webgal_model::sentence::{PrimarySentence, Scene, SentenceInfo};
 
 use crate::{
-    complete::{argument::Complete, command::complete_command},
-    context::Context,
+    project::Project,
+    service::complete::{argument::Complete, command::complete_command},
 };
 
 mod argument;
 mod command;
 
+pub fn complete_capability() -> CompletionOptions {
+    CompletionOptions {
+        trigger_characters: Some(vec![
+            ":".to_string(),  // 主参数
+            "-".to_string(),  // 参数名
+            "=".to_string(),  // 参数值
+            "/".to_string(),  // 路径 / 立绘动作表情
+            "\\".to_string(), // 路径 / 立绘动作表情
+            "\"".to_string(), // JSON
+        ]),
+        completion_item: Some(CompletionOptionsCompletionItem {
+            label_details_support: Some(true),
+        }),
+        ..Default::default()
+    }
+}
+
 /// 语句补全
-pub fn complete_sentence(
-    scene: &Scene,
-    position: Position,
-    context: &Context,
-) -> Vec<CompletionItem> {
+pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<CompletionItem> {
     // 定位输入
     let SentenceInfo {
         primary, sentence, ..
@@ -26,11 +39,11 @@ pub fn complete_sentence(
     };
     // 转发补全
     match Location::locate(primary, position) {
-        Location::Command(input) => complete_command(input, position, context),
-        Location::Content(input) => sentence.complete_content(input, position, context),
-        Location::ArgumentName(input) => sentence.complete_argument_name(input, position, context),
+        Location::Command(input) => complete_command(input, position, project),
+        Location::Content(input) => sentence.complete_content(input, position, project),
+        Location::ArgumentName(input) => sentence.complete_argument_name(input, position, project),
         Location::ArgumentValue(name, input) => {
-            sentence.complete_argument_value(name, input, position, context)
+            sentence.complete_argument_value(name, input, position, project)
         }
         Location::Other => Vec::default(),
     }

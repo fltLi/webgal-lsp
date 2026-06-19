@@ -1,6 +1,7 @@
-use std::fmt;
+use std::{fmt, iter};
 
 use derive_more::From;
+use itertools::Either;
 
 use crate::Folder;
 
@@ -73,6 +74,15 @@ impl<T> Node<T> {
         match self {
             Self::Folder(folder) => Some(folder),
             _ => None,
+        }
+    }
+
+    /// 获取节点的递归迭代器 (含根节点)
+    pub fn iter_recursively(&self) -> impl Iterator<Item = (String, &Node<T>)> {
+        let root_iter = iter::once(("".to_string(), self));
+        match self {
+            Self::Item(_) => Either::Left(root_iter),
+            Self::Folder(folder) => Either::Right(root_iter.chain(folder.iter_recursively())),
         }
     }
 }

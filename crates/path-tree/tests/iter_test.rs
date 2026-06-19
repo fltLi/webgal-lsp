@@ -69,3 +69,18 @@ fn iter_after_modification() {
     assert!(!names.iter().any(|s| s == "x/1"));
     assert!(names.iter().any(|s| s == "y/2"));
 }
+
+#[test]
+fn node_iter_recursively_includes_root() {
+    let folder = Folder::from_vec(vec![("a/1", 1), ("a/2", 2)]);
+    let node = Node::Folder(folder);
+    let paths: Vec<String> = node.iter_recursively().map(|(p, _)| p).collect();
+    assert_eq!(paths, vec!["", "a", "a/1", "a/2"]);
+}
+
+#[test]
+fn node_item_iter_recursively_only_self() {
+    let node = Node::Item(42);
+    let paths: Vec<String> = node.iter_recursively().map(|(p, _)| p).collect();
+    assert_eq!(paths, vec![""]);
+}

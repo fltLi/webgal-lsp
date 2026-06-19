@@ -23,6 +23,7 @@ anyhow = "1.0"
 thiserror = "2.0"
 
 ouroboros = "0.18"
+getset = "0.1.7"
 derive_more = { version = "2.1", features = [
     "from",
     "into",

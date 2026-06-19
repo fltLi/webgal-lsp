@@ -8,11 +8,11 @@ use webgal_model::{
         AnimationList, BasicForward, FigureSide, KeepableForward, Live2dBlink, Live2dFocus,
         Transform,
     },
-    resource::{FigureKind, figure_type_of},
+    resource::{FigureInfo, FigureKind},
     sentence::*,
 };
 
-use crate::{complete::make_span, context::Context};
+use crate::{project::Project, service::complete::make_span};
 
 /// 语句的代码补全服务
 ///
@@ -24,7 +24,7 @@ pub trait Complete {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         Default::default()
     }
@@ -35,7 +35,7 @@ pub trait Complete {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         Default::default()
     }
@@ -47,7 +47,7 @@ pub trait Complete {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         Default::default()
     }
@@ -58,23 +58,23 @@ impl Complete for Sentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         use Sentence::*;
 
         macro_rules! complete_content_match {
             (
-                ($sentence:ident, $input:ident, $position:ident, $context:ident):
+                ($sentence:ident, $input:ident, $position:ident, $project:ident):
                 {$($variant:ident),* $(,)?}
             ) => {{
                 match $sentence {
-                    $($variant(sentence) => sentence.complete_content($input, $position, $context),)*
+                    $($variant(sentence) => sentence.complete_content($input, $position, $project),)*
                 }
             }};
         }
 
         complete_content_match! {
-            (self, input, position, context): {
+            (self, input, position, project): {
                 // 常规演出
                 Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
                 // 舞台对象控制
@@ -97,27 +97,27 @@ impl Complete for Sentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         use Sentence::*;
 
         macro_rules! complete_argument_name_match {
             (
-                ($sentence:ident, $input:ident, $position:ident, $context:ident):
+                ($sentence:ident, $input:ident, $position:ident, $project:ident):
                 {$($variant:ident),* $(,)?}
             ) => {{
                 match $sentence {
                     $($variant(sentence) => sentence.complete_argument_name(
                         $input,
                         $position,
-                        $context,
+                        $project,
                     ),)*
                 }
             }};
         }
 
         complete_argument_name_match! {
-            (self, input, position, context): {
+            (self, input, position, project): {
                 // 常规演出
                 Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
                 // 舞台对象控制
@@ -141,13 +141,13 @@ impl Complete for Sentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         use Sentence::*;
 
         macro_rules! complete_argument_value_match {
             (
-                ($sentence:ident, $name:ident, $input:ident, $position:ident, $context:ident):
+                ($sentence:ident, $name:ident, $input:ident, $position:ident, $project:ident):
                 {$($variant:ident),* $(,)?}
             ) => {{
                 match $sentence {
@@ -155,14 +155,14 @@ impl Complete for Sentence {
                         $name,
                         $input,
                         $position,
-                        $context,
+                        $project,
                     ),)*
                 }
             }};
         }
 
         complete_argument_value_match! {
-            (self, name, input, position, context): {
+            (self, name, input, position, project): {
                 // 常规演出
                 Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
                 // 舞台对象控制
@@ -275,14 +275,14 @@ fn complete_image_figure_file(
     description: &str,
     input: &str,
     position: Position,
-    context: &Context,
+    project: &Project,
 ) -> Vec<CompletionItem> {
     complete_file(
-        &context.resource.figure,
-        |_, figure| {
+        &project.resource().figure,
+        |_, info| {
             (
                 CompletionItemKind::FILE,
-                matches!(figure.kind, FigureKind::Image)
+                matches!(info, FigureInfo::Image)
                     .then_some(description)
                     .unwrap_or_default()
                     .to_string(),
@@ -293,9 +293,9 @@ fn complete_image_figure_file(
     )
 }
 
-fn complete_scene_file(input: &str, position: Position, context: &Context) -> Vec<CompletionItem> {
+fn complete_scene_file(input: &str, position: Position, project: &Project) -> Vec<CompletionItem> {
     complete_file(
-        &context.resource.scene,
+        &project.resource().scene,
         |name, _| {
             (
                 CompletionItemKind::FILE,
@@ -314,11 +314,11 @@ fn complete_scene_file(input: &str, position: Position, context: &Context) -> Ve
 fn complete_animation_enum(
     input: &str,
     position: Position,
-    context: &Context,
+    project: &Project,
 ) -> Vec<CompletionItem> {
     complete_enum(
-        context
-            .resource
+        project
+            .resource()
             .animation
             .iter()
             .map(|(name, _)| (name.strip_suffix(".json").unwrap_or(name), "动画")),
@@ -346,11 +346,11 @@ fn complete_duration_enum(
     description: &str,
     input: &str,
     position: Position,
-    context: &Context,
+    project: &Project,
 ) -> Vec<CompletionItem> {
     complete_enum(
-        context
-            .ident
+        project
+            .ident()
             .duration
             .iter_by_count()
             .map(|(name, _)| (name.to_string(), description)),
@@ -448,7 +448,7 @@ impl Complete for SaySentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         // 补全参数
         let mut arguments = complete_argument_name_collect! {
@@ -467,7 +467,7 @@ impl Complete for SaySentence {
         };
         // 补全语音
         let mut vocal = complete_file(
-            &context.resource.vocal,
+            &project.resource().vocal,
             |_, _| (CompletionItemKind::FILE, "语音".to_string()),
             input,
             position,
@@ -482,17 +482,17 @@ impl Complete for SaySentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "speaker" => complete_ident_enum(&context.ident.speaker, "人物", input, position),
+            "speaker" => complete_ident_enum(&project.ident().speaker, "人物", input, position),
             "vocal" => complete_file(
-                &context.resource.vocal,
+                &project.resource().vocal,
                 |_, _| (CompletionItemKind::FILE, "语音".to_string()),
                 input,
                 position,
             ),
-            "figureId" => complete_ident_enum(&context.ident.id, "立绘 ID", input, position),
+            "figureId" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
             "fontSize" => complete_font_size_enum(input, position),
             _ => Vec::default(),
         }
@@ -504,10 +504,10 @@ impl Complete for ChangeBackgroundSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.background,
+            &project.resource().background,
             |_, _| (CompletionItemKind::FILE, "背景".to_string()),
             input,
             position,
@@ -518,7 +518,7 @@ impl Complete for ChangeBackgroundSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -543,17 +543,17 @@ impl Complete for ChangeBackgroundSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
             "transform" => transform_json_schema().complete_lsp(input, position),
-            "enter" => complete_animation_enum(input, position, context),
-            "exit" => complete_animation_enum(input, position, context),
+            "enter" => complete_animation_enum(input, position, project),
+            "exit" => complete_animation_enum(input, position, project),
             "ease" => complete_ease_enum(input, position),
-            "series" => complete_ident_enum(&context.ident.series, "鉴赏系列", input, position),
-            "duration" => complete_duration_enum("持续时间 (ms)", input, position, context),
-            "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, context),
-            "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, context),
+            "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
+            "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             _ => Vec::default(),
         }
     }
@@ -564,14 +564,14 @@ impl Complete for ChangeFigureSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.figure,
-            |name, _| {
+            &project.resource().figure,
+            |_, info| {
                 (
                     CompletionItemKind::FILE,
-                    match figure_type_of(name).1 {
+                    match info.get_type() {
                         FigureKind::Image => "图片立绘",
                         FigureKind::Spine => "Spine 立绘",
                         FigureKind::Live2d => "Live2D 立绘",
@@ -590,7 +590,7 @@ impl Complete for ChangeFigureSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -628,15 +628,15 @@ impl Complete for ChangeFigureSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "id" => complete_ident_enum(&context.ident.id, "立绘 ID", input, position),
-            "mouthOpen" => complete_image_figure_file("图片立绘", input, position, context),
-            "mouthHalfOpen" => complete_image_figure_file("图片立绘", input, position, context),
-            "mouthClose" => complete_image_figure_file("图片立绘", input, position, context),
-            "eyesOpen" => complete_image_figure_file("图片立绘", input, position, context),
-            "eyesClose" => complete_image_figure_file("图片立绘", input, position, context),
+            "id" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
+            "mouthOpen" => complete_image_figure_file("图片立绘", input, position, project),
+            "mouthHalfOpen" => complete_image_figure_file("图片立绘", input, position, project),
+            "mouthClose" => complete_image_figure_file("图片立绘", input, position, project),
+            "eyesOpen" => complete_image_figure_file("图片立绘", input, position, project),
+            "eyesClose" => complete_image_figure_file("图片立绘", input, position, project),
             "skin" => complete_enum(
                 [("default", "默认值")],
                 CompletionItemKind::ENUM_MEMBER,
@@ -644,25 +644,29 @@ impl Complete for ChangeFigureSentence {
                 position,
             ),
             "motion"
-                if let Some(Node::Item(figure)) = context.resource.figure.get(&self.figure) =>
+                if let Some(Node::Item(info)) = project.resource().figure.get(&self.figure) =>
             {
-                let description = match figure.kind {
+                let description = match info.get_type() {
                     FigureKind::Spine => "Spine 动作",
                     FigureKind::Live2d => "Live2D 动作",
                     _ => "立绘动作",
                 };
-                complete_file(
-                    &figure.motions,
-                    |_, _| (CompletionItemKind::ENUM_MEMBER, description.to_string()),
-                    input,
-                    position,
-                )
+                match info {
+                    FigureInfo::Live2d { motions, .. } => complete_file(
+                        motions,
+                        |_, _| (CompletionItemKind::ENUM_MEMBER, description.to_string()),
+                        input,
+                        position,
+                    ),
+                    _ => Vec::default(),
+                }
             }
             "expression"
-                if let Some(Node::Item(figure)) = context.resource.figure.get(&self.figure) =>
+                if let Some(Node::Item(FigureInfo::Live2d { expressions, .. })) =
+                    project.resource().figure.get(&self.figure) =>
             {
                 complete_file(
-                    &figure.expressions,
+                    expressions,
                     |_, _| (CompletionItemKind::ENUM_MEMBER, "Live2D 表情".to_string()),
                     input,
                     position,
@@ -671,12 +675,12 @@ impl Complete for ChangeFigureSentence {
             "blink" => live2d_blink_json_schema().complete_lsp(input, position),
             "focus" => live2d_focus_json_schema().complete_lsp(input, position),
             "transform" => transform_json_schema().complete_lsp(input, position),
-            "enter" => complete_animation_enum(input, position, context),
-            "exit" => complete_animation_enum(input, position, context),
+            "enter" => complete_animation_enum(input, position, project),
+            "exit" => complete_animation_enum(input, position, project),
             "ease" => complete_ease_enum(input, position),
-            "duration" => complete_duration_enum("持续时间 (ms)", input, position, context),
-            "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, context),
-            "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, context),
+            "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             _ => Vec::default(),
         }
     }
@@ -687,10 +691,10 @@ impl Complete for BgmSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.bgm,
+            &project.resource().bgm,
             |_, _| (CompletionItemKind::FILE, "音乐".to_string()),
             input,
             position,
@@ -701,7 +705,7 @@ impl Complete for BgmSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -719,11 +723,11 @@ impl Complete for BgmSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "enter" => complete_duration_enum("淡入淡出时间 (ms)", input, position, context),
-            "series" => complete_ident_enum(&context.ident.series, "鉴赏系列", input, position),
+            "enter" => complete_duration_enum("淡入淡出时间 (ms)", input, position, project),
+            "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
             _ => Vec::default(),
         }
     }
@@ -734,10 +738,10 @@ impl Complete for PlayVideoSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.video,
+            &project.resource().video,
             |_, _| (CompletionItemKind::FILE, "视频".to_string()),
             input,
             position,
@@ -748,7 +752,7 @@ impl Complete for PlayVideoSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -764,10 +768,10 @@ impl Complete for PlayEffectSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.vocal,
+            &project.resource().vocal,
             |_, _| (CompletionItemKind::FILE, "语音".to_string()),
             input,
             position,
@@ -778,7 +782,7 @@ impl Complete for PlayEffectSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -794,10 +798,10 @@ impl Complete for PlayEffectSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "id" => complete_ident_enum(&context.ident.id, "语音 ID", input, position),
+            "id" => complete_ident_enum(&project.ident().id, "语音 ID", input, position),
             _ => Vec::default(),
         }
     }
@@ -810,23 +814,23 @@ impl Complete for SetAnimationSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         // complete_file(
-        //     &context.resource.animation,
+        //     &project.resource().animation,
         //     |name| name.strip_suffix(".json").unwrap_or(name).to_string(),
         //     |_, _| "动画".to_string(),
         //     input,
         //     position,
         // )
-        complete_animation_enum(input, position, context)
+        complete_animation_enum(input, position, project)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -846,10 +850,10 @@ impl Complete for SetAnimationSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "target" => complete_ident_enum(&context.ident.id, "对象", input, position),
+            "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             _ => Vec::default(),
         }
     }
@@ -860,7 +864,7 @@ impl Complete for SetComplexAnimationSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_enum(
             [
@@ -877,7 +881,7 @@ impl Complete for SetComplexAnimationSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -896,11 +900,11 @@ impl Complete for SetComplexAnimationSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "target" => complete_ident_enum(&context.ident.id, "对象 ID", input, position),
-            "duration" => complete_duration_enum("持续时间 (ms)", input, position, context),
+            "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
+            "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             _ => Vec::default(),
         }
     }
@@ -911,7 +915,7 @@ impl Complete for SetTransformSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         transform_json_schema().complete_lsp(input, position)
     }
@@ -920,7 +924,7 @@ impl Complete for SetTransformSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -942,12 +946,12 @@ impl Complete for SetTransformSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "target" => complete_ident_enum(&context.ident.id, "对象 ID", input, position),
+            "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
             "ease" => complete_ease_enum(input, position),
-            "duration" => complete_duration_enum("持续时间 (ms)", input, position, context),
+            "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             _ => Vec::default(),
         }
     }
@@ -958,7 +962,7 @@ impl Complete for SetTempAnimationSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         animation_list_json_schema().complete_lsp(input, position)
     }
@@ -967,7 +971,7 @@ impl Complete for SetTempAnimationSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -987,10 +991,10 @@ impl Complete for SetTempAnimationSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "target" => complete_ident_enum(&context.ident.id, "对象", input, position),
+            "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             _ => Vec::default(),
         }
     }
@@ -1001,7 +1005,7 @@ impl Complete for SetTransitionSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1018,12 +1022,12 @@ impl Complete for SetTransitionSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "target" => complete_ident_enum(&context.ident.id, "对象", input, position),
-            "enter" => complete_animation_enum(input, position, context),
-            "exit" => complete_animation_enum(input, position, context),
+            "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
+            "enter" => complete_animation_enum(input, position, project),
+            "exit" => complete_animation_enum(input, position, project),
             _ => Vec::default(),
         }
     }
@@ -1036,7 +1040,7 @@ impl Complete for PixiPerformSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_enum(
             [
@@ -1055,7 +1059,7 @@ impl Complete for PixiPerformSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1070,7 +1074,7 @@ impl Complete for PixiInitSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1085,7 +1089,7 @@ impl Complete for IntroSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1107,12 +1111,12 @@ impl Complete for IntroSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
             "fontSize" => complete_font_size_enum(input, position),
             "backgroundImage" => complete_file(
-                &context.resource.background,
+                &project.resource().background,
                 |_, _| (CompletionItemKind::FILE, "背景".to_string()),
                 input,
                 position,
@@ -1129,7 +1133,7 @@ impl Complete for IntroSentence {
                 input,
                 position,
             ),
-            "delayTime" => complete_duration_enum("延迟时间 (ms)", input, position, context),
+            "delayTime" => complete_duration_enum("延迟时间 (ms)", input, position, project),
             _ => Vec::default(),
         }
     }
@@ -1140,16 +1144,16 @@ impl Complete for MiniAvatarSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
-        complete_image_figure_file("小头像", input, position, context)
+        complete_image_figure_file("小头像", input, position, project)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1164,7 +1168,7 @@ impl Complete for SetTextboxSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_enum(
             [("on", "显示"), ("hide", "隐藏")],
@@ -1178,7 +1182,7 @@ impl Complete for SetTextboxSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1193,7 +1197,7 @@ impl Complete for FilmModeSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_enum(
             [("enable", "开启"), ("none", "关闭")],
@@ -1207,7 +1211,7 @@ impl Complete for FilmModeSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1224,16 +1228,16 @@ impl Complete for CallSceneSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
-        complete_scene_file(input, position, context)
+        complete_scene_file(input, position, project)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1248,16 +1252,16 @@ impl Complete for ChangeSceneSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
-        complete_scene_file(input, position, context)
+        complete_scene_file(input, position, project)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1272,7 +1276,7 @@ impl Complete for ChooseSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         // 提取最近一个选项
         let (_, choice) = input.rsplit_once('|').unwrap_or(("", input));
@@ -1282,9 +1286,9 @@ impl Complete for ChooseSentence {
         };
 
         // 补全场景
-        let mut scene = complete_scene_file(input, position, context);
+        let mut scene = complete_scene_file(input, position, project);
         // 补全标签
-        let mut label = complete_ident_enum(&context.ident.label, "标签", input, position);
+        let mut label = complete_ident_enum(&project.ident().label, "标签", input, position);
         scene.append(&mut label);
         scene
     }
@@ -1293,7 +1297,7 @@ impl Complete for ChooseSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1308,7 +1312,7 @@ impl Complete for ChooseSentence {
         name: &str,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
             "defaultChoice" => complete_enum(
@@ -1327,7 +1331,7 @@ impl Complete for LabelSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1342,16 +1346,16 @@ impl Complete for JumpLabelSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
-        complete_ident_enum(&context.ident.label, "标签", input, position)
+        complete_ident_enum(&project.ident().label, "标签", input, position)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1368,10 +1372,10 @@ impl Complete for UnlockCgSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.background,
+            &project.resource().background,
             |_, _| (CompletionItemKind::FILE, "背景".to_string()),
             input,
             position,
@@ -1382,7 +1386,7 @@ impl Complete for UnlockCgSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1398,10 +1402,10 @@ impl Complete for UnlockCgSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "series" => complete_ident_enum(&context.ident.series, "鉴赏系列", input, position),
+            "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
             _ => Vec::default(),
         }
     }
@@ -1412,10 +1416,10 @@ impl Complete for UnlockBgmSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         complete_file(
-            &context.resource.bgm,
+            &project.resource().bgm,
             |_, _| (CompletionItemKind::FILE, "音乐".to_string()),
             input,
             position,
@@ -1426,7 +1430,7 @@ impl Complete for UnlockBgmSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1442,10 +1446,10 @@ impl Complete for UnlockBgmSentence {
         name: &str,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
         match name {
-            "series" => complete_ident_enum(&context.ident.series, "鉴赏系列", input, position),
+            "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
             _ => Vec::default(),
         }
     }
@@ -1458,7 +1462,7 @@ impl Complete for GetUserInputSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1480,7 +1484,7 @@ impl Complete for SetVarSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1496,7 +1500,7 @@ impl Complete for ShowVarsSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1511,16 +1515,16 @@ impl Complete for WaitSentence {
         &self,
         input: &str,
         position: Position,
-        context: &Context,
+        project: &Project,
     ) -> Vec<CompletionItem> {
-        complete_duration_enum("持续时间 (ms)", input, position, context)
+        complete_duration_enum("持续时间 (ms)", input, position, project)
     }
 
     fn complete_argument_name(
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1535,7 +1539,7 @@ impl Complete for ApplyStyleSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1550,7 +1554,7 @@ impl Complete for CallSteamSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {
@@ -1566,7 +1570,7 @@ impl Complete for EndSentence {
         &self,
         input: &str,
         position: Position,
-        _context: &Context,
+        _project: &Project,
     ) -> Vec<CompletionItem> {
         complete_argument_name_collect! {
             (input, position): {

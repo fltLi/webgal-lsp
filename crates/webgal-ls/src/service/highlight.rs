@@ -3,8 +3,32 @@ use webgal_model::sentence::{Scene, SentenceInfo};
 
 // TODO: 精细化高亮
 
-/// 生成一个场景的高亮
-pub fn highlight_scene(scene: &Scene) -> Vec<SemanticToken> {
+pub fn highlight_capability() -> SemanticTokensServerCapabilities {
+    SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+        SemanticTokensRegistrationOptions {
+            text_document_registration_options: TextDocumentRegistrationOptions {
+                document_selector: Some(vec![DocumentFilter {
+                    language: Some("webgal".to_string()),
+                    scheme: Some("file".to_string()),
+                    pattern: Some("**/scene/**/*.txt".to_string()),
+                }]),
+            },
+            semantic_tokens_options: SemanticTokensOptions {
+                work_done_progress_options: WorkDoneProgressOptions::default(),
+                legend: SemanticTokensLegend {
+                    token_types: TOKEN_TYPES.to_vec(),
+                    token_modifiers: vec![],
+                },
+                range: Some(false),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+            },
+            static_registration_options: StaticRegistrationOptions::default(),
+        },
+    )
+}
+
+/// 为场景提供语义高亮
+pub fn highlight(scene: &Scene) -> Vec<SemanticToken> {
     let mut tokens = Vec::new();
     for (line, sentence) in scene.sentences().iter().enumerate() {
         highlight_sentence(sentence, line, &mut tokens);
@@ -67,10 +91,6 @@ const TOKEN_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::STRING,
     SemanticTokenType::COMMENT,
 ];
-
-pub fn supported_token_types() -> &'static [SemanticTokenType] {
-    TOKEN_TYPES
-}
 
 fn token_type_id_of(token_type: &SemanticTokenType) -> u32 {
     TOKEN_TYPES

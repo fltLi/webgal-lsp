@@ -52,12 +52,25 @@ fn deep_structure_no_stack_overflow() {
 }
 
 #[test]
+fn folder_contains_self() {
+    let folder = Folder::from_iter([("a/b", ())]);
+    assert!(folder.contains(""));
+}
+
+#[test]
 fn remove_folder_entire_subtree() {
     let mut folder: Folder<i32> = Folder::new();
     folder.insert("a/b/c", Node::Item(1));
     let removed = folder.remove("a/b");
     assert!(removed.is_some());
     assert!(folder.get("a/b/c").is_none());
+}
+
+#[test]
+fn remove_entire_folder() {
+    let folder = Folder::from_iter([("a", ()), ("b/c", ())]);
+    let removed = folder.clone().remove("");
+    assert_eq!(removed, Some(Node::Folder(folder)));
 }
 
 #[test]
