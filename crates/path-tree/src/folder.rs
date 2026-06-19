@@ -35,14 +35,15 @@ impl<T> Folder<T> {
     ///
     /// # Behavior
     /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
-    /// * 节点路径不应重复, 重复则将去重且只保留第一个.
+    /// * 若混用不同路径分隔符, 会导致结果异常.
+    /// * 节点路径不应重复, 重复则将去重且只保留最后一个.
+    /// * 路径上已存在资源节点时, 这些节点将被替换为目录.
     ///
     /// # Performance
     /// 先按路径为节点排序, 接着维护到根的路径依次插入, 最坏 `O(n\log n + n)`.
     pub fn from_vec<P: AsRef<str>>(mut vec: Vec<(P, T)>) -> Self {
-        // 为所有元素排序去重 - `O(n)` ~ `O(n\log n)`
+        // 为所有元素排序 - `O(n)` ~ `O(n\log n)`
         sort_children(&mut vec);
-        vec.dedup_by(|(a, _), (b, _)| a.as_ref() == b.as_ref());
 
         let mut root = Self::new();
         let mut current_route = vec![("", &mut root as *mut _)];
@@ -61,6 +62,9 @@ impl<T> Folder<T> {
             while let Some(name) = path_split.next() {
                 let name = name.to_string();
                 let parent: &mut Folder<T> = unsafe { &mut *current_route.last().unwrap().1 };
+
+                // 去重 / 替换资源节点为目录
+                parent.children.pop_if(|(last_name, _)| last_name == &name);
 
                 if path_split.peek().is_some() {
                     // 插入目录
@@ -197,6 +201,7 @@ impl<T> Folder<T> {
     /// # Behavior
     /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     /// * 若路径为空, 将不返回节点.
+    /// * 路径上已存在资源节点时, 其将被替换为目录再继续插入, 并返回 `None`.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 替换节点或插入子链, 复杂度介于 `O(\log n)` ~ `O(n)`.
@@ -207,9 +212,12 @@ impl<T> Folder<T> {
             Ok(index) => {
                 let child = unsafe { &mut self.children.get_unchecked_mut(index).1 };
                 match path {
-                    Some(path) => child
-                        .as_folder_mut()
-                        .and_then(|folder| folder.insert(path, node)),
+                    Some(path) => {
+                        if child.is_item() {
+                            *child = Node::new_folder(); // 替换资源节点为目录
+                        }
+                        child.as_folder_mut().unwrap().insert(path, node)
+                    }
                     None => Some(mem::replace(child, node)),
                 }
             }
@@ -355,7 +363,9 @@ impl<P: AsRef<str>, T> FromIterator<(P, T)> for Folder<T> {
     ///
     /// # Behavior
     /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
-    /// * 节点路径不应重复, 重复则将去重且只保留第一个.
+    /// * 若混用不同路径分隔符, 会导致结果异常.
+    /// * 节点路径不应重复, 重复则将去重且只保留最后一个.
+    /// * 路径上已存在资源节点时, 这些节点将被替换为目录.
     ///
     /// # Performance
     /// 先按收集路径并为节点排序, 接着维护到根的路径依次插入, 最坏 `O(n\log n + n)`.
@@ -369,6 +379,7 @@ impl<P: AsRef<str>, T> Extend<(P, T)> for Folder<T> {
     ///
     /// # Behavior
     /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
+    /// * 路径上已存在资源节点时, 这些节点将被替换为目录.
     ///
     /// # Performance
     /// 将路径分段后逐层二分查找, 替换节点或插入子链, 单次插入复杂度介于 `O(\log n)` ~ `O(n)`.

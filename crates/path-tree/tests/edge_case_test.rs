@@ -6,7 +6,6 @@ use path_tree::{Folder, Node};
 fn sorting_order_preserved() {
     let data = vec![("d/c", 1), ("a/z", 2), ("b/x", 3), ("a/a", 4)];
     let folder = Folder::from_vec(data);
-    // each top-level folder should be in sorted order
     let top: Vec<&str> = folder.iter().map(|(n, _)| n).collect();
     assert_eq!(top, vec!["a", "b", "d"]);
 }
@@ -34,8 +33,7 @@ fn large_number_of_siblings() {
     }
     let folder = Folder::from_vec(data.clone());
     assert_eq!(folder.iter().count(), 600);
-    // spot-check a few values
-    for i in [0usize, 10, 199, 599].iter() {
+    for i in [0, 10, 199, 599].iter() {
         let key = format!("leaf{}", i);
         assert_eq!(folder.get(&key).and_then(|n| n.as_item()), Some(i));
     }
@@ -47,7 +45,6 @@ fn deep_structure_no_stack_overflow() {
     let path = make_deep_path(depth);
     let folder = Folder::from_vec(vec![(path.clone(), 1)]);
     assert_eq!(folder.get(&path).and_then(|n| n.as_item()), Some(&1));
-    // iter_recursively should visit each level
     assert_eq!(folder.iter_recursively().count(), depth);
 }
 
@@ -79,9 +76,7 @@ fn remove_intermediate_cascades_upwards() {
     root.insert("a/b/c", Node::Item(1));
     let removed = root.remove("a/b").expect("should remove folder");
     assert!(removed.into_folder().is_some());
-    // child removed
     assert!(root.get("a/b/c").is_none());
-    // parent 'a' should be cleaned up if empty
     assert!(root.get("a").is_none());
 }
 
@@ -107,6 +102,31 @@ fn recursive_iter_path_no_trailing_slash() {
         assert!(!normalized.is_empty());
     }
 }
+
+#[test]
+fn from_vec_multiple_files_replaced_by_folders() {
+    let data = vec![("a", 1), ("a/b", 2), ("a/b/c", 3)];
+    let folder = Folder::from_vec(data);
+    assert!(folder.get("a").and_then(|n| n.as_folder()).is_some());
+    assert!(folder.get("a/b").and_then(|n| n.as_folder()).is_some());
+    assert_eq!(folder.get("a/b/c").and_then(|n| n.as_item()), Some(&3));
+    let a = folder.get("a").and_then(|n| n.as_folder()).unwrap();
+    let a_children: Vec<&str> = a.iter().map(|(n, _)| n).collect();
+    assert_eq!(a_children, vec!["b"]);
+    let b = a.get("b").and_then(|n| n.as_folder()).unwrap();
+    let b_children: Vec<&str> = b.iter().map(|(n, _)| n).collect();
+    assert_eq!(b_children, vec!["c"]);
+}
+
+#[test]
+fn from_vec_duplicate_paths_keep_last_and_replace() {
+    let data = vec![("a/b", 1), ("a", 2), ("a/b", 3)];
+    let folder = Folder::from_vec(data);
+    assert!(folder.get("a").and_then(|n| n.as_folder()).is_some());
+    assert_eq!(folder.get("a/b").and_then(|n| n.as_item()), Some(&3));
+}
+
+// -------- util --------
 
 pub fn make_deep_path(depth: usize) -> String {
     (0..depth)

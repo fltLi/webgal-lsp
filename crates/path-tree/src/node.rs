@@ -12,6 +12,10 @@ pub enum Node<T> {
 }
 
 impl<T> Node<T> {
+    pub fn new_folder() -> Self {
+        Self::Folder(Folder::new())
+    }
+
     /// 依据路径创建到节点的路径链, 并返回根
     ///
     /// # Behavior

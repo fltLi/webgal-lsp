@@ -18,11 +18,22 @@ fn from_vec_builds_correct_tree() {
 }
 
 #[test]
-fn from_vec_deduplicates_same_paths() {
+fn from_vec_deduplicates_same_paths_keep_last() {
     let data = vec![("a/b/c", 10), ("a/b/c", 20)];
     let folder = Folder::from_vec(data);
-    // dedup should keep the first value (10)
-    assert_eq!(folder.get("a/b/c").and_then(|n| n.as_item()), Some(&10));
+    assert_eq!(folder.get("a/b/c").and_then(|n| n.as_item()), Some(&20));
+}
+
+#[test]
+fn from_vec_replaces_file_with_folder() {
+    let data = vec![("a", 1), ("a/b", 2)];
+    let folder = Folder::from_vec(data);
+    assert!(folder.get("a").and_then(|n| n.as_folder()).is_some());
+    assert!(folder.get("a").and_then(|n| n.as_item()).is_none());
+    assert_eq!(folder.get("a/b").and_then(|n| n.as_item()), Some(&2));
+    let a_folder = folder.get("a").and_then(|n| n.as_folder()).unwrap();
+    let children: Vec<&str> = a_folder.iter().map(|(n, _)| n).collect();
+    assert_eq!(children, vec!["b"]);
 }
 
 #[test]
@@ -54,13 +65,26 @@ fn insert_replaces_existing_node_and_returns_old() {
 }
 
 #[test]
+fn insert_replaces_file_with_folder_and_continues() {
+    let mut root: Folder<i32> = Folder::new();
+    root.insert("a", Node::Item(1));
+    let old = root.insert("a/b", Node::Item(2));
+    assert!(old.is_none());
+    assert!(root.get("a").and_then(|n| n.as_folder()).is_some());
+    assert!(root.get("a").and_then(|n| n.as_item()).is_none());
+    assert_eq!(root.get("a/b").and_then(|n| n.as_item()), Some(&2));
+    let a_folder = root.get("a").and_then(|n| n.as_folder()).unwrap();
+    let children: Vec<&str> = a_folder.iter().map(|(n, _)| n).collect();
+    assert_eq!(children, vec!["b"]);
+}
+
+#[test]
 fn remove_leaf_returns_node_and_removes_empty_parent() {
     let mut root: Folder<i32> = Folder::new();
     root.insert("x/y", Node::Item(5));
     let removed = root.remove("x/y").expect("should remove leaf");
     assert_eq!(removed.into_item(), Some(5));
     assert!(root.get("x/y").is_none());
-    // Parent directory should be removed when it becomes empty
     assert!(root.get("x").is_none());
     assert!(root.is_empty());
 }
@@ -75,7 +99,6 @@ fn remove_nonexistent_returns_none() {
 fn remove_intermediate_path_removes_folder() {
     let mut root: Folder<i32> = Folder::new();
     root.insert("a/b/c", Node::Item(1));
-    // remove intermediate folder "a/b"
     let removed = root.remove("a/b").expect("should remove folder");
     assert!(removed.into_folder().is_some());
     assert!(root.get("a/b/c").is_none());
@@ -107,15 +130,13 @@ fn deeply_nested_tree_accessible() {
         .join("/");
     root.insert(&deep, Node::Item(999));
     assert_eq!(root.get(&deep).and_then(|n| n.as_item()), Some(&999));
-    // check intermediate layers exist
     let mut path = String::new();
     for i in 0..10 {
         if i > 0 {
             path.push('/');
         }
         path.push_str(&format!("d{}", i));
-        let is_folder_or_item = root.get(&path);
-        assert!(is_folder_or_item.is_some());
+        assert!(root.get(&path).is_some());
     }
 }
 
@@ -125,11 +146,8 @@ fn clone_and_debug() {
     root.insert("a/b", Node::Item(1));
     root.insert("config.json", Node::Item(2));
     let clone = root.clone();
-    // modify original
     root.insert("a/c", Node::Item(3));
-    // clone should not have 'a/c'
     assert!(clone.get("a/c").is_none());
-    // Debug contains keys
     let dbg = format!("{:?}", clone);
     assert!(dbg.contains("config.json"));
     assert!(dbg.contains("a"));
