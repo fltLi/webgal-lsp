@@ -1,6 +1,6 @@
 use json_complete::{ToJsonSchema, Value};
 use once_cell::sync::Lazy;
-use path_tree::{Folder, Node, canonicalize, name_of, parent_of};
+use path_tree::{Folder, Node, PATH_SEPARATORS};
 use ranked_count::Counter;
 use tower_lsp::lsp_types::*;
 use webgal_model::{
@@ -192,13 +192,16 @@ fn complete_file<T, F>(
 where
     F: Fn(&str, &T) -> (CompletionItemKind, String),
 {
-    let path = canonicalize(input).unwrap_or_else(|| input.to_string());
-    let parent = parent_of(&path);
-    let current = name_of(&path);
-    let folder = match folder.get(parent).and_then(Node::as_folder) {
-        Some(folder) => folder,
-        None => return Vec::default(),
+    let (parent, current) = input.rsplit_once(PATH_SEPARATORS).unwrap_or(("", input));
+    let folder = if parent.is_empty() {
+        folder
+    } else {
+        match folder.get(parent).and_then(Node::as_folder) {
+            Some(folder) => folder,
+            None => return Vec::default(),
+        }
     };
+
     folder
         .iter()
         .filter(|(name, _)| name.starts_with(current))
