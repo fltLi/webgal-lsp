@@ -14,6 +14,7 @@ use tokio::{
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
 use tracing::{debug, error, info, warn};
+use webgal_model::resource::ResourceKind;
 
 use crate::{
     encode::*,
@@ -411,18 +412,25 @@ impl LanguageServer for Backend {
             }
         };
 
+        // 校验路径
+        let (kind, path) = ResourceKind::from_path(&resource_path);
+        if kind != ResourceKind::Scene {
+            debug!(project = %project_path, path = %resource_path, "Highlighting skipped: not a scene file");
+            return Ok(None);
+        }
+
         // 查找场景
         let project = project.read().await;
-        let scene = match project.resource().scene.get(&resource_path) {
+        let scene = match project.resource().scene.get(path) {
             Some(Node::Item(v)) => v,
             _ => {
-                debug!(project = %project_path, path = %resource_path, "Scene not found for highlighting");
+                debug!(project = %project_path, %path, "Scene not found for highlighting");
                 return Ok(None);
             }
         };
 
         // 生成补全
-        info!(project = %project_path, path = %resource_path, "Highlight scene");
+        info!(project = %project_path, %path, "Highlight scene");
         let mut tokens = highlight(scene);
         highlights_utf8_to_utf16(scene, &mut tokens);
 
@@ -451,18 +459,25 @@ impl LanguageServer for Backend {
             }
         };
 
+        // 校验路径
+        let (kind, path) = ResourceKind::from_path(&resource_path);
+        if kind != ResourceKind::Scene {
+            debug!(project = %project_path, path = %resource_path, "Completing skipped: not a scene file");
+            return Ok(None);
+        }
+
         // 查找场景
         let project = project.read().await;
-        let scene = match project.resource().scene.get(&resource_path) {
+        let scene = match project.resource().scene.get(path) {
             Some(Node::Item(v)) => v,
             _ => {
-                debug!(project = %project_path, path = %resource_path, "Scene not found for completion");
+                debug!(project = %project_path, %path, "Scene not found for completion");
                 return Ok(None);
             }
         };
 
         // 生成补全
-        info!(project = %project_path, path = %resource_path, "Completing input");
+        info!(project = %project_path, %path, "Completing input");
         let position = position_utf16_to_utf8(scene, params.text_document_position.position);
         let mut completions = complete(scene, position, &project);
         completions_utf8_to_utf16(scene, &mut completions);
@@ -490,18 +505,25 @@ impl LanguageServer for Backend {
             }
         };
 
+        // 校验路径
+        let (kind, path) = ResourceKind::from_path(&resource_path);
+        if kind != ResourceKind::Scene {
+            debug!(project = %project_path, path = %resource_path, "Formatting skipped: not a scene file");
+            return Ok(None);
+        }
+
         // 查找场景
         let project = project.read().await;
-        let scene = match project.resource().scene.get(&resource_path) {
+        let scene = match project.resource().scene.get(path) {
             Some(Node::Item(v)) => v,
             _ => {
-                debug!(project = %project_path, path = %resource_path, "Scene not found for formatting");
+                debug!(project = %project_path, %path, "Scene not found for formatting");
                 return Ok(None);
             }
         };
 
         // 生成补全
-        info!(project = %project_path, path = %resource_path, "Formatting scene");
+        info!(project = %project_path, %path, "Formatting scene");
         let mut edits = format(scene);
         formatting_utf8_to_utf16(scene, &mut edits);
 
