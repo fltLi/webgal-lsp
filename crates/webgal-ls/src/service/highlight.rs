@@ -76,10 +76,12 @@ where
     // 语句类型高亮
     push(PrimaryToken::from_span(
         primary.get_span(primary.command),
-        if sentence.is_say() {
+        if !sentence.is_say() {
+            TokenType::Function
+        } else if primary.content.is_some() {
             TokenType::Variable
         } else {
-            TokenType::Function
+            TokenType::String
         },
     ));
 
