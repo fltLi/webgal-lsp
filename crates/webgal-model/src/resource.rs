@@ -124,14 +124,16 @@ mod lsp_ext {
                 Self::Config => &["txt"],
                 Self::Scene => &["txt"],
                 Self::Animation => &["json"],
-                Self::Background => &["bmp", "gif", "jpeg", "jpg", "png", "svg", "webp"],
+                Self::Background => &[
+                    "bmp", "gif", "jpeg", "jpg", "mkv", "mp4", "png", "svg", "webm", "webp",
+                ],
                 Self::Figure => &[
                     "bmp", "gif", "jpeg", "jpg", "json", "jsonl", "png", "skel", "svg", "webp",
                     "wmdl",
                 ],
                 Self::Bgm => &["flac", "mp3", "ogg", "wav"],
                 Self::Vocal => &["flac", "mp3", "ogg", "wav"],
-                Self::Video => &["mp4", "ogg", "webm"],
+                Self::Video => &["mkv", "mp4", "ogg", "webm"],
                 Self::Other => &[],
             }
         }
