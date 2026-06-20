@@ -11,6 +11,10 @@ WebGAL 语言基础设施。
 - **代码诊断**：语法错误、资源缺失等实时检查 -> [详细说明](./docs/diagnose.md)
 - **语义高亮**：语句类型、参数、注释等色彩渲染
 
+#### 功能展示
+
+<img src="./docs/screenshot.png" alt="语言服务器功能展示" width="1200"/>
+
 ## :rocket: 快速开始
 
 > [!IMPORTANT]
