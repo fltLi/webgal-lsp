@@ -462,7 +462,7 @@ impl Complete for SaySentence {
                 self.figure.is_none() => ("center", "center", "指定中间立绘"),
                 self.figure.is_none() => ("left", "left", "指定左侧立绘"),
                 self.figure.is_none() => ("right", "right", "指定右侧立绘"),
-                self.font_size == Default::default() => ("fontSize", "fontSize", "字体大小"),
+                self.font_size == Default::default() => ("fontSize", "fontSize=", "字体大小"),
                 !self.concat => ("concat", "concat", "将该对话与上一句连接"),
                 !self.notend => ("notend", "notend", "文字展示完执行下一句"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -496,7 +496,7 @@ impl Complete for SaySentence {
                 position,
             ),
             "figureId" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
-            "fontSize" => complete_font_size_enum(input, position),
+            "fontSize=" => complete_font_size_enum(input, position),
             _ => Vec::default(),
         }
     }
