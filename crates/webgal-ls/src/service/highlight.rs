@@ -102,15 +102,15 @@ fn highlight_sentence(sentence: &SentenceInfo) -> Vec<PrimaryToken> {
     }
 
     // 注释高亮
-    if !primary.comment.is_empty() {
-        let comment = content
-            .len()
-            .checked_sub(primary.comment.len() + 1)
-            .and_then(|pos| {
-                let comment = &content[pos..]; // 尝试包含前导 `;`
-                comment.starts_with(';').then_some(comment)
-            })
-            .unwrap_or(primary.comment);
+    let comment = content
+        .len()
+        .checked_sub(primary.comment.len() + 1)
+        .and_then(|pos| {
+            let comment = &content[pos..]; // 尝试包含前导 `;`
+            comment.starts_with(';').then_some(comment)
+        })
+        .unwrap_or(primary.comment);
+    if !comment.is_empty() {
         push_token(comment, TokenType::Comment);
     }
 
