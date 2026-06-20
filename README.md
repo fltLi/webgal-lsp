@@ -16,20 +16,42 @@ WebGAL 语言基础设施。
 > [!IMPORTANT]
 > 此服务器在标准 LSP 的基础上进行了扩展（详见文档注释），第三方客户端需要提供支持。
 
-### 1. 编译语言服务器
+### :gear: 语言服务器
 
+#### 编译
 ```bash
 cargo build -p webgal-ls
 ```
 
-### 2. 构建并运行 VS Code 扩展
+#### 启动模式
+语言服务器支持两种通信模式，根据客户端类型选择：
 
-```bash
-cd vscode-extension
-npm install && npm run compile
-```
+- **:computer: stdio 模式（默认）**  
+  适用于 VS Code 等桌面客户端。
+  ```bash
+  cargo run -p webgal-ls
+  ```
 
-按 `F5` 启动调试窗口。
+- **:globe_with_meridians: WebSocket 模式**  
+  适用于浏览器环境（如 Monaco）。
+  ```bash
+  cargo run -p webgal-ls -- --ws 8765
+  ```
+  服务器将监听 `ws://127.0.0.1:8765`，接受一个 WebSocket 连接。
+
+---
+
+### :package: VS Code 扩展
+
+扩展源码位于 `packages/vscode-extension`。
+
+1. 安装依赖：
+   ```bash
+   cd packages/vscode-extension
+   npm install
+   ```
+2. 在 VS Code 中打开该目录，按 `F5` 启动调试窗口。  
+   （扩展将自动编译 TS / Rust 前后端并启动语言服务器。）
 
 ## :page_facing_up: 许可证
 
