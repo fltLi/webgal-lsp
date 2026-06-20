@@ -233,7 +233,6 @@ impl LanguageServer for Backend {
                 TextDocumentSyncOptions {
                     open_close: Some(true),
                     change: Some(TextDocumentSyncKind::FULL),
-                    will_save: Some(true),
                     ..Default::default()
                 },
             )),
@@ -245,7 +244,7 @@ impl LanguageServer for Backend {
                     supported: Some(true),
                     change_notifications: Some(OneOf::Left(true)),
                 }),
-                file_operations: None,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -359,6 +358,8 @@ impl LanguageServer for Backend {
         debug!(project = %project_path, path = %resource_path, "Updated resource via change");
         self.diagnose_project(&project_path, project);
     }
+
+    async fn did_close(&self, _: DidCloseTextDocumentParams) {}
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         for FileEvent { uri, typ } in params.changes {
