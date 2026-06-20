@@ -20,7 +20,6 @@ const ReadToStringRequest = new RequestType<ReadToStringParams, ReadToStringResu
 let client: LanguageClient;
 
 export async function activate(context: vscode.ExtensionContext) {
-    const traceOutputChannel = vscode.window.createOutputChannel('WebGAL Language Server trace');
     const command = process.env.SERVER_PATH || 'webgal-ls';
     const run: Executable = {
         command,
@@ -42,7 +41,6 @@ export async function activate(context: vscode.ExtensionContext) {
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/config.txt')
         },
-        traceOutputChannel,
     };
     client = new LanguageClient(
         'webgal-language-server',

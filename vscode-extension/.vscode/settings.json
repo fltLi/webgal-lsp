@@ -1,8 +1,0 @@
-{
-  "files.exclude": {
-    "dist": false
-  },
-  "search.exclude": {
-    "dist": true
-  }
-}
