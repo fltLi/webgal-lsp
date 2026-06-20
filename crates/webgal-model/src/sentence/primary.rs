@@ -316,6 +316,13 @@ mod tests {
     // -------- 空格处理 --------
 
     #[test]
+    fn parse_command_no_trim() {
+        let s = " cmd \t :content;";
+        let parsed = PrimarySentence::from_str(s);
+        assert_eq!(parsed.command, " cmd \t ");
+    }
+
+    #[test]
     fn parse_content_trim() {
         let s = "cmd: \t content with spaces   -arg=val;";
         let parsed = PrimarySentence::from_str(s);

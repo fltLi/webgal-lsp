@@ -226,7 +226,9 @@ mod tests {
 
     #[test]
     fn highlights_utf8_to_utf16_converts_correctly() {
-        let scene = Scene::from_str("changeBg:bg.png -next;\nwait:1000;\nsay:Hello world;\n");
+        let scene = Scene::from_str(
+            "changeBg:bg.png -next;\nwait:1000;\n\nWebGAL:Hello world -fontSize=large;\n",
+        );
         let mut tokens = highlight(&scene);
         highlights_utf8_to_utf16(&scene, &mut tokens);
 

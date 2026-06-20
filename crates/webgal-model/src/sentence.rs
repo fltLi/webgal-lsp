@@ -40,12 +40,14 @@ pub enum Sentence {
     Bgm(BgmSentence),
     PlayVideo(PlayVideoSentence),
     PlayEffect(PlayEffectSentence),
+
     // 舞台对象控制
     SetAnimation(SetAnimationSentence),
     SetComplexAnimation(SetComplexAnimationSentence),
     SetTransform(Box<SetTransformSentence>),
     SetTempAnimation(SetTempAnimationSentence),
     SetTransition(SetTransitionSentence),
+
     // 特殊演出
     PixiPerform(PixiPerformSentence),
     PixiInit(PixiInitSentence),
@@ -53,15 +55,18 @@ pub enum Sentence {
     MiniAvatar(MiniAvatarSentence),
     SetTextbox(SetTextboxSentence),
     FilmMode(FilmModeSentence),
+
     // 场景与分支
     CallScene(CallSceneSentence),
     ChangeScene(ChangeSceneSentence),
     Choose(ChooseSentence),
     Label(LabelSentence),
     JumpLabel(JumpLabelSentence),
+
     // 鉴赏
     UnlockCg(UnlockCgSentence),
     UnlockBgm(UnlockBgmSentence),
+
     // 游戏控制
     GetUserInput(Box<GetUserInputSentence>),
     SetVar(SetVarSentence),
@@ -70,6 +75,7 @@ pub enum Sentence {
     ApplyStyle(ApplyStyleSentence),
     CallSteam(CallSteamSentence),
     End(EndSentence),
+
     // 空白注释
     Comment(CommentSentence),
 }
