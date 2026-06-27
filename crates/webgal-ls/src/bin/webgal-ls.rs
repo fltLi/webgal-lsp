@@ -2,9 +2,11 @@
 
 //! WebGAL 语言服务器启动入口.
 //!
+//! 日志输出到 `stderr`, 可使用环境变量 `WEBGAL_LS_LOG` 指定级别 (默认为 `error`).
+//!
 //! 支持两种通信模式:
 //! - **stdio** (默认): 通过标准输入输出与客户端通信, 适用于 VS Code 等桌面环境.
-//! - **WebSocket** (`--ws <PORT>`): 监听指定端口, 通过 WebSocket 与浏览器前端通信.
+//! - **WebSocket** (`--port <PORT>`): 监听指定端口, 通过 WebSocket 与浏览器前端通信.
 
 use std::io::stderr;
 
@@ -26,16 +28,16 @@ use webgal_ls::server::Backend;
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// 使用 WebSocket 模式, 并指定监听端口 (例如 `--ws 8765`)
+    /// 使用 WebSocket 模式, 并指定监听端口 (例如 `--port 8765`)
     #[arg(long, value_name = "PORT")]
-    ws: Option<u16>,
+    port: Option<u16>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志 (从环境变量 `RUST_LOG` 读取级别)
+    // 初始化日志 (从环境变量 `WEBGAL_LS_LOG` 读取级别)
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(EnvFilter::from_env("WEBGAL_LS_LOG"))
         .with_writer(stderr)
         .with_ansi(true)
         .init();
@@ -45,7 +47,7 @@ async fn main() -> Result<()> {
     // 创建 LSP 服务和客户端套接字 (延迟到传输层准备就绪)
     let (service, socket) = LspService::new(Backend::new);
 
-    match args.ws {
+    match args.port {
         Some(port) => {
             // WebSocket 模式
             info!("Starting LSP server in WebSocket mode on port {port}");
