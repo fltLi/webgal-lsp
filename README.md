@@ -46,7 +46,17 @@ cargo build -p webgal-ls
   ```
   服务器将监听 `ws://127.0.0.1:8765`，接受一个 WebSocket 连接。
 
-语言服务器日志会输出到 `stderr`，可使用环境变量 `WEBGAL_LS_LOG` 指定级别。
+#### 日志控制
+
+语言服务器日志输出到 `stderr`，可通过以下命令行参数控制：
+
+- `--log-level <LEVEL>`：日志级别（`error`, `warn`, `info`, `debug`, `trace`），默认为 `error`。
+- `--log-format <FORMAT>`：输出格式（`plain`, `text`, `json`），默认为 `plain`。
+
+示例：
+```bash
+cargo run -p webgal-ls -- --log-level debug --log-format plain
+```
 
 ---
 

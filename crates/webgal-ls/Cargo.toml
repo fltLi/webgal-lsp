@@ -17,7 +17,7 @@ ranked-count.workspace = true
 webgal-model = { workspace = true, features = ["lsp"] }
 
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow.workspace = true
 thiserror.workspace = true
 

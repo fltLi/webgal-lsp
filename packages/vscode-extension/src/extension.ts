@@ -5,80 +5,51 @@ import {
     Executable,
     LanguageClient,
     LanguageClientOptions,
-    RequestType,
-    ServerOptions
+    RequestType
 } from 'vscode-languageclient/node';
 
 type ReadDirectoryParams = { path: string };
-type ReadDirectoryResult = { name: string; isFile: boolean }[];
+type ReadDirectoryResult = { name: string; isDirectory: boolean }[];
 type ReadFileParams = { path: string };
 type ReadFileResult = string;
 
-const ReadDirectoryRequest = new RequestType<ReadDirectoryParams, ReadDirectoryResult, void>('workspace/fs/ReadDirectory');
-const ReadFileRequest = new RequestType<ReadFileParams, ReadFileResult, void>('workspace/fs/ReadFile');
+const ReadDirectoryRequest = new RequestType<ReadDirectoryParams, ReadDirectoryResult, void>('workspace/fs/readDirectory');
+const ReadFileRequest = new RequestType<ReadFileParams, ReadFileResult, void>('workspace/fs/readFile');
 
 let client: LanguageClient;
 
 export async function activate(context: vscode.ExtensionContext) {
-    const command = process.env.SERVER_PATH || 'webgal-ls';
+    // 使用纯文本格式 debug 日志
     const run: Executable = {
-        command,
-        options: {
-            env: {
-                ...process.env,
-                RUST_LOG: 'debug',
-            },
-        },
+        command: process.env.SERVER_PATH || 'webgal-ls',
+        args: ['--log-level', 'debug', '--log-format', 'plain'],
     };
-    const serverOptions: ServerOptions = {
-        run,
-        debug: run,
-    };
+
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [
-            { scheme: 'file', language: 'webgal' }
-        ],
-        synchronize: {
-            fileEvents: vscode.workspace.createFileSystemWatcher('**/config.txt')
-        },
+        documentSelector: [{ scheme: 'file', language: 'webgal' }],
+        // 输出通道便于查看 stderr
+        outputChannel: vscode.window.createOutputChannel('WebGAL LSP', { log: true }),
     };
-    client = new LanguageClient(
-        'webgal-language-server',
-        'WebGAL Language Server',
-        serverOptions,
-        clientOptions
+
+    client = new LanguageClient('webgal-ls', 'WebGAL LSP', { run, debug: run }, clientOptions);
+
+    // 注册文件系统扩展请求
+    context.subscriptions.push(
+        client.onRequest(ReadDirectoryRequest, async (params) => {
+            const uri = vscode.Uri.parse(params.path, true);
+            const entries = await vscode.workspace.fs.readDirectory(uri);
+            return entries.map(([name, type]) => ({ name, isDirectory: type === vscode.FileType.Directory }));
+        }),
+        client.onRequest(ReadFileRequest, async (params) => {
+            const uri = vscode.Uri.parse(params.path, true);
+            const data = await vscode.workspace.fs.readFile(uri);
+            return Buffer.from(data).toString('utf8');
+        })
     );
-
-    const disposables = [
-        client.onRequest(ReadDirectoryRequest, async (params: ReadDirectoryParams) => {
-            const uri = vscode.Uri.parse(params.path, true);
-            try {
-                const entries = await vscode.workspace.fs.readDirectory(uri);
-                return entries.map(([name, type]) => ({
-                    name,
-                    isFile: type === vscode.FileType.File,
-                }));
-            } catch (e) {
-                throw new Error(`Failed to read directory: ${e}`);
-            }
-        }),
-
-        client.onRequest(ReadFileRequest, async (params: ReadFileParams) => {
-            const uri = vscode.Uri.parse(params.path, true);
-            try {
-                const data = await vscode.workspace.fs.readFile(uri);
-                return Buffer.from(data).toString('utf8');
-            } catch (e) {
-                throw new Error(`Failed to read file: ${e}`);
-            }
-        }),
-    ];
-
-    context.subscriptions.push(...disposables);
 
     await client.start();
 }
 
-export function deactivate(): Thenable<void> | undefined {
+export function deactivate() {
     return client?.stop();
 }
