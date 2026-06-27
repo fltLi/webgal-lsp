@@ -4,10 +4,7 @@ use path_tree::{Folder, Node, PATH_SEPARATORS};
 use ranked_count::Counter;
 use tower_lsp::lsp_types::*;
 use webgal_model::{
-    element::{
-        AnimationList, BasicForward, FigureSide, KeepableForward, Live2dBlink, Live2dFocus,
-        Transform,
-    },
+    element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},
     resource::{FigureInfo, FigureKind},
     sentence::*,
 };
@@ -534,8 +531,8 @@ impl Complete for ChangeBackgroundSentence {
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
                 self.enter_duration.is_none() => ("enterDuration", "enterDuration=", "入场时长"),
                 self.exit_duration.is_none() => ("exitDuration", "exitDuration=", "退场时长"),
-                self.forward != BasicForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != BasicForward::Next => ("next", "next", "连续执行"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -619,8 +616,8 @@ impl Complete for ChangeFigureSentence {
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
                 self.enter_duration.is_none() => ("enterDuration", "enterDuration=", "入场时长"),
                 self.exit_duration.is_none() => ("exitDuration", "exitDuration=", "退场时长"),
-                self.forward != BasicForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != BasicForward::Next => ("next", "next", "连续执行"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -839,10 +836,10 @@ impl Complete for SetAnimationSentence {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
-                self.forward != KeepableForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != KeepableForward::Next => ("next", "next", "连续执行"),
-                self.forward != KeepableForward::Keep => ("keep", "keep", "跨语句动画"),
-                self.forward != KeepableForward::Parallel => ("parallel", "parallel", "并行动画"),
+                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
+                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -891,8 +888,8 @@ impl Complete for SetComplexAnimationSentence {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
-                self.forward != BasicForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != BasicForward::Next => ("next", "next", "连续执行"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -935,10 +932,10 @@ impl Complete for SetTransformSentence {
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.ease == Default::default() => ("ease", "ease=", "缓动类型"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
-                self.forward != KeepableForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != KeepableForward::Next => ("next", "next", "连续执行"),
-                self.forward != KeepableForward::Keep => ("keep", "keep", "跨语句动画"),
-                self.forward != KeepableForward::Parallel => ("parallel", "parallel", "并行动画"),
+                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
+                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -980,10 +977,10 @@ impl Complete for SetTempAnimationSentence {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
-                self.forward != KeepableForward::Continue => ("continue", "continue", "继续执行"),
-                self.forward != KeepableForward::Next => ("next", "next", "连续执行"),
-                self.forward != KeepableForward::Keep => ("keep", "keep", "跨语句动画"),
-                self.forward != KeepableForward::Parallel => ("parallel", "parallel", "并行动画"),
+                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
+                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
+                self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }

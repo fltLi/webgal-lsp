@@ -586,28 +586,26 @@ impl_display_for_serde_json!(AnimationList);
 
 // -------- 执行 --------
 
-/// 基础执行时序
+/// 执行时序
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
-pub enum BasicForward {
+pub enum Forward {
     #[default]
     Wait,
     Continue,
     Next,
 }
 
-/// 可持续执行时序
+/// 持续模式
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
-pub enum KeepableForward {
+pub enum Sustain {
     #[default]
     Wait,
-    Continue,
-    Next,
     Keep,
     Parallel,
 }
@@ -874,12 +872,9 @@ mod tests {
     }
 
     #[test]
-    fn basic_forward_ord() {
-        assert!(BasicForward::Next > BasicForward::Continue);
-        assert!(BasicForward::Continue > BasicForward::Wait);
-        assert_eq!(
-            BasicForward::Wait.max(BasicForward::Next),
-            BasicForward::Next
-        );
+    fn forward_ord() {
+        assert!(Forward::Next > Forward::Continue);
+        assert!(Forward::Continue > Forward::Wait);
+        assert_eq!(Forward::Wait.max(Forward::Next), Forward::Next);
     }
 }

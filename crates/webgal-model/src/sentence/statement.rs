@@ -4,8 +4,8 @@ use webgal_sentence_macro::Sentence;
 
 use crate::{
     element::{
-        AnimationList, BasicForward, Color, Ease, FigureId, FigureSide, FontSize, IntroAnimation,
-        KeepableForward, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Transform,
+        AnimationList, Color, Ease, FigureId, FigureSide, FontSize, Forward, IntroAnimation,
+        Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, Transform,
     },
     sentence::{Error, FromPrimary, PrimarySentence},
     util::{write_joined, write_joined_with},
@@ -51,7 +51,7 @@ pub struct ChangeBackgroundSentence {
     #[sentence(rename = "exitDuration", require = ["exit"])]
     pub exit_duration: Option<usize>,
     #[sentence(variant = { "continue": Continue, "next": Next })]
-    pub forward: BasicForward,
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
@@ -105,7 +105,7 @@ pub struct ChangeFigureSentence {
     #[sentence(rename = "exitDuration", require = ["exit"])]
     pub exit_duration: Option<usize>,
     #[sentence(variant = { "continue": Continue, "next": Next })]
-    pub forward: BasicForward,
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
@@ -182,13 +182,10 @@ pub struct SetAnimationSentence {
     #[sentence(rename = "writeDefault")]
     pub write_default: bool,
     // 控制
-    #[sentence(variant = {
-        "continue": Continue,
-        "next": Next,
-        "keep": Keep,
-        "parallel": Parallel,
-    })]
-    pub forward: KeepableForward,
+    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
+    pub sustain: Sustain,
+    #[sentence(variant = { "continue": Continue, "next": Next })]
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
@@ -205,7 +202,7 @@ pub struct SetComplexAnimationSentence {
     // 控制
     pub duration: Option<usize>,
     #[sentence(variant = { "continue": Continue, "next": Next })]
-    pub forward: BasicForward,
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
@@ -223,13 +220,10 @@ pub struct SetTransformSentence {
     pub ease: Ease,
     // 控制
     pub duration: Option<usize>,
-    #[sentence(variant = {
-        "continue": Continue,
-        "next": Next,
-        "keep": Keep,
-        "parallel": Parallel,
-    })]
-    pub forward: KeepableForward,
+    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
+    pub sustain: Sustain,
+    #[sentence(variant = { "continue": Continue, "next": Next })]
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
@@ -244,13 +238,10 @@ pub struct SetTempAnimationSentence {
     #[sentence(rename = "writeDefault")]
     pub write_default: bool,
     // 控制
-    #[sentence(variant = {
-        "continue": Continue,
-        "next": Next,
-        "keep": Keep,
-        "parallel": Parallel,
-    })]
-    pub forward: KeepableForward,
+    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
+    pub sustain: Sustain,
+    #[sentence(variant = { "continue": Continue, "next": Next })]
+    pub forward: Forward,
     pub when: Option<String>,
 }
 
