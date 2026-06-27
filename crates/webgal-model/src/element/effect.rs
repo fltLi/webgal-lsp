@@ -707,7 +707,7 @@ mod lsp_ext {
     impl ToJsonSchema for Animation {
         fn schema() -> Value {
             json! {{
-                "duration": string "持续时间 (ms)",
+                "duration": number "持续时间 (ms)",
                 "ease":     string "缓动类型",
             }}
             .inherit(&Transform::schema())
