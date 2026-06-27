@@ -66,6 +66,11 @@ impl<'a> SentenceInfo<'a> {
 
 impl fmt::Display for SentenceInfo<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if !self.errors.is_empty() || self.contains_nolint("WG001") {
+            f.write_str(self.content.trim_end())?;
+            return Ok(());
+        }
+
         if self.is_empty() {
             return Ok(());
         }
@@ -208,12 +213,31 @@ mod tests {
 
     #[test]
     fn sentence_info_display() {
-        let line = "changeBg:bg.png -next;nolint:WG001; comment";
+        let line = "changeBg:bg.png -next  -ease=easeIn;nolint:WG003|WG002;  comment ";
         let info = SentenceInfo::from_str(line);
         assert_eq!(
             info.to_string(),
-            "changeBg:bg.png -next;nolint:WG001; comment"
+            "changeBg:bg.png -ease=easeIn -next;nolint:WG002|WG003; comment"
         );
+    }
+
+    #[test]
+    fn sentence_info_display_with_errors() {
+        // 使用非法语句产生解析错误
+        let line = "changeBg: -unknownArg;nolint:WG002;";
+        let info = SentenceInfo::from_str(line);
+        assert!(!info.errors.is_empty());
+        let output = info.to_string();
+        assert_eq!(output, line.trim_end());
+    }
+
+    #[test]
+    fn sentence_info_display_with_nolint() {
+        let line = "changeBg:bg.png  -next;nolint:WG005|WG001;  comment";
+        let info = SentenceInfo::from_str(line);
+        assert!(info.contains_nolint("WG001"));
+        let output = info.to_string();
+        assert_eq!(output, line.trim_end());
     }
 
     // -------- Scene --------
