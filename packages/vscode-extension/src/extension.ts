@@ -9,13 +9,13 @@ import {
     ServerOptions
 } from 'vscode-languageclient/node';
 
-type ReadDirParams = { path: string };
-type ReadDirResult = { name: string; isFile: boolean }[];
-type ReadToStringParams = { path: string };
-type ReadToStringResult = string;
+type ReadDirectoryParams = { path: string };
+type ReadDirectoryResult = { name: string; isFile: boolean }[];
+type ReadFileParams = { path: string };
+type ReadFileResult = string;
 
-const ReadDirRequest = new RequestType<ReadDirParams, ReadDirResult, void>('workspace/fs/readDir');
-const ReadToStringRequest = new RequestType<ReadToStringParams, ReadToStringResult, void>('workspace/fs/readToString');
+const ReadDirectoryRequest = new RequestType<ReadDirectoryParams, ReadDirectoryResult, void>('workspace/fs/ReadDirectory');
+const ReadFileRequest = new RequestType<ReadFileParams, ReadFileResult, void>('workspace/fs/ReadFile');
 
 let client: LanguageClient;
 
@@ -50,7 +50,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     const disposables = [
-        client.onRequest(ReadDirRequest, async (params: ReadDirParams) => {
+        client.onRequest(ReadDirectoryRequest, async (params: ReadDirectoryParams) => {
             const uri = vscode.Uri.parse(params.path, true);
             try {
                 const entries = await vscode.workspace.fs.readDirectory(uri);
@@ -63,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }),
 
-        client.onRequest(ReadToStringRequest, async (params: ReadToStringParams) => {
+        client.onRequest(ReadFileRequest, async (params: ReadFileParams) => {
             const uri = vscode.Uri.parse(params.path, true);
             try {
                 const data = await vscode.workspace.fs.readFile(uri);

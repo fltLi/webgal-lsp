@@ -32,20 +32,20 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// # Requests
 /// 此服务器依赖以下自定义协议:
 ///
-/// * `workspace/fs/readDir` - 列出目录子节点 (非递归).
+/// * `workspace/fs/readDirectory` - 读取目录.
 ///   * 请求参数
 ///     ```json
-///     { "path": "目录相对于工作区根目录的路径" }
+///     { "path": "目录路径" }
 ///     ```
 ///   * 成功响应
 ///     ```json
-///     [{ "": "文件名 (即文件相对于传入目录的路径)", "isFile": true / false}]
+///     [{ "": "子节点名称", "isDirectory": true / false }]
 ///     ```
 ///
-/// * `workspace/fs/readToString` - 读取文件.
+/// * `workspace/fs/readFile` - 读取文件.
 ///   * 请求参数
 ///     ```json
-///     { "path": "文件相对于工作区根目录的路径" }
+///     { "path": "文件路径" }
 ///     ```
 ///   * 成功响应
 ///     ```json
@@ -92,9 +92,9 @@ impl Backend {
                 }
             };
 
-            for DirEntry { name, is_file } in children {
+            for DirEntry { name, is_directory } in children {
                 let path = join(&root, name);
-                if !is_file {
+                if is_directory {
                     stack.push(path);
                     continue;
                 }

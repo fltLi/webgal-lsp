@@ -76,9 +76,9 @@ impl Project {
                 }
             };
 
-            for DirEntry { name, is_file } in children {
+            for DirEntry { name, is_directory } in children {
                 let path = join(&root, &name);
-                if !is_file {
+                if is_directory {
                     stack.push(path);
                     continue;
                 }

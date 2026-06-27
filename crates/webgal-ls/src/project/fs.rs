@@ -25,28 +25,28 @@ pub trait FileSystem {
 #[serde(rename_all = "camelCase")]
 pub struct DirEntry {
     pub name: String,
-    pub is_file: bool,
+    pub is_directory: bool,
 }
 
 impl DirEntry {
+    pub fn is_file(&self) -> bool {
+        !self.is_directory
+    }
+
     pub fn as_file(&self) -> Option<&str> {
-        self.is_file.then_some(&self.name)
+        self.is_file().then_some(&self.name)
     }
 
     pub fn into_file(self) -> Option<String> {
-        self.is_file.then_some(self.name)
+        self.is_file().then_some(self.name)
     }
 
-    pub fn is_folder(&self) -> bool {
-        !self.is_file
+    pub fn as_directory(&self) -> Option<&str> {
+        self.is_directory.then_some(&self.name)
     }
 
-    pub fn as_folder(&self) -> Option<&str> {
-        (!self.is_file).then_some(&self.name)
-    }
-
-    pub fn into_folder(self) -> Option<String> {
-        (!self.is_file).then_some(self.name)
+    pub fn into_directory(self) -> Option<String> {
+        self.is_directory.then_some(self.name)
     }
 }
 
@@ -54,71 +54,71 @@ impl DirEntry {
 
 #[async_trait::async_trait]
 impl FileSystem for Client {
-    /// 列出目录子节点 (非递归)
+    /// 读取目录
     ///
     /// # Requests
-    /// 该方法通过自定义请求 `workspace/fs/readDir` 与客户端通信.
+    /// 该方法通过自定义请求 `workspace/fs/readDirectory` 与客户端通信.
     /// * 请求参数
     ///   ```json
-    ///   { "path": "目录相对于工作区根目录的路径" }
+    ///   { "path": "目录路径" }
     ///   ```
     /// * 成功响应
     ///   ```json
-    ///   [{ "": "文件名 (即文件相对于传入目录的路径)", "isFile": true / false}]
+    ///   [{ "": "子节点名称", "isDirectory": true / false }]
     ///   ```
     async fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
-        let params = ReadDirParams {
+        let params = ReadDirectoryParams {
             path: path.to_string(),
         };
-        let entries = self.send_request::<ReadDirRequest>(params).await?;
+        let entries = self.send_request::<ReadDirectoryRequest>(params).await?;
         Ok(entries)
     }
 
     /// 读取文件
     ///
     /// # Requests
-    /// 该方法通过自定义请求 `workspace/fs/readToString` 与客户端通信.
+    /// 该方法通过自定义请求 `workspace/fs/readFile` 与客户端通信.
     /// * 请求参数
     ///   ```json
-    ///   { "path": "文件相对于工作区根目录的路径" }
+    ///   { "path": "文件路径" }
     ///   ```
     /// * 成功响应
     ///   ```json
     ///   "文件内容字符串"
     ///   ```
     async fn read_to_string(&self, path: &str) -> Result<String> {
-        let params = ReadToStringParams {
+        let params = ReadFileParams {
             path: path.to_string(),
         };
-        let content = self.send_request::<ReadToStringRequest>(params).await?;
+        let content = self.send_request::<ReadFileRequest>(params).await?;
         Ok(content)
     }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReadDirParams {
+struct ReadDirectoryParams {
     path: String,
 }
 
-enum ReadDirRequest {}
+enum ReadDirectoryRequest {}
 
-impl Request for ReadDirRequest {
-    type Params = ReadDirParams;
+impl Request for ReadDirectoryRequest {
+    type Params = ReadDirectoryParams;
     type Result = Vec<DirEntry>;
-    const METHOD: &'static str = "workspace/fs/readDir";
+    const METHOD: &'static str = "workspace/fs/readDirectory";
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReadToStringParams {
+struct ReadFileParams {
     path: String,
 }
 
-enum ReadToStringRequest {}
+enum ReadFileRequest {}
 
-impl Request for ReadToStringRequest {
-    type Params = ReadToStringParams;
+impl Request for ReadFileRequest {
+    type Params = ReadFileParams;
     type Result = String;
-    const METHOD: &'static str = "workspace/fs/readToString";
+    const METHOD: &'static str = "workspace/fs/readFile";
 }
