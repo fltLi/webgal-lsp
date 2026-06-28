@@ -11,7 +11,7 @@ repository.workspace = true
 
 [features]
 default = []
-lsp = ["path-tree", "json-complete"] # WebGAL LSP 附加数据模型
+lsp = ["path-tree", "json-complete", "rayon"] # WebGAL LSP 附加数据模型
 
 [dependencies]
 path-tree = { workspace = true, optional = true }
@@ -28,6 +28,8 @@ strum.workspace = true
 serde.workspace = true
 serde_with.workspace = true
 serde_json.workspace = true
+
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true

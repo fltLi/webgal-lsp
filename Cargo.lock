@@ -2152,6 +2152,7 @@ dependencies = [
  "ouroboros",
  "path-tree",
  "rand 0.10.1",
+ "rayon",
  "serde",
  "serde_json",
  "serde_with",
