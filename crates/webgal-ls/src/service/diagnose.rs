@@ -1,5 +1,6 @@
 use std::ops;
 
+use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
 use webgal_model::sentence::*;
 
@@ -19,27 +20,38 @@ mod syntax;
 /// # Behavior
 /// * 存在 ERROR, WARNING, INFORMATION 三种级别, 仅当不存在前两者时才推送 INFO 级别的诊断.
 pub fn diagnose(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
-    let mut filter_info = false;
-    let mut diagnostics = Vec::new();
+    // 并行收集诊断
+    let diagnostics: Vec<_> = scene
+        .sentences()
+        .par_iter()
+        .enumerate()
+        .filter_map(|(line, sentence)| {
+            let mut diagnostics = Vec::new();
+            diagnose_sentence(sentence, project, |diagnostic| diagnostics.push(diagnostic));
+            (!diagnostics.is_empty()).then_some((line, diagnostics))
+        })
+        .collect();
 
-    for (line, sentence) in scene.sentences().iter().enumerate() {
-        diagnose_sentence(sentence, project, |diagnostic| match diagnostic.level {
-            DiagnosticLevel::Information => {
-                if !filter_info {
-                    diagnostics.push(diagnostic.into_diagnostic(line));
-                }
-            }
-            DiagnosticLevel::Error | DiagnosticLevel::Warning => {
-                if !filter_info {
-                    filter_info = true;
-                    diagnostics.clear();
-                }
-                diagnostics.push(diagnostic.into_diagnostic(line));
-            }
-        });
-    }
+    let has_error_or_warning = diagnostics
+        .iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Information);
 
+    // 正式推送诊断
     diagnostics
+        .into_par_iter()
+        .flat_map(|(line, diagnostics)| {
+            diagnostics
+                .into_iter()
+                .filter_map(|diagnostic| {
+                    // 含高于 info 级别诊断时, 过滤 info 级别诊断
+                    let reserve =
+                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Information;
+                    reserve.then(|| diagnostic.into_diagnostic(line))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// 生成一条语句的诊断
@@ -110,7 +122,7 @@ impl PrimaryDiagnostic {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum DiagnosticLevel {
     Information,
     Warning,
