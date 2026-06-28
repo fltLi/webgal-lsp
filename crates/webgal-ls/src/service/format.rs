@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
 use webgal_model::sentence::Scene;
 
@@ -9,8 +10,9 @@ pub fn format_capability() -> OneOf<bool, DocumentFormattingOptions> {
 pub fn format(scene: &Scene) -> Vec<TextEdit> {
     scene
         .sentences()
-        .iter()
+        .par_iter()
         .enumerate()
+        .filter(|(_, sentence)| !sentence.should_skip_formatting())
         .map(|(line, sentence)| TextEdit {
             range: Range {
                 start: Position {
