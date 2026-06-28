@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use path_tree::{Node, join, name_of, parent_of};
+use rayon::prelude::*;
 use strum::{Display, EnumString};
 use tokio::{
     select,
@@ -603,16 +604,17 @@ async fn publish_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, 
     let scene_folder_path = join(&path, "scene");
     let project = project.read().await;
 
-    for (path, node) in project.resource().scene.iter_recursively() {
-        if let Node::Item(scene) = node {
-            // 生成诊断
-            let path = join(&scene_folder_path, path);
-            let mut diagnostics = diagnose(scene, &project);
-            diagnostics_utf8_to_utf16(scene, &mut diagnostics);
+    // 生成诊断
+    let mut diagnostics = diagnose_project(&project);
+    diagnostics
+        .par_iter_mut()
+        .for_each(|(_, scene, diagnostics)| {
+            diagnostics_utf8_to_utf16(scene, diagnostics); // 编码转换
+        });
 
-            // 推送诊断
-            let uri = path.parse().unwrap();
-            client.publish_diagnostics(uri, diagnostics, None).await;
-        }
+    // 推送诊断
+    for (path, _, diagnostics) in diagnostics {
+        let uri = join(&scene_folder_path, path).parse().unwrap();
+        client.publish_diagnostics(uri, diagnostics, None).await;
     }
 }

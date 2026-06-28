@@ -15,11 +15,29 @@ use crate::{
 mod environment;
 mod syntax;
 
+/// 为项目提供诊断
+///
+/// # Behavior
+/// * 存在 ERROR, WARNING, INFORMATION 三种级别, 对每个场景, 仅当不存在前两者时才推送 INFO 级别的诊断.
+pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnostic>)> {
+    project
+        .resource()
+        .scene
+        .iter_recursively()
+        .par_bridge()
+        .filter_map(|(path, scene)| {
+            let scene = scene.as_item()?;
+            let diagnostics = diagnose_scene(scene, project);
+            (!diagnostics.is_empty()).then_some((path, scene, diagnostics))
+        })
+        .collect()
+}
+
 /// 为场景提供诊断
 ///
 /// # Behavior
 /// * 存在 ERROR, WARNING, INFORMATION 三种级别, 仅当不存在前两者时才推送 INFO 级别的诊断.
-pub fn diagnose(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
+pub fn diagnose_scene(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
     // 并行收集诊断
     let diagnostics: Vec<_> = scene
         .sentences()
