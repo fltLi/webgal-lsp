@@ -1,7 +1,7 @@
 use std::fmt::{self, Write};
 
 use ouroboros::self_referencing;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     sentence::{Error, FromPrimary, PrimarySentence, Sentence},
@@ -126,11 +126,8 @@ impl Scene {
     pub fn from_str<S: Into<String>>(scene: S) -> Self {
         let content = scene.into();
         Self(SceneData::new(content, |content| {
-            content
-                .lines()
-                .par_bridge()
-                .map(SentenceInfo::from_str)
-                .collect()
+            let lines: Vec<_> = content.lines().collect();
+            lines.into_par_iter().map(SentenceInfo::from_str).collect()
         }))
     }
 
