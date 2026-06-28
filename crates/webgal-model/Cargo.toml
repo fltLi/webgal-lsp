@@ -29,6 +29,8 @@ serde.workspace = true
 serde_with.workspace = true
 serde_json.workspace = true
 
+rayon.workspace = true
+
 [dev-dependencies]
 rand.workspace = true
 

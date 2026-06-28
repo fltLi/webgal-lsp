@@ -1,6 +1,7 @@
 use std::fmt::{self, Write};
 
 use ouroboros::self_referencing;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     sentence::{Error, FromPrimary, PrimarySentence, Sentence},
@@ -120,12 +121,13 @@ struct SceneData {
 }
 
 impl Scene {
-    /// 从场景字符串构建
+    /// 从场景字符串并发构建
     #[allow(clippy::should_implement_trait)]
     pub fn from_str<S: Into<String>>(scene: S) -> Self {
         let content = scene.into();
         Self(SceneData::new(content, |content| {
-            content.lines().map(SentenceInfo::from_str).collect()
+            let lines: Vec<_> = content.lines().collect();
+            lines.into_par_iter().map(SentenceInfo::from_str).collect()
         }))
     }
 

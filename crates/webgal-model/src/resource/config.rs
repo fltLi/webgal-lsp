@@ -3,6 +3,7 @@
 use std::{collections::HashSet, fmt};
 
 use derive_more::{Deref, DerefMut, From, Into};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// 配置条目, 可表示配置 / 注释 / 空行
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -66,7 +67,8 @@ impl Config {
     /// * 跨行配置的解析与 WebGAL 实际行为不符.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(config: &str) -> Self {
-        Self(config.lines().map(ConfigItem::from_str).collect())
+        let lines: Vec<_> = config.lines().collect();
+        Self(lines.into_par_iter().map(ConfigItem::from_str).collect())
     }
 
     /// 查找指定配置
