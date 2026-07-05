@@ -16,7 +16,7 @@ use tokio::{
         Mutex as AsyncMutex, RwLock as AsyncRwLock,
         mpsc::{UnboundedSender, unbounded_channel},
     },
-    task::{spawn, spawn_blocking},
+    task::{JoinSet, spawn, spawn_blocking},
     time::interval,
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
@@ -599,7 +599,7 @@ impl TryFrom<FileChangeType> for FileChangeKind {
     }
 }
 
-/// 启动推送服务
+/// 启动诊断推送服务
 ///
 /// 通过管道发送推送任务 (项目完整路径 + 项目).
 /// 任务自动去重, 每隔 500ms 集中处理一次, 避免大量更新阻塞程序.
@@ -607,6 +607,7 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
     let (sender, mut receiver) = unbounded_channel();
 
     tokio::spawn(async move {
+        let client: &'static Client = unsafe { mem::transmute(&client) };
         let mut pending: HashMap<String, _> = HashMap::new();
         let mut interval = interval(Duration::from_millis(500));
 
@@ -621,10 +622,15 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
                     if pending.is_empty() {
                         continue;
                     }
+
                     debug!(count = pending.len(), "Processing diagnostic batch");
-                    for (path, project) in pending.drain() {
-                        publish_project_diagnostics(&path, project, &client).await;
-                    }
+                    let tasks: JoinSet<_> = pending
+                        .drain()
+                        .map(|(path, project)| async move {
+                            publish_project_diagnostics(&path, project, client).await
+                        })
+                        .collect();
+                    tasks.join_all().await;
                 }
             }
         }
