@@ -517,7 +517,7 @@ impl Complete for SaySentence {
                 position,
             ),
             "figureId" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
-            "fontSize=" => complete_font_size_enum(input, position),
+            "fontSize" => complete_font_size_enum(input, position),
             _ => Vec::default(),
         }
     }
