@@ -19,6 +19,7 @@ mod syntax;
 ///
 /// # Behavior
 /// * 存在 ERROR, WARNING, INFORMATION 三种级别, 对每个场景, 仅当不存在前两者时才推送 INFO 级别的诊断.
+/// * 对于没有问题的场景, 会给出一个空诊断列表而不是过滤掉.
 pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnostic>)> {
     project
         .resource()
@@ -28,7 +29,7 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
         .filter_map(|(path, scene)| {
             let scene = scene.as_item()?;
             let diagnostics = diagnose_scene(scene, project);
-            (!diagnostics.is_empty()).then_some((path, scene, diagnostics))
+            Some((path, scene, diagnostics))
         })
         .collect()
 }
