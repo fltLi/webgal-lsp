@@ -1,5 +1,6 @@
 use std::ops;
 
+use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
 use webgal_model::sentence::{Scene, Sentence, SentenceInfo};
 
@@ -29,36 +30,53 @@ pub fn highlight_capability() -> SemanticTokensServerCapabilities {
 
 /// 为场景提供语义高亮
 pub fn highlight(scene: &Scene) -> Vec<SemanticToken> {
-    let mut tokens = Vec::new();
-    let mut last_line = 0;
+    // 并行处理每条语句
+    let lines: Vec<_> = scene
+        .sentences()
+        .par_iter()
+        .enumerate()
+        .filter_map(|(line, sentence)| {
+            let mut tokens = Vec::new();
+            let mut last_end = 0;
 
-    for (line, sentence) in scene.sentences().iter().enumerate() {
-        let mut last_end = 0;
+            highlight_sentence(
+                sentence,
+                |PrimaryToken {
+                     span: ops::Range { start, end },
+                     kind,
+                 }| {
+                    let delta_start = (start - last_end) as u32;
+                    let length = (end - start) as u32;
+                    last_end = end;
 
-        highlight_sentence(sentence, |PrimaryToken { start, end, kind }| {
-            let delta_line = if line == last_line {
-                0
+                    tokens.push(SemanticToken {
+                        delta_line: 0,
+                        delta_start,
+                        length,
+                        token_type: kind.to_id(),
+                        token_modifiers_bitset: 0,
+                    });
+                },
+            );
+
+            if tokens.is_empty() {
+                None
             } else {
-                let delta = (line - last_line) as u32;
-                last_line = line;
-                delta
-            };
+                Some((line, tokens))
+            }
+        })
+        .collect();
 
-            let delta_start = (start - last_end) as u32;
-            let length = (end - start) as u32;
-            last_end = end;
-
-            tokens.push(SemanticToken {
-                delta_line,
-                delta_start,
-                length,
-                token_type: kind.to_id(),
-                token_modifiers_bitset: 0,
-            });
-        });
-    }
-
-    tokens
+    // 追加行递增
+    let mut last_line = 0;
+    lines
+        .into_iter()
+        .flat_map(|(line, mut tokens)| {
+            tokens[0].delta_line = (line - last_line) as u32;
+            last_line = line;
+            tokens
+        })
+        .collect()
 }
 
 /// 生成一条语句的高亮
@@ -74,30 +92,29 @@ where
     } = sentence;
 
     // 语句类型高亮
-    push(PrimaryToken::from_span(
-        primary.get_span(primary.command),
-        if !sentence.is_say() {
+    push(PrimaryToken {
+        span: primary.get_span(primary.command),
+        kind: if !sentence.is_say() {
             TokenType::Function
         } else if primary.content.is_some() {
             TokenType::Variable
         } else {
             TokenType::String
         },
-    ));
+    });
 
     // 主参数高亮
     if let Some(content) = primary.content {
         // `:`
         let pos = primary.command.len();
-        push(PrimaryToken {
-            start: pos,
-            end: pos + 1,
-            kind: TokenType::Operator,
-        });
+        push(PrimaryToken::from_position(pos, TokenType::Operator));
 
         // 参数值
         if let Some(kind) = TokenType::from_content(sentence) {
-            push(PrimaryToken::from_span(primary.get_span(content), kind));
+            push(PrimaryToken {
+                span: primary.get_span(content),
+                kind,
+            });
         }
     }
 
@@ -107,29 +124,27 @@ where
         let ops::Range { start, end } = span;
 
         // `-`
-        push(PrimaryToken {
-            start: start - 1,
-            end: start,
-            kind: TokenType::Operator,
-        });
+        push(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
         // 参数名
-        push(PrimaryToken::from_span(span, TokenType::Property));
+        push(PrimaryToken {
+            span,
+            kind: TokenType::Property,
+        });
 
         // `=`
         if value.is_some() {
-            push(PrimaryToken {
-                start: end,
-                end: end + 1,
-                kind: TokenType::Operator,
-            });
+            push(PrimaryToken::from_position(end, TokenType::Operator));
         }
 
         // 参数值
         if let Some(value) = value
             && let Some(kind) = TokenType::from_arguemnt(name, sentence)
         {
-            push(PrimaryToken::from_span(primary.get_span(value), kind));
+            push(PrimaryToken {
+                span: primary.get_span(value),
+                kind,
+            });
         }
     }
 
@@ -141,24 +156,25 @@ where
         .filter(|comment| comment.starts_with(';'))
         .unwrap_or(primary.comment);
     if !comment.is_empty() {
-        push(PrimaryToken::from_span(
-            primary.get_span(comment),
-            TokenType::Comment,
-        ));
+        push(PrimaryToken {
+            span: primary.get_span(comment),
+            kind: TokenType::Comment,
+        });
     }
 }
 
-#[derive(Clone, Copy)]
 struct PrimaryToken {
-    start: usize,
-    end: usize,
+    span: ops::Range<usize>,
     kind: TokenType,
 }
 
 impl PrimaryToken {
-    fn from_span(span: ops::Range<usize>, kind: TokenType) -> Self {
-        let ops::Range { start, end } = span;
-        Self { start, end, kind }
+    fn from_position(position: usize, kind: TokenType) -> Self {
+        let span = ops::Range {
+            start: position,
+            end: position + 1,
+        };
+        Self { span, kind }
     }
 }
 
