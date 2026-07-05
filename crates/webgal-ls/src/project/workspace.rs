@@ -1,11 +1,10 @@
 //! 工作区多项目管理与路由
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, anyhow};
 use derive_more::{From, Into};
 use path_tree::{Entry, Folder, Node, PATH_SEPARATORS, join, split_path_once};
-use tokio::sync::RwLock;
 
 use crate::project::Project;
 
