@@ -1,6 +1,7 @@
 use std::fmt::{self, Write};
 
 use ouroboros::self_referencing;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     sentence::{Error, FromPrimary, PrimarySentence, Sentence},
@@ -62,11 +63,18 @@ impl<'a> SentenceInfo<'a> {
     pub fn contains_nolint(&self, name: &str) -> bool {
         self.nolints.binary_search(&name).is_ok()
     }
+
+    /// 是否有必要格式化
+    ///
+    /// 当语句不含语法错误, 且无格式忽略标识时为 `true`.
+    pub fn should_skip_formatting(&self) -> bool {
+        !self.errors.is_empty() || self.contains_nolint("WG001")
+    }
 }
 
 impl fmt::Display for SentenceInfo<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !self.errors.is_empty() || self.contains_nolint("WG001") {
+        if self.should_skip_formatting() {
             f.write_str(self.content.trim_end())?;
             return Ok(());
         }
@@ -120,12 +128,13 @@ struct SceneData {
 }
 
 impl Scene {
-    /// 从场景字符串构建
+    /// 从场景字符串并发构建
     #[allow(clippy::should_implement_trait)]
     pub fn from_str<S: Into<String>>(scene: S) -> Self {
         let content = scene.into();
         Self(SceneData::new(content, |content| {
-            content.lines().map(SentenceInfo::from_str).collect()
+            let lines: Vec<_> = content.lines().collect();
+            lines.into_par_iter().map(SentenceInfo::from_str).collect()
         }))
     }
 

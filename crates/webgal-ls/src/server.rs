@@ -1,15 +1,22 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    mem,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::anyhow;
 use path_tree::{Node, join, name_of, parent_of};
+use rayon::prelude::*;
 use strum::{Display, EnumString};
 use tokio::{
+    runtime::Handle,
     select,
     sync::{
-        Mutex, RwLock,
+        Mutex as AsyncMutex, RwLock as AsyncRwLock,
         mpsc::{UnboundedSender, unbounded_channel},
     },
-    task,
+    task::{JoinSet, spawn, spawn_blocking},
     time::interval,
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
@@ -54,10 +61,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone)]
 pub struct Backend {
     client: Client,
-    workspace: Arc<RwLock<Workspace>>,
+    workspace: Arc<AsyncRwLock<Workspace>>,
     diagnose: UnboundedSender<(String, Arc<RwLock<Project>>)>,
     /// 初始化参数
-    init_state: Arc<Mutex<InitializationState>>,
+    init_state: Arc<AsyncMutex<InitializationState>>,
 }
 
 #[derive(Debug, Default)]
@@ -67,7 +74,7 @@ struct InitializationState {
 
 impl Backend {
     pub fn new(client: Client) -> Self {
-        let workspace = Arc::new(RwLock::new(Workspace::new()));
+        let workspace = Arc::new(AsyncRwLock::new(Workspace::new()));
         let diagnose = start_diagnostic_service(client.clone());
 
         Self {
@@ -176,13 +183,18 @@ impl Backend {
                 };
                 debug!(project = %project_path, path = %resource_path, "Updating resource");
 
-                project
-                    .write()
-                    .await
-                    .insert(&resource_path, || async {
-                        self.client.read_to_string(path).await
-                    })
-                    .await?;
+                let project = spawn_blocking({
+                    let fs: &'static Client = unsafe { mem::transmute(&self.client) };
+                    let path: &'static str = unsafe { mem::transmute(path) };
+                    move || {
+                        let result = project.write().unwrap().insert(&resource_path, || {
+                            Handle::current().block_on(fs.read_to_string(path))
+                        });
+                        result.map(|_| project)
+                    }
+                })
+                .await
+                .unwrap()?;
 
                 self.diagnose_project(&project_path, project);
             }
@@ -202,7 +214,12 @@ impl Backend {
                 };
                 debug!(project = %project_path, path = %resource_path, "Removing resource");
 
-                project.write().await.remove(&resource_path).await?;
+                let project = spawn_blocking(move || {
+                    let result = project.write().unwrap().remove(&resource_path);
+                    result.map(|_| project)
+                })
+                .await
+                .unwrap()?;
 
                 self.diagnose_project(&project_path, project);
             }
@@ -263,7 +280,7 @@ impl LanguageServer for Backend {
             let mut state = self.init_state.lock().await;
             if let Some(folders) = state.workspace_folders.take() {
                 let server = self.clone();
-                task::spawn(async move { server.initialize_workspace_folders(folders).await });
+                spawn(async move { server.initialize_workspace_folders(folders).await });
             }
         }
 
@@ -310,15 +327,22 @@ impl LanguageServer for Backend {
         };
 
         // 更新资源
-        if let Err(error) = project
-            .write()
-            .await
-            .insert(&resource_path, || async { Ok(content) })
-            .await
+        let project = match spawn_blocking({
+            let path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            move || {
+                let result = project.write().unwrap().insert(path, || Ok(content));
+                result.map(|_| project)
+            }
+        })
+        .await
+        .unwrap()
         {
-            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on open");
-            return;
-        }
+            Ok(v) => v,
+            Err(error) => {
+                error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on change");
+                return;
+            }
+        };
 
         debug!(project = %project_path, path = %resource_path, "Updated resource via open");
         self.diagnose_project(&project_path, project);
@@ -345,15 +369,22 @@ impl LanguageServer for Backend {
         };
 
         // 更新资源
-        if let Err(error) = project
-            .write()
-            .await
-            .insert(&resource_path, || async { Ok(content) })
-            .await
+        let project = match spawn_blocking({
+            let path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            move || {
+                let result = project.write().unwrap().insert(path, || Ok(content));
+                result.map(|_| project)
+            }
+        })
+        .await
+        .unwrap()
         {
-            error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on change");
-            return;
-        }
+            Ok(v) => v,
+            Err(error) => {
+                error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on change");
+                return;
+            }
+        };
 
         debug!(project = %project_path, path = %resource_path, "Updated resource via change");
         self.diagnose_project(&project_path, project);
@@ -381,7 +412,7 @@ impl LanguageServer for Backend {
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
         let WorkspaceFoldersChangeEvent { added, removed } = params.event;
         let server = self.clone();
-        task::spawn(async move {
+        spawn(async move {
             if !added.is_empty() {
                 info!(count = added.len(), "Workspace folders added");
                 server.initialize_workspace_folders(added).await;
@@ -413,32 +444,39 @@ impl LanguageServer for Backend {
             }
         };
 
-        // 校验路径
-        let (kind, path) = ResourceKind::from_path(&resource_path);
-        if kind != ResourceKind::Scene {
-            debug!(project = %project_path, path = %resource_path, "Highlighting skipped: not a scene file");
-            return Ok(None);
-        }
-
-        // 查找场景
-        let project = project.read().await;
-        let scene = match project.resource().scene.get(path) {
-            Some(Node::Item(v)) => v,
-            _ => {
-                debug!(project = %project_path, %path, "Scene not found for highlighting");
-                return Ok(None);
+        let tokens = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Highlighting skipped: not a scene file");
+                return None;
             }
-        };
 
-        // 生成补全
-        info!(project = %project_path, %path, "Highlight scene");
-        let mut tokens = highlight(scene);
-        highlights_utf8_to_utf16(scene, &mut tokens);
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Scene not found for highlighting");
+                    return None;
+                }
+            };
 
-        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-            data: tokens,
-            ..Default::default()
-        })))
+            // 生成补全
+            info!(project = %project_path, %path, "Highlight scene");
+            let mut tokens = highlight(scene);
+            highlights_utf8_to_utf16(scene, &mut tokens);
+            Some(tokens)
+        })
+        .await
+        .unwrap();
+
+        Ok(tokens.map(|tokens| {
+            SemanticTokensResult::Tokens(SemanticTokens {
+                data: tokens,
+                ..Default::default()
+            })
+        }))
     }
 
     async fn completion(
@@ -460,37 +498,41 @@ impl LanguageServer for Backend {
             }
         };
 
-        // 校验路径
-        let (kind, path) = ResourceKind::from_path(&resource_path);
-        if kind != ResourceKind::Scene {
-            debug!(project = %project_path, path = %resource_path, "Completing skipped: not a scene file");
-            return Ok(None);
-        }
-
-        // 查找场景
-        let project = project.read().await;
-        let scene = match project.resource().scene.get(path) {
-            Some(Node::Item(v)) => v,
-            _ => {
-                debug!(project = %project_path, %path, "Scene not found for completion");
-                return Ok(None);
+        let completions = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Completing skipped: not a scene file");
+                return None;
             }
-        };
 
-        // 生成补全
-        info!(project = %project_path, %path, "Completing input");
-        let position = position_utf16_to_utf8(scene, params.text_document_position.position);
-        let mut completions = complete(scene, position, &project);
-        completions_utf8_to_utf16(scene, &mut completions);
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Scene not found for completion");
+                    return None;
+                }
+            };
 
-        Ok(Some(CompletionResponse::Array(completions)))
+            // 生成补全
+            info!(project = %project_path, %path, "Completing input");
+            let position = position_utf16_to_utf8(scene, params.text_document_position.position);
+            let mut completions = complete(scene, position, &project);
+            completions_utf8_to_utf16(scene, &mut completions);
+            Some(completions)
+        })
+        .await
+        .unwrap();
+
+        Ok(completions.map(CompletionResponse::Array))
     }
 
     async fn formatting(
         &self,
         params: DocumentFormattingParams,
     ) -> jsonrpc::Result<Option<Vec<TextEdit>>> {
-        // TODO: 存在报错诊断时不执行格式化
         let path = params.text_document.uri.to_string();
 
         // 查找项目
@@ -506,29 +548,34 @@ impl LanguageServer for Backend {
             }
         };
 
-        // 校验路径
-        let (kind, path) = ResourceKind::from_path(&resource_path);
-        if kind != ResourceKind::Scene {
-            debug!(project = %project_path, path = %resource_path, "Formatting skipped: not a scene file");
-            return Ok(None);
-        }
-
-        // 查找场景
-        let project = project.read().await;
-        let scene = match project.resource().scene.get(path) {
-            Some(Node::Item(v)) => v,
-            _ => {
-                debug!(project = %project_path, %path, "Scene not found for formatting");
-                return Ok(None);
+        let edits = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Formatting skipped: not a scene file");
+                return None;
             }
-        };
 
-        // 生成补全
-        info!(project = %project_path, %path, "Formatting scene");
-        let mut edits = format(scene);
-        formatting_utf8_to_utf16(scene, &mut edits);
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Scene not found for formatting");
+                    return None;
+                }
+            };
 
-        Ok(Some(edits))
+            // 生成补全
+            info!(project = %project_path, %path, "Formatting scene");
+            let mut edits = format(scene);
+            formatting_utf8_to_utf16(scene, &mut edits);
+            Some(edits)
+        })
+        .await
+        .unwrap();
+
+        Ok(edits)
     }
 }
 
@@ -552,7 +599,7 @@ impl TryFrom<FileChangeType> for FileChangeKind {
     }
 }
 
-/// 启动推送服务
+/// 启动诊断推送服务
 ///
 /// 通过管道发送推送任务 (项目完整路径 + 项目).
 /// 任务自动去重, 每隔 500ms 集中处理一次, 避免大量更新阻塞程序.
@@ -560,6 +607,7 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
     let (sender, mut receiver) = unbounded_channel();
 
     tokio::spawn(async move {
+        let client: &'static Client = unsafe { mem::transmute(&client) };
         let mut pending: HashMap<String, _> = HashMap::new();
         let mut interval = interval(Duration::from_millis(500));
 
@@ -574,10 +622,15 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
                     if pending.is_empty() {
                         continue;
                     }
+
                     debug!(count = pending.len(), "Processing diagnostic batch");
-                    for (path, project) in pending.drain() {
-                        publish_project_diagnostics(&path, project, &client).await;
-                    }
+                    let tasks: JoinSet<_> = pending
+                        .drain()
+                        .map(|(path, project)| async move {
+                            publish_project_diagnostics(&path, project, client).await
+                        })
+                        .collect();
+                    tasks.join_all().await;
                 }
             }
         }
@@ -589,8 +642,19 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
 async fn clean_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, client: &Client) {
     debug!(project = %path, "Cleaning diagnostics for project");
     let scene_folder_path = join(path, "scene");
-    for (path, _) in project.read().await.resource().scene.iter_recursively() {
-        let uri = join(&scene_folder_path, path).parse().unwrap();
+    let uris: Vec<_> = spawn_blocking(move || {
+        project
+            .read()
+            .unwrap()
+            .resource()
+            .scene
+            .iter_recursively()
+            .map(|(path, _)| join(&scene_folder_path, path).parse().unwrap())
+            .collect()
+    })
+    .await
+    .unwrap();
+    for uri in uris {
         client.publish_diagnostics(uri, Vec::default(), None).await;
     }
 }
@@ -601,18 +665,23 @@ async fn publish_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, 
 
     info!(project = %path, "Diagnosing project");
     let scene_folder_path = join(&path, "scene");
-    let project = project.read().await;
 
-    for (path, node) in project.resource().scene.iter_recursively() {
-        if let Node::Item(scene) = node {
-            // 生成诊断
-            let path = join(&scene_folder_path, path);
-            let mut diagnostics = diagnose(scene, &project);
-            diagnostics_utf8_to_utf16(scene, &mut diagnostics);
+    // 生成诊断
+    let diagnostics: Vec<_> = spawn_blocking(move || {
+        diagnose_project(&project.read().unwrap())
+            .into_par_iter()
+            .map(|(path, scene, mut diagnostics)| {
+                let uri = join(&scene_folder_path, path).parse().unwrap();
+                diagnostics_utf8_to_utf16(scene, &mut diagnostics);
+                (uri, diagnostics)
+            })
+            .collect()
+    })
+    .await
+    .unwrap();
 
-            // 推送诊断
-            let uri = path.parse().unwrap();
-            client.publish_diagnostics(uri, diagnostics, None).await;
-        }
+    // 推送诊断
+    for (uri, diagnostics) in diagnostics {
+        client.publish_diagnostics(uri, diagnostics, None).await;
     }
 }

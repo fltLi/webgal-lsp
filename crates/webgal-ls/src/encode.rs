@@ -1,5 +1,6 @@
 use std::mem;
 
+use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
 use webgal_model::sentence::Scene;
 
@@ -75,9 +76,9 @@ pub fn text_edit_utf8_to_utf16(scene: &Scene, edit: TextEdit) -> TextEdit {
 // -------- service --------
 
 pub fn diagnostics_utf8_to_utf16(scene: &Scene, diagnostics: &mut [Diagnostic]) {
-    for diagnostic in diagnostics {
+    diagnostics.par_iter_mut().for_each(|diagnostic| {
         *diagnostic = diagnostic_utf8_to_utf16(scene, mem::take(diagnostic));
-    }
+    });
 }
 
 pub fn diagnostic_utf8_to_utf16(scene: &Scene, diagnostic: Diagnostic) -> Diagnostic {
@@ -134,9 +135,9 @@ pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
 }
 
 pub fn completions_utf8_to_utf16(scene: &Scene, completions: &mut [CompletionItem]) {
-    for completion in completions {
+    completions.par_iter_mut().for_each(|completion| {
         *completion = completion_utf8_to_utf16(scene, mem::take(completion));
-    }
+    });
 }
 
 pub fn completion_utf8_to_utf16(scene: &Scene, completion: CompletionItem) -> CompletionItem {
@@ -152,9 +153,9 @@ pub fn completion_utf8_to_utf16(scene: &Scene, completion: CompletionItem) -> Co
 }
 
 pub fn formatting_utf8_to_utf16(scene: &Scene, edits: &mut [TextEdit]) {
-    for edit in edits {
+    edits.par_iter_mut().for_each(|edit| {
         *edit = text_edit_utf8_to_utf16(scene, mem::take(edit));
-    }
+    });
 }
 
 #[cfg(test)]

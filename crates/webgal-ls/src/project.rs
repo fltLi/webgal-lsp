@@ -1,9 +1,9 @@
-use std::result;
+use std::{mem, result};
 
 use anyhow::anyhow;
 use getset::Getters;
 use path_tree::{Entry, Folder, Node, canonicalize, join};
-use tokio::task;
+use tokio::{runtime::Handle, task::spawn_blocking};
 use webgal_model::{
     resource::{Config, RESOURCE_ROOTS, ResourceInfo, ResourceKind},
     sentence::Scene,
@@ -42,8 +42,14 @@ impl Project {
     }
 
     /// 扫描目录构建项目
-    pub async fn load<F: FileSystem>(root: &str, fs: &F, errors: &mut Vec<anyhow::Error>) -> Self {
-        let absolute_path = |path: &str| join(root, path);
+    pub async fn load<F: FileSystem + Send + Sync + 'static>(
+        root: &str,
+        fs: &F,
+        errors: &mut Vec<anyhow::Error>,
+    ) -> Self {
+        let fs: &'static F = unsafe { mem::transmute(fs) };
+        let root: &'static str = unsafe { mem::transmute(root) };
+        let absolute_path = move |path: &str| join(root, path);
 
         // 读取配置
         let config_path = absolute_path("config.txt");
@@ -62,40 +68,45 @@ impl Project {
             }
         };
 
-        let mut project = Self::new(config);
+        let (project, mut collected_errors) = spawn_blocking(move || {
+            let mut errors = Vec::new();
+            let mut project = Self::new(config);
 
-        // 扫描资源目录
-        let mut stack: Vec<_> = RESOURCE_ROOTS.iter().map(|root| root.to_string()).collect();
-        while let Some(root) = stack.pop() {
-            let full_root = absolute_path(&root);
-            let children = match fs.read_dir(&full_root).await {
-                Ok(v) => v,
-                Err(error) => {
-                    errors.push(anyhow!("遍历目录 `{full_root}` 出错: {error}"));
-                    continue;
-                }
-            };
+            // 扫描资源目录
+            let mut stack: Vec<_> = RESOURCE_ROOTS.iter().map(|root| root.to_string()).collect();
+            while let Some(root) = stack.pop() {
+                let full_root = absolute_path(&root);
+                let children = match Handle::current().block_on(fs.read_dir(&full_root)) {
+                    Ok(v) => v,
+                    Err(error) => {
+                        errors.push(anyhow!("遍历目录 `{full_root}` 出错: {error}"));
+                        continue;
+                    }
+                };
 
-            for DirEntry { name, is_directory } in children {
-                let path = join(&root, &name);
-                if is_directory {
-                    stack.push(path);
-                    continue;
-                }
+                for DirEntry { name, is_directory } in children {
+                    let path = join(&root, &name);
+                    if is_directory {
+                        stack.push(path);
+                        continue;
+                    }
 
-                // 加载资源
-                if let Err(error) = project
-                    .insert(&path, || async {
+                    // 加载资源
+                    if let Err(error) = project.insert(&path, || {
                         let full_path = absolute_path(&path);
-                        fs.read_to_string(&full_path).await
-                    })
-                    .await
-                {
-                    errors.push(error.into());
+                        Handle::current().block_on(fs.read_to_string(&full_path))
+                    }) {
+                        errors.push(error.into());
+                    }
                 }
             }
-        }
 
+            (project, errors)
+        })
+        .await
+        .unwrap();
+
+        errors.append(&mut collected_errors);
         project
     }
 
@@ -107,10 +118,9 @@ impl Project {
     ///
     /// # Behavior
     /// * 按需获取文件内容 (属于资源类型 + 该类型需要解析文件内容 + 路径正确).
-    pub async fn insert<F, Fut>(&mut self, path: &str, f: F) -> Result<()>
+    pub fn insert<F>(&mut self, path: &str, f: F) -> Result<()>
     where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = anyhow::Result<String>>,
+        F: FnOnce() -> anyhow::Result<String>,
     {
         let path = try_canonicalize(path)?;
         let info = ResourceInfo::from_path(&path);
@@ -128,7 +138,7 @@ impl Project {
 
         match kind {
             ResourceKind::Config => {
-                let content = f().await.map_err(ErrorKind::Content).map_err(make_error)?;
+                let content = f().map_err(ErrorKind::Content).map_err(make_error)?;
                 self.config = Config::from_str(&content);
             }
 
@@ -137,10 +147,8 @@ impl Project {
                 let entry = try_entry_of(path, &mut self.resource.scene).map_err(make_error)?;
 
                 // 解析场景
-                let content = f().await.map_err(ErrorKind::Content).map_err(make_error)?;
-                let scene = task::spawn_blocking(move || Scene::from_str(content))
-                    .await
-                    .unwrap();
+                let content = f().map_err(ErrorKind::Content).map_err(make_error)?;
+                let scene = Scene::from_str(content);
 
                 // 更新符号
                 self.ident.insert_scene(&scene);
@@ -165,10 +173,7 @@ impl Project {
             }
 
             ResourceKind::Figure => {
-                self.resource
-                    .insert_figure(path, f)
-                    .await
-                    .map_err(make_error)?;
+                self.resource.insert_figure(path, f).map_err(make_error)?;
             }
 
             ResourceKind::Bgm => {
@@ -193,7 +198,7 @@ impl Project {
     ///
     /// # Arguments
     /// * **path** - 文件或目录相对于项目根目录的路径.
-    pub async fn remove(&mut self, path: &str) -> Result<()> {
+    pub fn remove(&mut self, path: &str) -> Result<()> {
         let path = try_canonicalize(path)?;
         let info = ResourceInfo::from_path(&path);
 
