@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     mem,
     sync::{Arc, RwLock},
     time::Duration,
@@ -62,7 +62,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Backend {
     client: Client,
     workspace: Arc<AsyncRwLock<Workspace>>,
-    diagnose: UnboundedSender<(String, Arc<RwLock<Project>>)>,
+    open_ducuments: Arc<AsyncRwLock<HashSet<String>>>, // 编辑器活动文档
+    diagnose: UnboundedSender<(String, Arc<RwLock<Project>>)>, // 诊断服务通道
     /// 初始化参数
     init_state: Arc<AsyncMutex<InitializationState>>,
 }
@@ -80,6 +81,7 @@ impl Backend {
         Self {
             client,
             workspace,
+            open_ducuments: Default::default(),
             diagnose,
             init_state: Default::default(),
         }
@@ -313,6 +315,9 @@ impl LanguageServer for Backend {
         let path = params.text_document.uri.to_string();
         let content = params.text_document.text;
 
+        // 注册活动文档
+        self.open_ducuments.write().await.insert(path.clone());
+
         // 查找项目
         let GetProjectResult {
             project_path,
@@ -390,7 +395,49 @@ impl LanguageServer for Backend {
         self.diagnose_project(&project_path, project);
     }
 
-    async fn did_close(&self, _: DidCloseTextDocumentParams) {}
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let path = params.text_document.uri.to_string();
+
+        // 签出活动文档
+        self.open_ducuments.write().await.remove(&path);
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Document closed but not in any project");
+                return;
+            }
+        };
+
+        // 重置资源为磁盘内容
+        let project = match spawn_blocking({
+            let fs: &'static Client = unsafe { mem::transmute(&self.client) };
+            let resource_path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            move || {
+                let result = project.write().unwrap().insert(resource_path, || {
+                    Handle::current().block_on(fs.read_to_string(&path))
+                });
+                result.map(|_| project)
+            }
+        })
+        .await
+        .unwrap()
+        {
+            Ok(v) => v,
+            Err(error) => {
+                error!(project = %project_path, path = %resource_path, %error, "Failed to update resource on change");
+                return;
+            }
+        };
+
+        debug!(project = %project_path, path = %resource_path, "Updated resource via close");
+        self.diagnose_project(&project_path, project);
+    }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         for FileEvent { uri, typ } in params.changes {
@@ -402,6 +449,11 @@ impl LanguageServer for Backend {
                     continue;
                 }
             };
+
+            // 过滤活动文档
+            if self.open_ducuments.read().await.contains(&path) {
+                continue;
+            }
 
             if let Err(error) = self.change_file(&path, kind).await {
                 error!(%path, %kind, %error, "Failed to update file");
