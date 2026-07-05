@@ -1,6 +1,6 @@
 use std::iter;
 
-use ranked_count::Counter;
+use count::HashCounter;
 use tower_lsp::lsp_types::*;
 
 use crate::{project::Project, service::complete::make_span};
@@ -15,22 +15,21 @@ pub fn complete_command(input: &str, position: Position, project: &Project) -> V
 }
 
 fn complete_speaker(
-    speakers: &Counter<String>,
+    speakers: &HashCounter<String>,
     input: &str,
     position: Position,
 ) -> Vec<CompletionItem> {
     speakers
-        .iter_by_count()
-        .filter_map(|(name, _)| name.starts_with(input).then_some(name))
-        .enumerate()
-        .map(|(i, name)| CompletionItem {
+        .iter_with_count()
+        .filter(|(name, _)| name.starts_with(input))
+        .map(|(name, count)| CompletionItem {
             label: name.to_string(),
             label_details: Some(CompletionItemLabelDetails {
                 detail: None,
                 description: Some("人物".to_string()),
             }),
             kind: Some(CompletionItemKind::VARIABLE),
-            sort_text: Some(format!("b{i:03}_{name}")),
+            sort_text: Some(format!("b{:016x}{name}", !count)),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: make_span(position, input.len()),
                 new_text: format!("{name}:"),
@@ -64,7 +63,7 @@ impl CommandInfo {
                     description: Some(self.description.to_string()),
                 }),
                 kind: Some(CompletionItemKind::FUNCTION),
-                sort_text: Some(format!("a000_{}", self.name)),
+                sort_text: Some(format!("a{}", self.name)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: make_span(position, input.len()),
                     new_text: if self.with_content {
@@ -97,7 +96,7 @@ impl CommandInfo {
                             }),
                         }),
                         kind: Some(CompletionItemKind::SNIPPET),
-                        sort_text: Some(format!("a000_{name}")),
+                        sort_text: Some(format!("a{name}")),
                         insert_text_format: Some(InsertTextFormat::SNIPPET),
                         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                             range: make_span(position, input.len()),

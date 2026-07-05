@@ -10,9 +10,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-json-complete = { workspace = true, features = ["lsp"] }
+count = { workspace = true, features = ["hash"] }
 path-tree.workspace = true
-ranked-count.workspace = true
+json-complete = { workspace = true, features = ["lsp"] }
 
 webgal-model = { workspace = true, features = ["lsp"] }
 

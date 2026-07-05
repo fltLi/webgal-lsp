@@ -11,9 +11,9 @@ license = "MPL-2.0"
 repository = "https://github.com/fltLi/webgal-lsp"
 
 [workspace.dependencies]
-json-complete.path = "./crates/json-complete"
+count.path = "./crates/count"
 path-tree.path = "./crates/path-tree"
-ranked-count.path = "./crates/ranked-count"
+json-complete.path = "./crates/json-complete"
 
 webgal-ls.path = "./crates/webgal-ls"
 webgal-model.path = "./crates/webgal-model"

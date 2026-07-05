@@ -1,0 +1,21 @@
+[package]
+name = "count"
+version = "0.1.0"
+edition.workspace = true
+readme.workspace = true
+description = "简单计数器"
+
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["hash", "sort", "tree"]
+hash = []                          # [`HashMap`] 封装
+sort = []                          # 有序数组二分实现
+tree = []                          # [`BTreeMap`] 封装
+
+[dependencies]
+
+[dev-dependencies]
+rand.workspace = true

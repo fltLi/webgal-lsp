@@ -1,7 +1,9 @@
+use std::hash::Hash;
+
+use count::HashCounter;
 use json_complete::{ToJsonSchema, Value};
 use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
-use ranked_count::Counter;
 use tower_lsp::lsp_types::*;
 use webgal_model::{
     element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},
@@ -214,7 +216,7 @@ where
                             description: Some(description),
                         }),
                         kind: Some(kind),
-                        sort_text: Some(format!("b_{name}")),
+                        sort_text: Some(format!("b{name}")),
                         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                             range: span,
                             new_text: name.to_string(),
@@ -225,7 +227,7 @@ where
                 Node::Folder(_) => CompletionItem {
                     label: name.to_string(),
                     kind: Some(CompletionItemKind::FOLDER),
-                    sort_text: Some(format!("a_{name}")),
+                    sort_text: Some(format!("a{name}")),
                     text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                         range: span,
                         new_text: format!("{name}/"),
@@ -237,7 +239,6 @@ where
         .collect()
 }
 
-/// 补全枚举迭代器
 fn complete_enum<I, N, D>(
     iter: I,
     kind: CompletionItemKind,
@@ -249,9 +250,30 @@ where
     N: AsRef<str>,
     D: AsRef<str>,
 {
+    complete_enum_with_order(
+        iter.into_iter()
+            .enumerate()
+            .map(|(i, (name, description))| (i, name, description)),
+        kind,
+        input,
+        position,
+    )
+}
+
+/// 补全枚举迭代器
+fn complete_enum_with_order<I, N, D>(
+    iter: I,
+    kind: CompletionItemKind,
+    input: &str,
+    position: Position,
+) -> Vec<CompletionItem>
+where
+    I: IntoIterator<Item = (usize, N, D)>,
+    N: AsRef<str>,
+    D: AsRef<str>,
+{
     iter.into_iter()
-        .enumerate()
-        .filter_map(|(i, (name, description))| {
+        .filter_map(|(i, name, description)| {
             let name = name.as_ref();
             name.starts_with(input).then(|| CompletionItem {
                 label: name.to_string(),
@@ -260,7 +282,7 @@ where
                     description: Some(description.as_ref().to_string()),
                 }),
                 kind: Some(kind),
-                sort_text: Some(format!("{i:03}_{name}")),
+                sort_text: Some(format!("{i:016x}{name}")),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: make_span(position, input.len()),
                     new_text: name.to_string(),
@@ -328,14 +350,16 @@ fn complete_animation_enum(
     )
 }
 
-fn complete_ident_enum<T: Ord + AsRef<str>>(
-    ident: &Counter<T>,
+fn complete_ident_enum<T: Eq + Hash + AsRef<str>>(
+    ident: &HashCounter<T>,
     description: &str,
     input: &str,
     position: Position,
 ) -> Vec<CompletionItem> {
-    complete_enum(
-        ident.iter_by_count().map(|(name, _)| (name, description)),
+    complete_enum_with_order(
+        ident
+            .iter_with_count()
+            .map(|(name, count)| (!count, name, description)),
         CompletionItemKind::VARIABLE,
         input,
         position,
@@ -348,12 +372,12 @@ fn complete_duration_enum(
     position: Position,
     project: &Project,
 ) -> Vec<CompletionItem> {
-    complete_enum(
+    complete_enum_with_order(
         project
             .ident()
             .duration
-            .iter_by_count()
-            .map(|(name, _)| (name.to_string(), description)),
+            .iter_with_count()
+            .map(|(name, count)| (!count, name.to_string(), description)),
         CompletionItemKind::VARIABLE,
         input,
         position,

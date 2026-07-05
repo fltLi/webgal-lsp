@@ -1,18 +1,18 @@
 //! 全场景符号收集与维护
 
-use ranked_count::Counter;
+use count::HashCounter;
 use webgal_model::sentence::*;
 
 /// 场景符号表
 ///
 /// 场景更改时实时维护, 用于记录全局符号信息.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Default)]
 pub struct IdentTable {
-    pub id: Counter<String>,
-    pub speaker: Counter<String>,
-    pub label: Counter<String>,
-    pub series: Counter<String>,
-    pub duration: Counter<usize>,
+    pub id: HashCounter<String>,
+    pub speaker: HashCounter<String>,
+    pub label: HashCounter<String>,
+    pub series: HashCounter<String>,
+    pub duration: HashCounter<usize>,
 }
 
 impl IdentTable {
