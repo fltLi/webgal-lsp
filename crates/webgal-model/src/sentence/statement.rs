@@ -1,5 +1,6 @@
 use std::fmt::{self, Write};
 
+use serde::Serialize;
 use webgal_sentence_macro::Sentence;
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
 // -------- 常规演出 --------
 
 /// 普通对话语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct SaySentence {
     pub content: Vec<String>,
     pub speaker: Option<String>,
@@ -30,7 +31,7 @@ pub struct SaySentence {
 }
 
 /// 切换背景语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence, Serialize)]
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
     #[sentence(content)]
@@ -57,7 +58,7 @@ pub struct ChangeBackgroundSentence {
 }
 
 /// 切换立绘语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence, Serialize)]
 #[sentence(
     command = "changeFigure",
     validate = Self::validate,
@@ -111,7 +112,7 @@ pub struct ChangeFigureSentence {
 }
 
 /// 背景音乐语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "bgm",
     forward = Next,
@@ -135,7 +136,7 @@ pub struct BgmSentence {
 }
 
 /// 播放视频语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "playVideo",
     forward = Continue,
@@ -154,7 +155,7 @@ pub struct PlayVideoSentence {
 }
 
 /// 效果声音语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "playEffect",
     forward = Next,
@@ -176,7 +177,7 @@ pub struct PlayEffectSentence {
 // -------- 舞台对象控制 --------
 
 /// 调用动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(command = "setAnimation")]
 pub struct SetAnimationSentence {
     #[sentence(content)]
@@ -194,7 +195,7 @@ pub struct SetAnimationSentence {
 }
 
 /// 复杂动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(command = "setComplexAnimation")]
 pub struct SetComplexAnimationSentence {
     #[sentence(content)]
@@ -211,7 +212,7 @@ pub struct SetComplexAnimationSentence {
 }
 
 /// 单段动画语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence, Serialize)]
 #[sentence(command = "setTransform", validate = Self::validate)]
 pub struct SetTransformSentence {
     #[sentence(content)]
@@ -232,7 +233,7 @@ pub struct SetTransformSentence {
 }
 
 /// 多段动画语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence, Serialize)]
 #[sentence(command = "setTempAnimation", validate = Self::validate)]
 pub struct SetTempAnimationSentence {
     #[sentence(content)]
@@ -250,7 +251,7 @@ pub struct SetTempAnimationSentence {
 }
 
 /// 进出场动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "setTransition",
     forward = Next,
@@ -270,7 +271,7 @@ pub struct SetTransitionSentence {
 // -------- 特殊演出 --------
 
 /// 使用特效语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "pixiPerform",
     forward = Next,
@@ -287,7 +288,7 @@ pub struct PixiPerformSentence {
 }
 
 /// 清除特效语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "pixiInit",
     forward = Next,
@@ -302,7 +303,7 @@ pub struct PixiInitSentence {
 }
 
 /// 全屏文字语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence, Serialize)]
 #[sentence(
     command = "intro",
     validate = Self::validate,
@@ -344,7 +345,7 @@ pub struct IntroSentence {
 }
 
 /// 角落头像语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "miniAvatar",
     forward = Next,
@@ -361,7 +362,7 @@ pub struct MiniAvatarSentence {
 }
 
 /// 文本显示语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "setTextbox",
     forward = Wait,
@@ -378,7 +379,7 @@ pub struct SetTextboxSentence {
 }
 
 /// 电影模式语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "filmMode",
     forward = Wait,
@@ -397,7 +398,7 @@ pub struct FilmModeSentence {
 // -------- 场景与分支 --------
 
 /// 调用场景语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "callScene",
     forward = Next,
@@ -414,7 +415,7 @@ pub struct CallSceneSentence {
 }
 
 /// 切换场景语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "changeScene",
     forward = Next,
@@ -431,7 +432,7 @@ pub struct ChangeSceneSentence {
 }
 
 /// 分支选择语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "choose",
     validate = Self::validate,
@@ -451,7 +452,7 @@ pub struct ChooseSentence {
 }
 
 /// 标签语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "label",
     forward = Next,
@@ -468,7 +469,7 @@ pub struct LabelSentence {
 }
 
 /// 跳转标签语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "jumpLabel",
     forward = Next,
@@ -487,7 +488,7 @@ pub struct JumpLabelSentence {
 // -------- 鉴赏 --------
 
 /// 鉴赏图片语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "unlockCg",
     forward = Next,
@@ -508,7 +509,7 @@ pub struct UnlockCgSentence {
 }
 
 /// 鉴赏音乐语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "unlockBgm",
     forward = Next,
@@ -531,7 +532,7 @@ pub struct UnlockBgmSentence {
 // -------- 游戏控制 --------
 
 /// 获取输入语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "getUserInput",
     forward = Continue,
@@ -561,7 +562,7 @@ pub struct GetUserInputSentence {
 }
 
 /// 设置变量语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "setVar",
     forward = Next,
@@ -579,7 +580,7 @@ pub struct SetVarSentence {
 }
 
 /// 显示变量语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "showVars",
     forward = Wait,
@@ -594,7 +595,7 @@ pub struct ShowVarsSentence {
 }
 
 /// 等待语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "wait",
     forward = Continue,
@@ -611,7 +612,7 @@ pub struct WaitSentence {
 }
 
 /// 应用样式语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "applyStyle",
     forward = Next,
@@ -632,7 +633,7 @@ pub struct ApplyStyleSentence {
 }
 
 /// 调用 Steam 语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "callSteam",
     forward = Next,
@@ -649,7 +650,7 @@ pub struct CallSteamSentence {
 }
 
 /// 结束游戏语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize)]
 #[sentence(
     command = "end",
     forward = Next,
@@ -666,7 +667,9 @@ pub struct EndSentence {
 // -------- 空白注释 --------
 
 /// 空白注释语句
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence, Serialize,
+)]
 #[sentence(command = "", forward = Next)]
 pub struct CommentSentence {} // 单元结构体暂时不可用
 

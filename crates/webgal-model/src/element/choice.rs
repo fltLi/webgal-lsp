@@ -2,10 +2,12 @@
 
 use std::fmt;
 
+use serde::Serialize;
+
 use crate::util::{find_closing_delimiter, split_once_escaped};
 
 /// 分支选项
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Choice {
     pub prompt: String,
     pub target: Option<String>,
@@ -79,7 +81,7 @@ impl From<ChoiceView<'_>> for Choice {
 }
 
 /// 分支选项原始视图
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct ChoiceView<'a> {
     pub prompt: &'a str,
     pub target: Option<&'a str>,
