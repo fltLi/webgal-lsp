@@ -49,6 +49,116 @@ macro_rules! impl_display_for_serde_json {
     };
 }
 
+/// 避开转义 (如 `\;`) 分割字符
+///
+/// # Examples
+/// ```
+/// # use webgal_model::util::split_once_escaped;
+///
+/// assert_eq!(split_once_escaped("a;b", ';'), Some(("a", "b")));
+/// assert_eq!(split_once_escaped("a\\b;c", ';'), Some(("a\\b", "c")));
+/// assert_eq!(split_once_escaped("no semicolon", ';'), None);
+/// assert_eq!(split_once_escaped("", ';'), None);
+/// assert_eq!(split_once_escaped("std\\:\\:mem:hello?", ':'), Some(("std\\:\\:mem", "hello?")));
+/// ```
+pub fn split_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
+    let mut esacped = false;
+    let pos = s.char_indices().find_map(|(i, ch)| match ch {
+        ch if ch == delimiter && !esacped => Some(i),
+        '\\' => {
+            esacped = !esacped;
+            None
+        }
+        _ => {
+            esacped = false;
+            None
+        }
+    })?;
+    Some((&s[..pos], &s[pos + 1..]))
+}
+
+/// 查找字符串中第一对匹配的开闭符区间
+///
+/// # Panics
+/// * 当 `open == close` 时 panic, 因为无法区分开闭.
+/// * 当 `open == '"'` 或 `close == '"'` 时 panic, 因为双引号已被用作字符串边界.
+/// * 当 `open == '\\'` 或 `close == '\\'` 时 panic, 因为其已被用作字符串内双引号转义符.
+///
+/// # Behavior
+/// * 忽略双引号 `"` 内的内容 (正确处理字符串内的转义 `\"`).
+/// * 忽略嵌套同类型符号.
+///
+/// # Examples
+/// ```
+/// # use std::ops::Range;
+///
+/// # use webgal_model::util::find_closing_delimiter;
+///
+/// let s = "foo(bar(baz))";
+/// assert_eq!(find_closing_delimiter(s, '(', ')'), Some(3..13));
+///
+/// let s = r#"foo("(bar)")"#;
+/// assert_eq!(find_closing_delimiter(s, '(', ')'), Some(3..12)); // 忽略字符串内的括号
+///
+/// let s = r#""\"(bar)\"" ()"#;
+/// assert_eq!(find_closing_delimiter(s, '(', ')'), Some(12..14)); // 处理字符串内的双引号转义
+/// ```
+pub fn find_closing_delimiter(s: &str, open: char, close: char) -> Option<Range<usize>> {
+    if open == close {
+        panic!("开符和闭符不能相同");
+    }
+    if open == '"' || close == '"' {
+        panic!("开符和闭符不能是双引号");
+    }
+    if open == '\\' || close == '\\' {
+        panic!("开符和闭符不能是转义符");
+    }
+
+    let mut in_str = false;
+    let mut depth = 0;
+
+    let mut escaped = false; // 只针对字符串内 `\"`
+    let mut start = None;
+
+    for (i, ch) in s.char_indices() {
+        // 识别转义
+        let last_escaped = escaped;
+        escaped = ch == '\\';
+
+        // 处理字符串状态切换
+        if ch == '"' {
+            if !in_str {
+                in_str = true;
+            } else {
+                in_str = last_escaped;
+            }
+            continue;
+        }
+
+        // 在字符串内时忽略所有符号
+        if in_str {
+            continue;
+        }
+
+        if let Some(start_pos) = start {
+            // 已找到开符, 处理嵌套
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(start_pos..i + 1);
+                }
+            }
+        } else if ch == open {
+            // 找到第一个开符
+            start = Some(i);
+            depth = 1;
+        }
+    }
+    None
+}
+
 /// 添加分隔符写入迭代器中的元素 (末尾不加分隔符)
 pub fn write_joined<W, I, T>(writer: &mut W, iter: I, sep: &str) -> fmt::Result
 where

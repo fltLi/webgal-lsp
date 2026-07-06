@@ -167,7 +167,7 @@ impl fmt::Display for TokenList<'_> {
     }
 }
 
-/// 带扩展文本分割与解析
+/// 带扩展文本分割与解析迭代器
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct TokenSplit<'a> {
@@ -181,6 +181,12 @@ impl<'a> TokenSplit<'a> {
             inner: text,
             pending: None,
         }
+    }
+}
+
+impl<'a> From<&'a str> for TokenSplit<'a> {
+    fn from(value: &'a str) -> Self {
+        Self::new(value)
     }
 }
 
@@ -212,12 +218,6 @@ impl<'a> Iterator for TokenSplit<'a> {
         self.inner = remain;
         self.pending = Some(token);
         Some(Token::with_text(current))
-    }
-}
-
-impl<'a> From<&'a str> for TokenSplit<'a> {
-    fn from(value: &'a str) -> Self {
-        TokenSplit::new(value)
     }
 }
 

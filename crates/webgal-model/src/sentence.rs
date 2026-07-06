@@ -126,6 +126,12 @@ impl Sentence {
     }
 }
 
+impl Default for Sentence {
+    fn default() -> Self {
+        Self::Comment(CommentSentence {})
+    }
+}
+
 impl FromPrimary for Sentence {
     fn from_primary(primary: &PrimarySentence, errors: &mut Vec<Error>) -> Self {
         macro_rules! from_primary_match {
@@ -218,12 +224,6 @@ impl fmt::Display for Sentence {
                 Comment,
             }
         }
-    }
-}
-
-impl Default for Sentence {
-    fn default() -> Self {
-        Self::Comment(CommentSentence {})
     }
 }
 

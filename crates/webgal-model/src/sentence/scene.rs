@@ -148,7 +148,7 @@ impl Scene {
 }
 
 impl fmt::Display for Scene {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.sentences()
             .iter()
             .try_for_each(|sentence| writeln!(f, "{sentence}"))
