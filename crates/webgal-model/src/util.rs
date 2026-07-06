@@ -59,7 +59,7 @@ macro_rules! impl_display_for_serde_json {
 /// assert_eq!(split_once_escaped("a\\b;c", ';'), Some(("a\\b", "c")));
 /// assert_eq!(split_once_escaped("no semicolon", ';'), None);
 /// assert_eq!(split_once_escaped("", ';'), None);
-/// assert_eq!(split_once_escaped("std\\:\\:mem:hello?", ':'), Some(("std\\:\\:mem", "hello?")));
+/// assert_eq!(split_once_escaped("std\\:\\:mem : hello?", ':'), Some(("std\\:\\:mem ", " hello?")));
 /// ```
 pub fn split_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
     let mut esacped = false;

@@ -2,7 +2,10 @@ use std::ops;
 
 use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
-use webgal_model::sentence::{Scene, Sentence, SentenceInfo};
+use webgal_model::{
+    sentence::{Scene, Sentence, SentenceInfo},
+    util::{span_of, split_once_escaped},
+};
 
 pub fn highlight_capability() -> SemanticTokensServerCapabilities {
     SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
@@ -109,8 +112,15 @@ where
         let pos = primary.command.len();
         push(PrimaryToken::from_position(pos, TokenType::Operator));
 
-        // 参数值
-        if let Some(kind) = TokenType::from_content(sentence) {
+        if matches!(sentence, Sentence::Choose(_)) {
+            // 参数值 (choose)
+            highlight_choose_content(content, |mut token| {
+                token.span.start += pos + 1;
+                token.span.end += pos + 1;
+                push(token)
+            });
+        } else if let Some(kind) = TokenType::from_content(sentence) {
+            // 参数值 (常规)
             push(PrimaryToken {
                 span: primary.get_span(content),
                 kind,
@@ -163,6 +173,87 @@ where
     }
 }
 
+fn highlight_choose_content<F>(content: &str, mut push: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    // 单个选项解析
+    let mut highlight_choice = |choice: &str, with_trailing_delimiter| {
+        let body = match choice.split_once("->") {
+            Some((condition, body)) => {
+                let span = span_of(content, condition);
+                let end = span.end;
+
+                // 条件表达式
+                push(PrimaryToken {
+                    span,
+                    kind: TokenType::Regex,
+                });
+
+                // `->`
+                push(PrimaryToken {
+                    span: end..end + 2,
+                    kind: TokenType::Operator,
+                });
+
+                body
+            }
+            None => choice,
+        };
+
+        let (prompt, target) = match split_once_escaped(body, ':') {
+            Some((prompt, target)) => (prompt, Some(target)),
+            None => (body, None),
+        };
+
+        if !prompt.is_empty() {
+            // 显示文本
+            push(PrimaryToken {
+                span: span_of(content, prompt),
+                kind: TokenType::String,
+            });
+        }
+
+        if let Some(target) = target {
+            let span = span_of(content, target);
+            let start = span.start;
+
+            // `:`
+            push(PrimaryToken::from_position(start - 1, TokenType::Operator));
+
+            // 场景 / 标签
+            push(PrimaryToken {
+                span,
+                kind: TokenType::Regex,
+            });
+        }
+
+        if with_trailing_delimiter {
+            // `|`
+            push(PrimaryToken::from_position(
+                span_of(content, choice).end,
+                TokenType::Operator,
+            ));
+        }
+    };
+
+    // 循环解析选项
+    let mut text = content;
+    while !text.is_empty() {
+        match split_once_escaped(text, '|') {
+            Some((choice, remain)) => {
+                highlight_choice(choice, true);
+                text = remain;
+            }
+            None => {
+                // 最后一个选项
+                highlight_choice(text, false);
+                break;
+            }
+        }
+    }
+}
+
 struct PrimaryToken {
     span: ops::Range<usize>,
     kind: TokenType,
@@ -170,11 +261,10 @@ struct PrimaryToken {
 
 impl PrimaryToken {
     fn from_position(position: usize, kind: TokenType) -> Self {
-        let span = ops::Range {
-            start: position,
-            end: position + 1,
-        };
-        Self { span, kind }
+        Self {
+            span: position..position + 1,
+            kind,
+        }
     }
 }
 
@@ -205,7 +295,7 @@ impl TokenType {
         from_content_match! {
             sentence: {
                 // 常规演出
-                Say => String, // TODO: 自定义渲染跨行和文本拓展
+                Say => String,
                 ChangeBackground => Regex,
                 ChangeFigure => Regex,
                 Bgm => Regex,
@@ -220,7 +310,7 @@ impl TokenType {
 
                 // 特殊演出
                 PixiPerform => EnumMember,
-                Intro => String, // TODO: 自定义渲染跨行
+                Intro => String,
                 MiniAvatar => Regex,
                 SetTextbox => EnumMember,
                 FilmMode => EnumMember,
@@ -228,7 +318,7 @@ impl TokenType {
                 // 场景与分支
                 CallScene => Regex,
                 ChangeScene => Regex,
-                Choose => String, // TODO: 自定义渲染选项和场景
+                Choose => String, // 已由调用者接管
                 Label => Variable,
                 JumpLabel => Variable,
 
@@ -327,6 +417,52 @@ impl From<TokenType> for SemanticTokenType {
             TokenType::Number => Self::NUMBER,
             TokenType::Regex => Self::REGEXP,
             TokenType::Operator => Self::OPERATOR,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // This module is generated by AI.
+
+    use super::*;
+
+    // -------- choose --------
+
+    #[test]
+    fn highlight_choose_various_cases() {
+        let test_cases = vec![
+            // 基础: 多个选项
+            "choose:opt1:scene_a|opt2:scene_b|opt3:scene_c;",
+            // 带条件
+            "choose:(show)[enable]->go:scene_a|(hide)[disabled]->stay:scene_b;",
+            // 只有一个选项
+            "choose:only;",
+            // 选项以 `->` 结尾 (无 target)
+            "choose:opt1->;",
+            // 选项以 `|` 结尾 (空选项)
+            "choose:opt1:target|;",
+            // 选项内容含转义
+            r"choose:prompt\|with\|pipe:target\|with\|pipe;",
+            // 条件为空 (可能实际语法不支持, 但测试边界)
+            "choose:():->go;",
+            // 混合情况
+            "choose:(cond)->opt1|opt2:target;",
+            // 空选项集合 (仅 `choose:;`)
+            "choose:;",
+            // 多个 `|` 结尾
+            "choose:opt1:target||;",
+            // `target` 为空 (仅 `prompt:`)
+            "choose:prompt:|;",
+            // `prompt` 为空 (仅 `:target`)
+            "choose::target;",
+        ];
+
+        for (i, case) in test_cases.iter().enumerate() {
+            let scene = Scene::from_str(*case);
+            let tokens = highlight(&scene);
+            // 至少有一个 token (语句本身), 且无 panic
+            assert!(!tokens.is_empty(), "Test case {i}: no tokens");
         }
     }
 }
