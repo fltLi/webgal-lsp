@@ -5,7 +5,8 @@ use webgal_sentence_macro::Sentence;
 use crate::{
     element::{
         AnimationList, Choice, ChoiceSplit, Color, Ease, FigureId, FigureSide, FontSize, Forward,
-        IntroAnimation, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, Transform,
+        IntroAnimation, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, TokenList,
+        Transform,
     },
     sentence::{Error, FromPrimary, PrimarySentence},
     util::{write_joined, write_joined_with},
@@ -778,7 +779,7 @@ impl FromPrimary for SaySentence {
             Some(content) => (content, Some(command.to_string())),
             None => (command, None),
         };
-        let (content, _) = parse_text(content.trim()); // 不会出错
+        let content = parse_text_with_token_nornalization(content.trim());
 
         let mut space_holder = false;
         let mut vocal = None;
@@ -960,6 +961,16 @@ fn parse_text(text: &str) -> (Vec<String>, Option<anyhow::Error>) {
         },
         None,
     )
+}
+
+fn parse_text_with_token_nornalization(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        Vec::default()
+    } else {
+        text.split('|')
+            .map(|text| TokenList::from_str(text).to_string())
+            .collect()
+    }
 }
 
 fn display_text(text: &[String], f: &mut fmt::Formatter) -> fmt::Result {
@@ -1197,6 +1208,88 @@ mod tests {
         assert_eq!(output.sentence, Sentence::Say(Default::default()));
         // 序列化应产生相同的占位符
         assert_eq!(output.sentence.to_string(), s);
+    }
+
+    #[test]
+    fn say_token_formatting() {
+        // 测试 TokenList 格式化对 Say 内容的影响
+        // 输入样式参数顺序被打乱, 输出按参数名排序
+        let s = ":Text [test](style=z:1\\;a:2\\;m:3);";
+        let output = Sentence::from_str(s);
+        assert!(output.errors.is_empty());
+        match output.sentence {
+            Sentence::Say(say) => {
+                // 期望反序列化后内容被格式化 (参数排序)
+                // 注意 TokenList 会将参数按名称排序, 并统一空格
+                let expected = "Text [test](style=a:2\\;m:3\\;z:1)";
+                assert_eq!(say.content, vec![expected.to_string()]);
+                // 序列化后应等于格式化后的内容
+                assert_eq!(say.to_string(), format!(":{expected};"));
+            }
+            _ => panic!("期望 SaySentence"),
+        }
+
+        // 测试样式组排序 (组名排序)
+        let s2 = ":Text [test](z=0\\; a=1\\; m=2);";
+        let output2 = Sentence::from_str(s2);
+        assert!(output2.errors.is_empty());
+        match output2.sentence {
+            Sentence::Say(say) => {
+                // 样式组按名称排序: a, m, z
+                let expected = "Text [test](a=1:\\; m=2:\\; z=0:)";
+                assert_eq!(say.content, vec![expected.to_string()]);
+                assert_eq!(say.to_string(), format!(":{expected};"));
+            }
+            _ => panic!("期望 SaySentence"),
+        }
+
+        // 测试注音与样式混合 (样式组在前, ruby 在后)
+        let s3 = ":Text [test](style=color:red\\; ruby=ふり);";
+        let output3 = Sentence::from_str(s3);
+        assert!(output3.errors.is_empty());
+        match output3.sentence {
+            Sentence::Say(say) => {
+                // 格式化后 ruby 会移到样式组之后
+                let expected = "Text [test](style=color:red\\; ruby=ふり)";
+                assert_eq!(say.content, vec![expected.to_string()]);
+                assert_eq!(say.to_string(), format!(":{expected};"));
+            }
+            _ => panic!("期望 SaySentence"),
+        }
+
+        // 测试多个片段, 每个片段独立格式化
+        let s4 = ":First [part](z=1\\;a=2)|Second [part](style=color:red\\; ruby=xx);";
+        let output4 = Sentence::from_str(s4);
+        assert!(output4.errors.is_empty());
+        match output4.sentence {
+            Sentence::Say(say) => {
+                let expected = vec![
+                    "First [part](a=2:\\; z=1:)".to_string(),
+                    "Second [part](style=color:red\\; ruby=xx)".to_string(),
+                ];
+                assert_eq!(say.content, expected);
+                // 序列化后的完整字符串
+                let serialized =
+                    ":First [part](a=2:\\; z=1:)|Second [part](style=color:red\\; ruby=xx);"
+                        .to_string();
+                assert_eq!(say.to_string(), serialized);
+            }
+            _ => panic!("期望 SaySentence"),
+        }
+
+        // 测试多余空格被规范化
+        let s5 = ":Text [test]( style = color : red  );";
+        let output5 = Sentence::from_str(s5);
+        assert!(output5.errors.is_empty());
+        match output5.sentence {
+            Sentence::Say(say) => {
+                // 格式化后空格被统一, 参数排序
+                let expected = "Text [test](style=color:red)";
+                assert_eq!(say.content, vec![expected.to_string()]);
+                assert_eq!(say.to_string(), format!(":{expected};"));
+            }
+            _ => panic!("期望 SaySentence"),
+        }
     }
 
     // -------- parse --------
