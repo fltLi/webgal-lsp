@@ -9,12 +9,12 @@ use crate::info::{ArgumentInfo, ArgumentKind, FieldInfo, SentenceInfo};
 
 // -------- get_command --------
 
-pub fn impl_get_command(info: &SentenceInfo) -> TokenStream {
+pub fn impl_sentence_ext(info: &SentenceInfo) -> TokenStream {
     let SentenceInfo { ident, command, .. } = info;
     quote! {
         #[automatically_derived]
-        impl #ident {
-            pub fn get_command(&self) -> &'static str {
+        impl crate::sentence::SentenceExt for #ident {
+            fn command(&self) -> &'static str {
                 #command
             }
         }

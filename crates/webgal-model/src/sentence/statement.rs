@@ -8,7 +8,7 @@ use crate::{
         IntroAnimation, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, TokenList,
         Transform,
     },
-    sentence::{Error, FromPrimary, PrimarySentence},
+    sentence::{Error, FromPrimary, PrimarySentence, SentenceExt},
     util::{write_joined, write_joined_with},
 };
 
@@ -754,15 +754,10 @@ impl ChooseSentence {
 
 // -------- 对话 --------
 
-impl SaySentence {
-    pub fn get_command(&self) -> &'static str {
+impl SentenceExt for SaySentence {
+    fn command(&self) -> &'static str {
         "say"
     }
-
-    // /// 对话是否为空, 若空则需要 `-saySpaceHolder`
-    // fn is_empty(&self) -> bool {
-    //     *self == Self::default()
-    // }
 }
 
 impl FromPrimary for SaySentence {

@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
 use tower_lsp::lsp_types::*;
 use webgal_model::{
+    dispatch_sentence,
     element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},
     resource::{FigureInfo, FigureKind},
     sentence::*,
@@ -59,37 +60,7 @@ impl Complete for Sentence {
         position: Position,
         project: &Project,
     ) -> Vec<CompletionItem> {
-        use Sentence::*;
-
-        macro_rules! complete_content_match {
-            (
-                ($sentence:ident, $input:ident, $position:ident, $project:ident):
-                {$($variant:ident),* $(,)?}
-            ) => {{
-                match $sentence {
-                    $($variant(sentence) => sentence.complete_content($input, $position, $project),)*
-                }
-            }};
-        }
-
-        complete_content_match! {
-            (self, input, position, project): {
-                // 常规演出
-                Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
-                // 舞台对象控制
-                SetAnimation, SetComplexAnimation, SetTransform, SetTempAnimation, SetTransition,
-                // 特殊演出
-                PixiPerform, PixiInit, Intro, MiniAvatar, SetTextbox, FilmMode,
-                // 场景与分支
-                CallScene, ChangeScene, Choose, Label, JumpLabel,
-                // 鉴赏
-                UnlockCg, UnlockBgm,
-                // 游戏控制
-                GetUserInput, SetVar, ShowVars, Wait, ApplyStyle, CallSteam, End,
-                // 空白注释
-                Comment,
-            }
-        }
+        dispatch_sentence!(self.complete_content(input, position, project))
     }
 
     fn complete_argument_name(
@@ -98,41 +69,7 @@ impl Complete for Sentence {
         position: Position,
         project: &Project,
     ) -> Vec<CompletionItem> {
-        use Sentence::*;
-
-        macro_rules! complete_argument_name_match {
-            (
-                ($sentence:ident, $input:ident, $position:ident, $project:ident):
-                {$($variant:ident),* $(,)?}
-            ) => {{
-                match $sentence {
-                    $($variant(sentence) => sentence.complete_argument_name(
-                        $input,
-                        $position,
-                        $project,
-                    ),)*
-                }
-            }};
-        }
-
-        complete_argument_name_match! {
-            (self, input, position, project): {
-                // 常规演出
-                Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
-                // 舞台对象控制
-                SetAnimation, SetComplexAnimation, SetTransform, SetTempAnimation, SetTransition,
-                // 特殊演出
-                PixiPerform, PixiInit, Intro, MiniAvatar, SetTextbox, FilmMode,
-                // 场景与分支
-                CallScene, ChangeScene, Choose, Label, JumpLabel,
-                // 鉴赏
-                UnlockCg, UnlockBgm,
-                // 游戏控制
-                GetUserInput, SetVar, ShowVars, Wait, ApplyStyle, CallSteam, End,
-                // 空白注释
-                Comment,
-            }
-        }
+        dispatch_sentence!(self.complete_argument_name(input, position, project))
     }
 
     fn complete_argument_value(
@@ -142,42 +79,7 @@ impl Complete for Sentence {
         position: Position,
         project: &Project,
     ) -> Vec<CompletionItem> {
-        use Sentence::*;
-
-        macro_rules! complete_argument_value_match {
-            (
-                ($sentence:ident, $name:ident, $input:ident, $position:ident, $project:ident):
-                {$($variant:ident),* $(,)?}
-            ) => {{
-                match $sentence {
-                    $($variant(sentence) => sentence.complete_argument_value(
-                        $name,
-                        $input,
-                        $position,
-                        $project,
-                    ),)*
-                }
-            }};
-        }
-
-        complete_argument_value_match! {
-            (self, name, input, position, project): {
-                // 常规演出
-                Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
-                // 舞台对象控制
-                SetAnimation, SetComplexAnimation, SetTransform, SetTempAnimation, SetTransition,
-                // 特殊演出
-                PixiPerform, PixiInit, Intro, MiniAvatar, SetTextbox, FilmMode,
-                // 场景与分支
-                CallScene, ChangeScene, Choose, Label, JumpLabel,
-                // 鉴赏
-                UnlockCg, UnlockBgm,
-                // 游戏控制
-                GetUserInput, SetVar, ShowVars, Wait, ApplyStyle, CallSteam, End,
-                // 空白注释
-                Comment,
-            }
-        }
+        dispatch_sentence!(self.complete_argument_value(name, input, position, project))
     }
 }
 

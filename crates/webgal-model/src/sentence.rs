@@ -17,6 +17,12 @@ mod primary;
 mod scene;
 mod statement;
 
+/// 语句辅助方法
+pub trait SentenceExt {
+    /// 语句类型
+    fn command(&self) -> &'static str;
+}
+
 /// 可从初级语句 [`PrimarySentence`] 构建的语句类型
 pub trait FromPrimary: Sized {
     /// 从初级语句构建
@@ -90,37 +96,6 @@ impl Sentence {
         SentenceOutput { sentence, errors }
     }
 
-    pub fn get_command(&self) -> &'static str {
-        use Sentence::*;
-
-        macro_rules! get_command_match {
-            ($sentence:ident: {$($variant:ident),* $(,)?}) => {{
-                match $sentence {
-                    $($variant(sentence) => sentence.get_command(),)*
-                }
-            }};
-        }
-
-        get_command_match! {
-            self: {
-                // 常规演出
-                Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
-                // 舞台对象控制
-                SetAnimation, SetComplexAnimation, SetTransform, SetTempAnimation, SetTransition,
-                // 特殊演出
-                PixiPerform, PixiInit, Intro, MiniAvatar, SetTextbox, FilmMode,
-                // 场景与分支
-                CallScene, ChangeScene, Choose, Label, JumpLabel,
-                // 鉴赏
-                UnlockCg, UnlockBgm,
-                // 游戏控制
-                GetUserInput, SetVar, ShowVars, Wait, ApplyStyle, CallSteam, End,
-                // 空白注释
-                Comment,
-            }
-        }
-    }
-
     pub fn is_say(&self) -> bool {
         matches!(self, Self::Say(_))
     }
@@ -129,6 +104,12 @@ impl Sentence {
 impl Default for Sentence {
     fn default() -> Self {
         Self::Comment(CommentSentence {})
+    }
+}
+
+impl SentenceExt for Sentence {
+    fn command(&self) -> &'static str {
+        crate::dispatch_sentence!(self.command())
     }
 }
 
@@ -156,12 +137,14 @@ impl FromPrimary for Sentence {
                 "bgm" => BgmSentence,
                 "playVideo" => PlayVideoSentence,
                 "playEffect" => PlayEffectSentence,
+
                 // 舞台对象控制
                 "setAnimation" => SetAnimationSentence,
                 "setComplexAnimation" => SetComplexAnimationSentence,
                 "setTransform" => SetTransformSentence,
                 "setTempAnimation" => SetTempAnimationSentence,
                 "setTransition" => SetTransitionSentence,
+
                 // 特殊演出
                 "pixiPerform" => PixiPerformSentence,
                 "pixiInit" => PixiInitSentence,
@@ -169,15 +152,18 @@ impl FromPrimary for Sentence {
                 "miniAvatar" => MiniAvatarSentence,
                 "setTextbox" => SetTextboxSentence,
                 "filmMode" => FilmModeSentence,
+
                 // 场景与分支
                 "callScene" => CallSceneSentence,
                 "changeScene" => ChangeSceneSentence,
                 "choose" => ChooseSentence,
                 "label" => LabelSentence,
                 "jumpLabel" => JumpLabelSentence,
+
                 // 鉴赏
                 "unlockCg" => UnlockCgSentence,
                 "unlockBgm" => UnlockBgmSentence,
+
                 // 游戏控制
                 "getUserInput" => GetUserInputSentence,
                 "setVar" => SetVarSentence,
@@ -186,6 +172,7 @@ impl FromPrimary for Sentence {
                 "applyStyle" => ApplyStyleSentence,
                 "callSteam" => CallSteamSentence,
                 "end" => EndSentence,
+
                 // 其它
                 "" if primary.content.is_none() && primary.arguments.is_empty() => CommentSentence,
                 _ => SaySentence,
@@ -196,34 +183,7 @@ impl FromPrimary for Sentence {
 
 impl fmt::Display for Sentence {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Sentence::*;
-
-        macro_rules! display_match {
-            ($sentence:ident: {$($variant:ident),* $(,)?}) => {{
-                match $sentence {
-                    $($variant(sentence) => sentence.fmt(f),)*
-                }
-            }};
-        }
-
-        display_match! {
-            self: {
-                // 常规演出
-                Say, ChangeBackground, ChangeFigure, Bgm, PlayVideo, PlayEffect,
-                // 舞台对象控制
-                SetAnimation, SetComplexAnimation, SetTransform, SetTempAnimation, SetTransition,
-                // 特殊演出
-                PixiPerform, PixiInit, Intro, MiniAvatar, SetTextbox, FilmMode,
-                // 场景与分支
-                CallScene, ChangeScene, Choose, Label, JumpLabel,
-                // 鉴赏
-                UnlockCg, UnlockBgm,
-                // 游戏控制
-                GetUserInput, SetVar, ShowVars, Wait, ApplyStyle, CallSteam, End,
-                // 空白注释
-                Comment,
-            }
-        }
+        crate::dispatch_sentence!(self.fmt(f))
     }
 }
 
@@ -269,4 +229,81 @@ impl SentenceOutput {
             Err(self.errors)
         }
     }
+}
+
+/// 调用 [`Sentence`] 所有变体语句的方法
+///
+/// # Examples
+/// ```
+/// # use webgal_model::{dispatch_sentence, sentence::{Sentence}};
+///
+/// trait TypeName {
+///     fn type_name(&self) -> &'static str;
+/// }
+///
+/// impl<T> TypeName for T {
+///     fn type_name(&self) -> &'static str {
+///         std::any::type_name::<T>()
+///     }
+/// }
+///
+/// let sentence = Sentence::from_str("hello?").sentence;
+///
+/// assert_eq!(sentence.type_name(), "webgal_model::sentence::Sentence");
+/// assert_eq!(
+///     dispatch_sentence!(sentence.type_name()),
+///     "webgal_model::sentence::statement::SaySentence",
+/// );
+/// ```
+#[macro_export]
+macro_rules! dispatch_sentence {
+    ($sentence:ident.$method:ident($($argument:expr),* $(,)?)) => {
+        match $sentence {
+            // 常规演出
+            $crate::sentence::Sentence::Say(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ChangeBackground(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ChangeFigure(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Bgm(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::PlayVideo(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::PlayEffect(s) => s.$method($($argument),*),
+
+            // 舞台对象控制
+            $crate::sentence::Sentence::SetAnimation(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetComplexAnimation(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetTransform(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetTempAnimation(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetTransition(s) => s.$method($($argument),*),
+
+            // 特殊演出
+            $crate::sentence::Sentence::PixiPerform(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::PixiInit(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Intro(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::MiniAvatar(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetTextbox(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::FilmMode(s) => s.$method($($argument),*),
+
+            // 场景与分支
+            $crate::sentence::Sentence::CallScene(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ChangeScene(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Choose(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Label(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::JumpLabel(s) => s.$method($($argument),*),
+
+            // 鉴赏
+            $crate::sentence::Sentence::UnlockCg(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::UnlockBgm(s) => s.$method($($argument),*),
+
+            // 游戏控制
+            $crate::sentence::Sentence::GetUserInput(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetVar(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ShowVars(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Wait(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ApplyStyle(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::CallSteam(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::End(s) => s.$method($($argument),*),
+
+            // 其它
+            $crate::sentence::Sentence::Comment(s) => s.$method($($argument),*),
+        }
+    };
 }

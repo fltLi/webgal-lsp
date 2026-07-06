@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Fields, parse_macro_input};
 
 use crate::{
-    code::{impl_display, impl_from_primary, impl_get_command},
+    code::{impl_display, impl_from_primary, impl_sentence_ext},
     info::SentenceInfo,
 };
 
@@ -98,12 +98,12 @@ pub fn derive_sentence(input: TokenStream) -> TokenStream {
 
     let info = SentenceInfo::from_ast(name, &input.attrs, &fields).expect("语句结构体属性不合法");
 
-    let get_command = impl_get_command(&info);
+    let sentence_ext = impl_sentence_ext(&info);
     let from_primary = impl_from_primary(&info);
     let display = impl_display(&info);
 
     let expanded = quote! {
-        #get_command
+        #sentence_ext
         #from_primary
         #display
     };
