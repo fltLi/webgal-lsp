@@ -17,7 +17,7 @@ mod info;
 /// WebGAL 语句序列化 / 反序列化派生宏
 ///
 /// 此宏为类型实现:
-/// * [`Self::get_command`] - 返回语句类型.
+/// * [`SentenceExt`] - 语句辅助方法集.
 /// * [`FromPrimary`] - 支持从初级语句反序列化.
 /// * [`Display`] - 支持序列化为语句字符串.
 ///
@@ -25,7 +25,6 @@ mod info;
 /// 并由其重新导出至 [`webgal_model::sentence::Sentence`].
 ///
 /// # Attributes
-///
 /// 此宏通过 `#[sentence(...)]` 接收下列选项:
 ///
 /// ## 语句类型
@@ -36,6 +35,11 @@ mod info;
 /// ```rust,ignore
 /// fn(&self, primary: &PrimarySentence, errors: &mut Vec<Error>)
 /// ```
+///
+/// ## 执行时序
+/// 整个结构体必须有且仅有一个执行时序标注:
+/// * `content = Wait / Continue / Next / fn(&self) -> Forward` - 标注在结构体上, 表示全局执行时序.
+/// * `content` - 标注在类型为 [`Forward`] 的字段上, 将其作为执行时序.
 ///
 /// ## 弃用参数
 /// 标注在结构体上, 可选, 形如: `obsolete = { "参数名": "弃用理由", ... }`.

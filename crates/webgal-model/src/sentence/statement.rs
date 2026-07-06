@@ -51,7 +51,7 @@ pub struct ChangeBackgroundSentence {
     pub enter_duration: Option<usize>,
     #[sentence(rename = "exitDuration", require = ["exit"])]
     pub exit_duration: Option<usize>,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -105,7 +105,7 @@ pub struct ChangeFigureSentence {
     pub enter_duration: Option<usize>,
     #[sentence(rename = "exitDuration", require = ["exit"])]
     pub exit_duration: Option<usize>,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -114,6 +114,7 @@ pub struct ChangeFigureSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "bgm",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -137,6 +138,7 @@ pub struct BgmSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "playVideo",
+    forward = Continue,
     obsolete = {
         "next": "语句自带连续执行效果",
         "continue": "语句自带连续执行效果",
@@ -155,6 +157,7 @@ pub struct PlayVideoSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "playEffect",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -185,7 +188,7 @@ pub struct SetAnimationSentence {
     // 控制
     #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
     pub sustain: Sustain,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -202,7 +205,7 @@ pub struct SetComplexAnimationSentence {
     pub write_default: bool,
     // 控制
     pub duration: Option<usize>,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -223,7 +226,7 @@ pub struct SetTransformSentence {
     pub duration: Option<usize>,
     #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
     pub sustain: Sustain,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -241,7 +244,7 @@ pub struct SetTempAnimationSentence {
     // 控制
     #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
     pub sustain: Sustain,
-    #[sentence(variant = { "continue": Continue, "next": Next })]
+    #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
 }
@@ -250,6 +253,7 @@ pub struct SetTempAnimationSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "setTransition",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -269,6 +273,7 @@ pub struct SetTransitionSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "pixiPerform",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -285,6 +290,7 @@ pub struct PixiPerformSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "pixiInit",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -300,6 +306,7 @@ pub struct PixiInitSentence {
 #[sentence(
     command = "intro",
     validate = Self::validate,
+    forward = Self::forward_inner,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "语句自带连续执行效果",
@@ -331,8 +338,8 @@ pub struct IntroSentence {
     #[sentence(rename = "delayTime")]
     pub delay: Option<usize>,
     pub hold: bool,
-    #[sentence(rename = "useForward")]
-    pub use_forward: bool,
+    #[sentence(rename = "userForward")]
+    pub user_forward: bool,
     pub when: Option<String>,
 }
 
@@ -340,6 +347,7 @@ pub struct IntroSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "miniAvatar",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -356,6 +364,7 @@ pub struct MiniAvatarSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "setTextbox",
+    forward = Wait,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -372,6 +381,7 @@ pub struct SetTextboxSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "filmMode",
+    forward = Wait,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -390,6 +400,7 @@ pub struct FilmModeSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "callScene",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -406,6 +417,7 @@ pub struct CallSceneSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "changeScene",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -423,6 +435,7 @@ pub struct ChangeSceneSentence {
 #[sentence(
     command = "choose",
     validate = Self::validate,
+    forward = Continue,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "语句自带连续执行效果",
@@ -441,6 +454,7 @@ pub struct ChooseSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "label",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -457,6 +471,7 @@ pub struct LabelSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "jumpLabel",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -475,6 +490,7 @@ pub struct JumpLabelSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "unlockCg",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -495,6 +511,7 @@ pub struct UnlockCgSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "unlockBgm",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -517,6 +534,7 @@ pub struct UnlockBgmSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "getUserInput",
+    forward = Continue,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "语句自带连续执行效果",
@@ -546,6 +564,7 @@ pub struct GetUserInputSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "setVar",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -563,6 +582,7 @@ pub struct SetVarSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "showVars",
+    forward = Wait,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "语句自带连续执行效果",
@@ -577,6 +597,7 @@ pub struct ShowVarsSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "wait",
+    forward = Continue,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "语句自带连续执行效果",
@@ -593,6 +614,7 @@ pub struct WaitSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "applyStyle",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -613,6 +635,7 @@ pub struct ApplyStyleSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "callSteam",
+    forward = Next,
     obsolete = {
         "next": "语句自带同步执行效果",
         "continue": "语句自带同步执行效果",
@@ -629,6 +652,7 @@ pub struct CallSteamSentence {
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[sentence(
     command = "end",
+    forward = Next,
     obsolete = {
         "next": "控制的演出时序无意义",
         "continue": "控制的演出时序无意义",
@@ -643,7 +667,7 @@ pub struct EndSentence {
 
 /// 空白注释语句
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
-#[sentence(command = "")]
+#[sentence(command = "", forward = Next)]
 pub struct CommentSentence {} // 单元结构体暂时不可用
 
 // -------- 校验 --------
@@ -752,11 +776,31 @@ impl ChooseSentence {
     }
 }
 
+// -------- 时序 --------
+
+impl IntroSentence {
+    fn forward_inner(&self) -> Forward {
+        if !self.hold && !self.user_forward {
+            Forward::Continue
+        } else {
+            Forward::Wait
+        }
+    }
+}
+
 // -------- 对话 --------
 
 impl SentenceExt for SaySentence {
     fn command(&self) -> &'static str {
         "say"
+    }
+
+    fn forward(&self) -> Forward {
+        if self.notend {
+            Forward::Continue
+        } else {
+            Forward::Wait
+        }
     }
 }
 

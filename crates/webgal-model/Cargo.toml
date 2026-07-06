@@ -9,13 +9,9 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-lsp = ["path-tree", "json-complete"] # WebGAL LSP 附加数据模型
-
 [dependencies]
-path-tree = { workspace = true, optional = true }
-json-complete = { workspace = true, optional = true }
+path-tree.workspace = true
+json-complete.workspace = true
 
 webgal-sentence-macro.workspace = true
 

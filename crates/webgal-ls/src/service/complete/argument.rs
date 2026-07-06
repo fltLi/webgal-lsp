@@ -1026,7 +1026,7 @@ impl Complete for IntroSentence {
                 self.animation != Default::default() => ("animation", "animation=", "动画"),
                 self.delay.is_none() => ("delayTime", "delayTime=", "延迟时间 (ms)"),
                 !self.hold => ("hold", "hold", "结束后保持"),
-                !self.use_forward => ("useForward", "useForward", "手动播放每行文本"),
+                !self.user_forward => ("userForward", "userForward", "手动播放每行文本"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }

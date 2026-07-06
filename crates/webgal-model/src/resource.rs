@@ -1,157 +1,147 @@
-pub use config::*;
-pub use figure::*;
+use path_tree::{PATH_SEPARATORS, name_of};
+use strum::{Display, EnumString};
 
-pub use crate::element::AnimationList; // 重新导出方便使用
+pub use crate::element::AnimationList;
+pub use config::*;
+pub use figure::*; // 重新导出方便使用
 
 mod config;
 mod figure;
 
-// -------- lsp --------
+/// 资源根目录 (升序)
+pub const RESOURCE_ROOTS: &[&str] = &[
+    "animation",
+    "background",
+    "bgm",
+    "figure",
+    "scene",
+    "video",
+    "vocal",
+];
 
-#[cfg(feature = "lsp")]
-pub use lsp_ext::*;
+/// 资源信息
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResourceInfo<'a> {
+    pub kind: ResourceKind,
+    pub path: &'a str,
+    pub extension: Option<&'a str>,
+}
 
-#[cfg(feature = "lsp")]
-mod lsp_ext {
-    use path_tree::{PATH_SEPARATORS, name_of};
-    use strum::{Display, EnumString};
+/// 资源类型
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
+)]
+#[strum(serialize_all = "camelCase")]
+pub enum ResourceKind {
+    Config,
+    Scene,
+    Animation,
+    Background,
+    Figure,
+    Bgm,
+    Vocal,
+    Video,
+    #[default]
+    Other,
+}
 
-    /// 资源根目录 (升序)
-    pub const RESOURCE_ROOTS: &[&str] = &[
-        "animation",
-        "background",
-        "bgm",
-        "figure",
-        "scene",
-        "video",
-        "vocal",
-    ];
-
-    /// 资源信息
-    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct ResourceInfo<'a> {
-        pub kind: ResourceKind,
-        pub path: &'a str,
-        pub extension: Option<&'a str>,
-    }
-
-    /// 资源类型
-    #[derive(
-        Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
-    )]
-    #[strum(serialize_all = "camelCase")]
-    pub enum ResourceKind {
-        Config,
-        Scene,
-        Animation,
-        Background,
-        Figure,
-        Bgm,
-        Vocal,
-        Video,
-        #[default]
-        Other,
-    }
-
-    impl<'a> ResourceInfo<'a> {
-        /// 依据路径识别资源信息
-        ///
-        /// # Behavior
-        /// * 不进行路径规范化, 包括移除空白字符 / 首尾分隔符, 处理相对路径等.
-        /// * 可识别并处理路径分隔符: `/`, `\\`.
-        /// * 后缀名以 `.` 作为识别符号但不包含其本身, 形如: `txt`, `png`.
-        pub fn from_path(path: &'a str) -> Self {
-            let (kind, path) = ResourceKind::from_path(path);
-            let extension = extension_of(path);
-            Self {
-                kind,
-                path,
-                extension,
-            }
-        }
-
-        /// 资源是否为目录 (无后缀)
-        pub fn is_folder(&self) -> bool {
-            self.extension.is_none()
-        }
-
-        /// 资源是否为目录 (有后缀)
-        pub fn is_file(&self) -> bool {
-            self.extension.is_some()
-        }
-
-        /// 资源是否为根目录相关类型的文件
-        ///
-        /// # Behavior
-        /// * 目录 (无后缀) 返回 `false`.
-        /// * 后缀检查由 [`ResourceKind::is_extension_relevant`] 提供.
-        pub fn is_relevant_file(&self) -> bool {
-            self.extension
-                .is_some_and(|extension| self.kind.is_extension_relevant(extension))
+impl<'a> ResourceInfo<'a> {
+    /// 依据路径识别资源信息
+    ///
+    /// # Behavior
+    /// * 不进行路径规范化, 包括移除空白字符 / 首尾分隔符, 处理相对路径等.
+    /// * 可识别并处理路径分隔符: `/`, `\\`.
+    /// * 后缀名以 `.` 作为识别符号但不包含其本身, 形如: `txt`, `png`.
+    pub fn from_path(path: &'a str) -> Self {
+        let (kind, path) = ResourceKind::from_path(path);
+        let extension = extension_of(path);
+        Self {
+            kind,
+            path,
+            extension,
         }
     }
 
-    impl ResourceKind {
-        /// 依据路径识别资源类型
-        ///
-        /// # Returns
-        /// 资源类型, 以及其在对应资源根目录下的路径 (或原路径).
-        ///
-        /// # Behavior
-        /// * 不进行路径规范化, 包括移除空白字符 / 首尾分隔符, 处理相对路径等.
-        /// * 可识别并处理路径分隔符: `/`, `\\`.
-        pub fn from_path(path: &str) -> (Self, &str) {
-            let path = path.trim_end_matches(PATH_SEPARATORS);
-            if path == "config.txt" {
-                return (Self::Config, path);
-            }
-
-            match path.split_once(PATH_SEPARATORS).unwrap_or((path, "")) {
-                ("scene", path) => (Self::Scene, path),
-                ("animation", path) => (Self::Animation, path),
-                ("background", path) => (Self::Background, path),
-                ("figure", path) => (Self::Figure, path),
-                ("bgm", path) => (Self::Bgm, path),
-                ("vocal", path) => (Self::Vocal, path),
-                ("video", path) => (Self::Video, path),
-                _ => (Self::Other, path),
-            }
-        }
-
-        /// 获取资源类型对应的文件后缀 (升序)
-        pub fn extensions(&self) -> &'static [&'static str] {
-            match self {
-                Self::Config => &["txt"],
-                Self::Scene => &["txt"],
-                Self::Animation => &["json"],
-                Self::Background => &[
-                    "bmp", "gif", "jpeg", "jpg", "mkv", "mp4", "png", "svg", "webm", "webp",
-                ],
-                Self::Figure => &[
-                    "bmp", "gif", "jpeg", "jpg", "json", "jsonl", "png", "skel", "svg", "webp",
-                    "wmdl",
-                ],
-                Self::Bgm => &["flac", "mp3", "ogg", "wav"],
-                Self::Vocal => &["flac", "mp3", "ogg", "wav"],
-                Self::Video => &["mkv", "mp4", "ogg", "webm"],
-                Self::Other => &[],
-            }
-        }
-
-        /// 后缀是否属于指定资源类型
-        pub fn is_extension_relevant(&self, extension: &str) -> bool {
-            self.extensions().binary_search(&extension).is_ok()
-        }
+    /// 资源是否为目录 (无后缀)
+    pub fn is_folder(&self) -> bool {
+        self.extension.is_none()
     }
 
-    fn extension_of(path: &str) -> Option<&str> {
-        name_of(path)
-            .rsplit_once('.')
-            .map(|(_, extension)| extension)
+    /// 资源是否为目录 (有后缀)
+    pub fn is_file(&self) -> bool {
+        self.extension.is_some()
+    }
+
+    /// 资源是否为根目录相关类型的文件
+    ///
+    /// # Behavior
+    /// * 目录 (无后缀) 返回 `false`.
+    /// * 后缀检查由 [`ResourceKind::is_extension_relevant`] 提供.
+    pub fn is_relevant_file(&self) -> bool {
+        self.extension
+            .is_some_and(|extension| self.kind.is_extension_relevant(extension))
     }
 }
 
-#[cfg(all(test, feature = "lsp"))]
+impl ResourceKind {
+    /// 依据路径识别资源类型
+    ///
+    /// # Returns
+    /// 资源类型, 以及其在对应资源根目录下的路径 (或原路径).
+    ///
+    /// # Behavior
+    /// * 不进行路径规范化, 包括移除空白字符 / 首尾分隔符, 处理相对路径等.
+    /// * 可识别并处理路径分隔符: `/`, `\\`.
+    pub fn from_path(path: &str) -> (Self, &str) {
+        let path = path.trim_end_matches(PATH_SEPARATORS);
+        if path == "config.txt" {
+            return (Self::Config, path);
+        }
+
+        match path.split_once(PATH_SEPARATORS).unwrap_or((path, "")) {
+            ("scene", path) => (Self::Scene, path),
+            ("animation", path) => (Self::Animation, path),
+            ("background", path) => (Self::Background, path),
+            ("figure", path) => (Self::Figure, path),
+            ("bgm", path) => (Self::Bgm, path),
+            ("vocal", path) => (Self::Vocal, path),
+            ("video", path) => (Self::Video, path),
+            _ => (Self::Other, path),
+        }
+    }
+
+    /// 获取资源类型对应的文件后缀 (升序)
+    pub fn extensions(&self) -> &'static [&'static str] {
+        match self {
+            Self::Config => &["txt"],
+            Self::Scene => &["txt"],
+            Self::Animation => &["json"],
+            Self::Background => &[
+                "bmp", "gif", "jpeg", "jpg", "mkv", "mp4", "png", "svg", "webm", "webp",
+            ],
+            Self::Figure => &[
+                "bmp", "gif", "jpeg", "jpg", "json", "jsonl", "png", "skel", "svg", "webp", "wmdl",
+            ],
+            Self::Bgm => &["flac", "mp3", "ogg", "wav"],
+            Self::Vocal => &["flac", "mp3", "ogg", "wav"],
+            Self::Video => &["mkv", "mp4", "ogg", "webm"],
+            Self::Other => &[],
+        }
+    }
+
+    /// 后缀是否属于指定资源类型
+    pub fn is_extension_relevant(&self, extension: &str) -> bool {
+        self.extensions().binary_search(&extension).is_ok()
+    }
+}
+
+fn extension_of(path: &str) -> Option<&str> {
+    name_of(path)
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+}
+
+#[cfg(test)]
 mod tests {
     // This module is generated by AI.
 

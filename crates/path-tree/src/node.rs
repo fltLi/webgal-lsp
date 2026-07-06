@@ -1,12 +1,13 @@
 use std::{fmt, iter};
 
-use derive_more::From;
+use derive_more::{From, TryInto};
 use itertools::Either;
 
 use crate::Folder;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From, TryInto)]
 pub enum Node<T> {
+    #[try_into(ignore)]
     Item(T),
     Folder(Folder<T>),
 }

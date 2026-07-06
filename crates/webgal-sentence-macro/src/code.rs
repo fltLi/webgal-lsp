@@ -3,21 +3,53 @@ use std::{collections::HashMap, iter};
 use itertools::Either;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{GenericArgument, Path, PathArguments, Type, TypePath};
+use syn::{GenericArgument, Ident, Path, PathArguments, Type, TypePath};
 
 use crate::info::{ArgumentInfo, ArgumentKind, FieldInfo, SentenceInfo};
 
 // -------- get_command --------
 
 pub fn impl_sentence_ext(info: &SentenceInfo) -> TokenStream {
-    let SentenceInfo { ident, command, .. } = info;
+    let SentenceInfo {
+        ident,
+        command,
+        forward,
+        ..
+    } = info;
+
+    let forward = gen_forward(forward);
+
     quote! {
         #[automatically_derived]
         impl crate::sentence::SentenceExt for #ident {
             fn command(&self) -> &'static str {
                 #command
             }
+
+            fn forward(&self) -> crate::element::Forward {
+                #forward
+            }
         }
+    }
+}
+
+fn gen_forward(forward: &Either<Path, Ident>) -> TokenStream {
+    match forward {
+        Either::Left(path) if path.is_ident("Wait") => quote! {
+            crate::element::Forward::Wait
+        },
+        Either::Left(path) if path.is_ident("Continue") => quote! {
+            crate::element::Forward::Continue
+        },
+        Either::Left(path) if path.is_ident("Next") => quote! {
+            crate::element::Forward::Next
+        },
+        Either::Left(path) => quote! {
+            #path(self)
+        },
+        Either::Right(ident) => quote! {
+            self.#ident
+        },
     }
 }
 

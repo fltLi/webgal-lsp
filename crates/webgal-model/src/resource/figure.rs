@@ -1,6 +1,7 @@
 //! 立绘资源
 
 use derive_more::{From, TryInto};
+use path_tree::Folder;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, Map, serde_as};
 
@@ -19,6 +20,22 @@ pub enum Figure {
     Composite, // 暂不支持
 }
 
+impl Figure {
+    pub fn get_type(&self) -> FigureKind {
+        match self {
+            Self::Image => FigureKind::Image,
+            Self::Spine => FigureKind::Spine,
+            Self::Live2d(_) => FigureKind::Live2d,
+            Self::Wmdl(_) => FigureKind::Wmdl,
+            Self::Composite => FigureKind::Composite,
+        }
+    }
+
+    pub fn to_info(&self) -> FigureInfo {
+        FigureInfo::from_figure(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FigureKind {
     #[default]
@@ -29,13 +46,97 @@ pub enum FigureKind {
     Composite,
 }
 
-impl Figure {
+impl FigureKind {
+    /// 依据路径识别模型类型
+    ///
+    /// # Returns
+    /// 模型类型及其路径 (例如去掉部分模型的 `?type=...` 标识).
+    pub fn from_path(model: &str) -> (Self, &str) {
+        if let Some(model) = model.strip_suffix("?type=spine") {
+            return (Self::Spine, model);
+        }
+        let kind = [
+            (".skel", Self::Spine),
+            (".json", Self::Live2d),
+            (".wmdl", Self::Wmdl),
+            (".jsonl", Self::Composite),
+        ]
+        .iter()
+        .find_map(|&(extension, kind)| model.ends_with(extension).then_some(kind))
+        .unwrap_or(Self::Image);
+        (kind, model)
+    }
+
+    pub fn try_to_info(&self) -> Option<FigureInfo> {
+        FigureInfo::try_from_type(self)
+    }
+}
+
+/// 立绘模型立绘 / 表情调用信息
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FigureInfo {
+    #[default]
+    Image,
+    Spine,
+    Live2d {
+        motions: Folder<()>,
+        expressions: Folder<()>,
+    },
+    Wmdl {
+        import: String,
+    },
+    Composite,
+}
+
+impl FigureInfo {
+    pub fn from_figure(model: &Figure) -> Self {
+        match model {
+            Figure::Image => Self::Image,
+            Figure::Spine => Self::Spine,
+            Figure::Live2d(model) => Self::from_live2d(model),
+            Figure::Wmdl(model) => Self::from_wmdl(model),
+            Figure::Composite => Self::Composite,
+        }
+    }
+
+    pub fn from_live2d(model: &Live2dModel) -> Self {
+        let motions = model
+            .motions
+            .iter()
+            .map(|(motion, _)| (motion, ()))
+            .collect();
+        let expressions = model
+            .expressions
+            .iter()
+            .map(|Live2dExpression { name, .. }| (name, ()))
+            .collect();
+        Self::Live2d {
+            motions,
+            expressions,
+        }
+    }
+
+    pub fn from_wmdl(model: &WmdlModel) -> Self {
+        Self::Wmdl {
+            import: model.model.clone(),
+        }
+    }
+
+    pub fn try_from_type(kind: &FigureKind) -> Option<Self> {
+        match kind {
+            FigureKind::Image => Some(Self::Image),
+            FigureKind::Spine => Some(Self::Spine),
+            FigureKind::Composite => Some(Self::Composite),
+            _ => None,
+        }
+    }
+
     pub fn get_type(&self) -> FigureKind {
         match self {
             Self::Image => FigureKind::Image,
             Self::Spine => FigureKind::Spine,
-            Self::Live2d(_) => FigureKind::Live2d,
-            Self::Wmdl(_) => FigureKind::Wmdl,
+            Self::Live2d { .. } => FigureKind::Live2d,
+            Self::Wmdl { .. } => FigureKind::Wmdl,
             Self::Composite => FigureKind::Composite,
         }
     }
@@ -68,6 +169,12 @@ pub struct Live2dModel {
 impl_from_str_for_serde_json!(Live2dModel);
 impl_display_for_serde_json!(Live2dModel);
 
+impl Live2dModel {
+    pub fn to_info(&self) -> FigureInfo {
+        FigureInfo::from_live2d(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Live2dLayout {
@@ -77,6 +184,9 @@ pub struct Live2dLayout {
     pub y: isize,
     pub width: usize,
 }
+
+impl_from_str_for_serde_json!(Live2dLayout);
+impl_display_for_serde_json!(Live2dLayout);
 
 impl Default for Live2dLayout {
     fn default() -> Self {
@@ -88,9 +198,6 @@ impl Default for Live2dLayout {
     }
 }
 
-impl_from_str_for_serde_json!(Live2dLayout);
-impl_display_for_serde_json!(Live2dLayout);
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HitAreas {
@@ -99,6 +206,9 @@ pub struct HitAreas {
     pub body_x: (f32, f32),
     pub body_y: (f32, f32),
 }
+
+impl_from_str_for_serde_json!(HitAreas);
+impl_display_for_serde_json!(HitAreas);
 
 impl Default for HitAreas {
     fn default() -> Self {
@@ -110,9 +220,6 @@ impl Default for HitAreas {
         }
     }
 }
-
-impl_from_str_for_serde_json!(HitAreas);
-impl_display_for_serde_json!(HitAreas);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Live2dMotion {
@@ -167,6 +274,12 @@ pub struct WmdlModel {
 impl_from_str_for_serde_json!(WmdlModel);
 impl_display_for_serde_json!(WmdlModel);
 
+impl WmdlModel {
+    pub fn to_info(&self) -> FigureInfo {
+        FigureInfo::from_wmdl(self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WmdlSubModel {
@@ -181,133 +294,3 @@ pub struct WmdlSubModel {
 
 impl_from_str_for_serde_json!(WmdlSubModel);
 impl_display_for_serde_json!(WmdlSubModel);
-
-// -------- lsp --------
-
-#[cfg(feature = "lsp")]
-pub use lsp_ext::*;
-
-#[cfg(feature = "lsp")]
-mod lsp_ext {
-    use path_tree::Folder;
-
-    use super::*;
-
-    impl FigureKind {
-        /// 依据路径识别模型类型
-        ///
-        /// # Returns
-        /// 模型类型及其路径 (例如去掉部分模型的 `?type=...` 标识).
-        pub fn from_path(model: &str) -> (Self, &str) {
-            if let Some(model) = model.strip_suffix("?type=spine") {
-                return (Self::Spine, model);
-            }
-            let kind = [
-                (".skel", Self::Spine),
-                (".json", Self::Live2d),
-                (".wmdl", Self::Wmdl),
-                (".jsonl", Self::Composite),
-            ]
-            .iter()
-            .find_map(|&(extension, kind)| model.ends_with(extension).then_some(kind))
-            .unwrap_or(Self::Image);
-            (kind, model)
-        }
-    }
-
-    // -------- motion --------
-
-    /// 立绘模型立绘 / 表情调用信息
-    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub enum FigureInfo {
-        #[default]
-        Image,
-        Spine,
-        Live2d {
-            motions: Folder<()>,
-            expressions: Folder<()>,
-        },
-        Wmdl {
-            import: String,
-        },
-        Composite,
-    }
-
-    impl FigureInfo {
-        pub fn from_figure(model: &Figure) -> Self {
-            match model {
-                Figure::Image => Self::Image,
-                Figure::Spine => Self::Spine,
-                Figure::Live2d(model) => Self::from_live2d(model),
-                Figure::Wmdl(model) => Self::from_wmdl(model),
-                Figure::Composite => Self::Composite,
-            }
-        }
-
-        pub fn from_live2d(model: &Live2dModel) -> Self {
-            let motions = model
-                .motions
-                .iter()
-                .map(|(motion, _)| (motion, ()))
-                .collect();
-            let expressions = model
-                .expressions
-                .iter()
-                .map(|Live2dExpression { name, .. }| (name, ()))
-                .collect();
-            Self::Live2d {
-                motions,
-                expressions,
-            }
-        }
-
-        pub fn from_wmdl(model: &WmdlModel) -> Self {
-            Self::Wmdl {
-                import: model.model.clone(),
-            }
-        }
-
-        pub fn try_from_type(kind: &FigureKind) -> Option<Self> {
-            match kind {
-                FigureKind::Image => Some(Self::Image),
-                FigureKind::Spine => Some(Self::Spine),
-                FigureKind::Composite => Some(Self::Composite),
-                _ => None,
-            }
-        }
-
-        pub fn get_type(&self) -> FigureKind {
-            match self {
-                Self::Image => FigureKind::Image,
-                Self::Spine => FigureKind::Spine,
-                Self::Live2d { .. } => FigureKind::Live2d,
-                Self::Wmdl { .. } => FigureKind::Wmdl,
-                Self::Composite => FigureKind::Composite,
-            }
-        }
-    }
-
-    impl Figure {
-        pub fn to_info(&self) -> FigureInfo {
-            FigureInfo::from_figure(self)
-        }
-    }
-
-    impl Live2dModel {
-        pub fn to_info(&self) -> FigureInfo {
-            FigureInfo::from_live2d(self)
-        }
-    }
-
-    impl WmdlModel {
-        pub fn to_info(&self) -> FigureInfo {
-            FigureInfo::from_wmdl(self)
-        }
-    }
-
-    impl FigureKind {
-        pub fn try_to_info(&self) -> Option<FigureInfo> {
-            FigureInfo::try_from_type(self)
-        }
-    }
-}

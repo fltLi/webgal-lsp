@@ -3,6 +3,7 @@
 use std::{fmt, str::FromStr};
 
 use derive_more::{Deref, DerefMut, From, Into};
+use json_complete::{ToJsonSchema, Value, json};
 use serde::{Deserialize, Serialize};
 use serde_with::{BoolFromInt, serde_as, skip_serializing_none};
 use strum::{Display, EnumString};
@@ -21,6 +22,8 @@ pub enum ObjectId {
     Background,
     Figure(FigureId),
 }
+
+impl_from_str_for_from!(ObjectId);
 
 impl ObjectId {
     /// 获取对象 ID
@@ -48,8 +51,6 @@ impl fmt::Display for ObjectId {
         f.write_str(self.get_id())
     }
 }
-
-impl_from_str_for_from!(ObjectId);
 
 /// 立绘位置
 #[derive(
@@ -81,6 +82,8 @@ pub enum FigureId {
     Side(FigureSide),
 }
 
+impl_from_str_for_from!(FigureId);
+
 impl FigureId {
     pub fn is_id(&self) -> bool {
         matches!(self, Self::Id(_))
@@ -109,8 +112,6 @@ impl<S: AsRef<str>> From<S> for FigureId {
         }
     }
 }
-
-impl_from_str_for_from!(FigureId);
 
 // -------- 样式 --------
 
@@ -301,6 +302,18 @@ pub struct Live2dBlink {
 impl_from_str_for_serde_json!(Live2dBlink);
 impl_display_for_serde_json!(Live2dBlink);
 
+impl ToJsonSchema for Live2dBlink {
+    fn schema() -> Value {
+        json! {{
+            "blinkInterval":       number "眨眼间隔 (ms)",
+            "blinkIntervalRandom": number "眨眼间隔随机值 (ms)",
+            "closingDuration":     number "闭眼持续时间 (ms)",
+            "closedDuration":      number "闭眼时间 (ms)",
+            "openingDuration":     number "睁眼持续时间 (ms)",
+        }}
+    }
+}
+
 /// Live2D 立绘注视参数
 #[serde_as]
 #[skip_serializing_none]
@@ -314,6 +327,16 @@ pub struct Live2dFocus {
 
 impl_from_str_for_serde_json!(Live2dFocus);
 impl_display_for_serde_json!(Live2dFocus);
+
+impl ToJsonSchema for Live2dFocus {
+    fn schema() -> Value {
+        json! {{
+            "x":       number "注视点 x 轴坐标",
+            "y":       number "注视点 y 轴坐标",
+            "instant": bool   "立即注视",
+        }}
+    }
+}
 
 // -------- 转场 --------
 
@@ -422,6 +445,9 @@ pub struct Transform {
     pub radius_alpha: Option<f32>,
 }
 
+impl_from_str_for_serde_json!(Transform);
+impl_display_for_serde_json!(Transform);
+
 impl Transform {
     pub fn validate(&self) -> anyhow::Result<()> {
         try_validate(|errors| {
@@ -488,8 +514,48 @@ impl Transform {
     }
 }
 
-impl_from_str_for_serde_json!(Transform);
-impl_display_for_serde_json!(Transform);
+impl ToJsonSchema for Transform {
+    fn schema() -> Value {
+        json! {{
+            // 基础变换
+            "position": (Position::schema()) "位置",
+            "rotation": number               "旋转 (rad)",
+            "scale":    (Scale::schema())    "缩放",
+            // 基础效果
+            "alpha": number "透明度 [0, 1]",
+            "blur":  number "模糊 [0..+inf)",
+            // 颜色调整滤镜
+            "brightness": number "亮度 [0, +inf)",
+            "contrast":   number "对比度 [0, +inf)",
+            "saturation": number "饱和度 [0, +inf)",
+            "gamma":      number "伽马值 [0, +inf)",
+            "colorRed":   number "色调红色分量 [0..256)",
+            "colorGreen": number "色调绿色分量 [0..256)",
+            "colorBlue":  number "色调蓝色分量 [0..256)",
+            // 泛光滤镜
+            "bloom":           number "泛光强度 [0..+inf)",
+            "bloomBrightness": number "泛光亮度 [0, +inf)",
+            "bloomBlur":       number "泛光模糊 [0..+inf)",
+            "bloomThreshold":  number "泛光阈值 [0, 1]",
+            // 倒角滤镜
+            "bevel":          number "倒角透明度 [0, 1]",
+            "bevelThickness": number "倒角厚度 [0..+inf)",
+            "bevelRotation":  number "倒角旋转 (rad)",
+            "bevelRed":       number "倒角红色分量 [0..256)",
+            "bevelGreen":     number "倒角绿色分量 [0..256)",
+            "bevelBlue":      number "倒角蓝色分量 [0..256)",
+            // 其他滤镜
+            "oldFilm":        number "老电影滤镜 {0, 1}",
+            "dotFilm":        number "点状滤镜 {0, 1}",
+            "rgbFilm":        number "RGB 分离滤镜 {0, 1}",
+            "glitchFilm":     number "故障滤镜 {0, 1}",
+            "godrayFilm":     number "光辉滤镜 {0, 1}",
+            "reflectionFilm": number "反射滤镜 {0, 1}",
+            "shockwave":      number "冲击波相位",
+            "radiusAlpha":    number "径向渐变透明半径 [0, +inf)",
+        }}
+    }
+}
 
 #[serde_as]
 #[skip_serializing_none]
@@ -503,6 +569,15 @@ pub struct Position {
 
 impl_from_str_for_serde_json!(Position);
 impl_display_for_serde_json!(Position);
+
+impl ToJsonSchema for Position {
+    fn schema() -> Value {
+        json! {{
+            "x": number "x 轴坐标 (pix)",
+            "y": number "y 轴坐标 (pix)",
+        }}
+    }
+}
 
 #[serde_as]
 #[skip_serializing_none]
@@ -532,6 +607,15 @@ impl Scale {
 impl_from_str_for_serde_json!(Scale);
 impl_display_for_serde_json!(Scale);
 
+impl ToJsonSchema for Scale {
+    fn schema() -> Value {
+        json! {{
+            "x": number "x 轴缩放 [0, +inf)",
+            "y": number "y 轴缩放 [0, +inf)",
+        }}
+    }
+}
+
 /// 动画片段 (继承自变换效果)
 #[serde_as]
 #[skip_serializing_none]
@@ -543,14 +627,24 @@ pub struct Animation {
     pub transform: Transform,
 }
 
+impl_from_str_for_serde_json!(Animation);
+impl_display_for_serde_json!(Animation);
+
 impl Animation {
     pub fn validate(&self) -> anyhow::Result<()> {
         self.transform.validate()
     }
 }
 
-impl_from_str_for_serde_json!(Animation);
-impl_display_for_serde_json!(Animation);
+impl ToJsonSchema for Animation {
+    fn schema() -> Value {
+        json! {{
+            "duration": number "持续时间 (ms)",
+            "ease":     string "缓动类型",
+        }}
+        .inherit(&Transform::schema())
+    }
+}
 
 /// 多段动画
 #[derive(
@@ -568,6 +662,9 @@ impl_display_for_serde_json!(Animation);
 )]
 pub struct AnimationList(Vec<Animation>);
 
+impl_from_str_for_serde_json!(AnimationList);
+impl_display_for_serde_json!(AnimationList);
+
 impl AnimationList {
     pub fn validate(&self) -> anyhow::Result<()> {
         try_validate(|errors| {
@@ -581,8 +678,11 @@ impl AnimationList {
     }
 }
 
-impl_from_str_for_serde_json!(AnimationList);
-impl_display_for_serde_json!(AnimationList);
+impl ToJsonSchema for AnimationList {
+    fn schema() -> Value {
+        json! {[ (Animation::schema()) ]}
+    }
+}
 
 // -------- 执行 --------
 
@@ -608,115 +708,6 @@ pub enum Sustain {
     Wait,
     Keep,
     Parallel,
-}
-
-// #[cfg(feature = "lsp")]
-// pub use lsp_ext::*;
-
-#[cfg(feature = "lsp")]
-mod lsp_ext {
-    use json_complete::{ToJsonSchema, Value, json};
-
-    use super::*;
-
-    impl ToJsonSchema for Live2dBlink {
-        fn schema() -> Value {
-            json! {{
-                "blinkInterval":       number "眨眼间隔 (ms)",
-                "blinkIntervalRandom": number "眨眼间隔随机值 (ms)",
-                "closingDuration":     number "闭眼持续时间 (ms)",
-                "closedDuration":      number "闭眼时间 (ms)",
-                "openingDuration":     number "睁眼持续时间 (ms)",
-            }}
-        }
-    }
-
-    impl ToJsonSchema for Live2dFocus {
-        fn schema() -> Value {
-            json! {{
-                "x":       number "注视点 x 轴坐标",
-                "y":       number "注视点 y 轴坐标",
-                "instant": bool   "立即注视",
-            }}
-        }
-    }
-
-    impl ToJsonSchema for Transform {
-        fn schema() -> Value {
-            json! {{
-                // 基础变换
-                "position": (Position::schema()) "位置",
-                "rotation": number               "旋转 (rad)",
-                "scale":    (Scale::schema())    "缩放",
-                // 基础效果
-                "alpha": number "透明度 [0, 1]",
-                "blur":  number "模糊 [0..+inf)",
-                // 颜色调整滤镜
-                "brightness": number "亮度 [0, +inf)",
-                "contrast":   number "对比度 [0, +inf)",
-                "saturation": number "饱和度 [0, +inf)",
-                "gamma":      number "伽马值 [0, +inf)",
-                "colorRed":   number "色调红色分量 [0..256)",
-                "colorGreen": number "色调绿色分量 [0..256)",
-                "colorBlue":  number "色调蓝色分量 [0..256)",
-                // 泛光滤镜
-                "bloom":           number "泛光强度 [0..+inf)",
-                "bloomBrightness": number "泛光亮度 [0, +inf)",
-                "bloomBlur":       number "泛光模糊 [0..+inf)",
-                "bloomThreshold":  number "泛光阈值 [0, 1]",
-                // 倒角滤镜
-                "bevel":          number "倒角透明度 [0, 1]",
-                "bevelThickness": number "倒角厚度 [0..+inf)",
-                "bevelRotation":  number "倒角旋转 (rad)",
-                "bevelRed":       number "倒角红色分量 [0..256)",
-                "bevelGreen":     number "倒角绿色分量 [0..256)",
-                "bevelBlue":      number "倒角蓝色分量 [0..256)",
-                // 其他滤镜
-                "oldFilm":        number "老电影滤镜 {0, 1}",
-                "dotFilm":        number "点状滤镜 {0, 1}",
-                "rgbFilm":        number "RGB 分离滤镜 {0, 1}",
-                "glitchFilm":     number "故障滤镜 {0, 1}",
-                "godrayFilm":     number "光辉滤镜 {0, 1}",
-                "reflectionFilm": number "反射滤镜 {0, 1}",
-                "shockwave":      number "冲击波相位",
-                "radiusAlpha":    number "径向渐变透明半径 [0, +inf)",
-            }}
-        }
-    }
-
-    impl ToJsonSchema for Position {
-        fn schema() -> Value {
-            json! {{
-                "x": number "x 轴坐标 (pix)",
-                "y": number "y 轴坐标 (pix)",
-            }}
-        }
-    }
-
-    impl ToJsonSchema for Scale {
-        fn schema() -> Value {
-            json! {{
-                "x": number "x 轴缩放 [0, +inf)",
-                "y": number "y 轴缩放 [0, +inf)",
-            }}
-        }
-    }
-
-    impl ToJsonSchema for Animation {
-        fn schema() -> Value {
-            json! {{
-                "duration": number "持续时间 (ms)",
-                "ease":     string "缓动类型",
-            }}
-            .inherit(&Transform::schema())
-        }
-    }
-
-    impl ToJsonSchema for AnimationList {
-        fn schema() -> Value {
-            json! {[ (Animation::schema()) ]}
-        }
-    }
 }
 
 #[cfg(test)]

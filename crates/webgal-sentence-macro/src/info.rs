@@ -1,3 +1,4 @@
+use either::Either;
 use proc_macro2::Span;
 use quote::format_ident;
 use syn::{Attribute, Error, Field, FieldsNamed, Ident, Path, Result, Type, spanned::Spanned};
@@ -8,6 +9,7 @@ pub struct SentenceInfo {
     pub ident: Ident,
     pub command: String,
     pub validate: Option<Path>,
+    pub forward: Either<Path, Ident>,
     pub obsolete: Vec<(String, String)>,
     pub content: Option<FieldInfo>,
     pub arguments: Vec<ArgumentInfo>,
@@ -42,11 +44,13 @@ pub enum ArgumentKind {
 impl SentenceInfo {
     pub fn from_ast(ident: Ident, attrs: &[Attribute], fields: &FieldsNamed) -> Result<Self> {
         let (command, validate, obsolete) = collect_struct(attrs)?;
+        let forward = collect_forward(attrs, fields)?;
         let (content, arguments) = collect_arguments(fields)?;
         Ok(Self {
             ident,
             command,
             validate,
+            forward,
             obsolete,
             content,
             arguments,
@@ -68,6 +72,7 @@ fn collect_struct(attrs: &[Attribute]) -> Result<(String, Option<Path>, Vec<(Str
 
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("sentence")) {
         let make_error = |msg| Err(Error::new(attr.span(), msg));
+
         for attr in attr.parse_args::<SentenceAttrList>()? {
             match attr {
                 SentenceAttr::Command(cmd) => {
@@ -76,15 +81,19 @@ fn collect_struct(attrs: &[Attribute]) -> Result<(String, Option<Path>, Vec<(Str
                     }
                     command = Some(cmd);
                 }
+
                 SentenceAttr::Validate(vld) => {
                     if validate.is_some() {
                         return make_error("语句结构体上只能有一个 `validate` 属性");
                     }
                     validate = Some(vld);
                 }
+
                 SentenceAttr::Obsolete(mut map) => {
                     obsolete.append(&mut map);
                 }
+
+                SentenceAttr::Forward(_) => {}
                 _ => return make_error("`sentence` 标注内只能带有 `command` 和 `obsolete` 属性"),
             }
         }
@@ -97,6 +106,55 @@ fn collect_struct(attrs: &[Attribute]) -> Result<(String, Option<Path>, Vec<(Str
         )
     })?;
     Ok((command, validate, obsolete))
+}
+
+fn collect_forward(attrs: &[Attribute], fields: &FieldsNamed) -> Result<Either<Path, Ident>> {
+    let mut forward = None;
+
+    // 扫描结构体
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("sentence")) {
+        let make_error = |msg| Err(Error::new(attr.span(), msg));
+        for attr in attr.parse_args::<SentenceAttrList>()? {
+            if let SentenceAttr::Forward(fwd) = attr {
+                if forward.is_some() {
+                    return make_error("语句结构体上只能有一个 `forward` 属性");
+                }
+                if fwd.is_none() {
+                    return make_error("结构体上全局 `forward` 属性必须接收时序枚举或函数");
+                }
+                forward = Some(Either::Left(fwd.unwrap()));
+            }
+        }
+    }
+
+    // 扫描字段
+    for field in &fields.named {
+        for attr in field
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("sentence"))
+        {
+            let make_error = |msg| Err(Error::new(attr.span(), msg));
+            for attr in attr.parse_args::<SentenceAttrList>()? {
+                if let SentenceAttr::Forward(fwd) = attr {
+                    if forward.is_some() {
+                        return make_error("语句结构体上只能有一个 `forward` 属性");
+                    }
+                    if fwd.is_some() {
+                        return make_error("字段上 `forward` 不能接收参数");
+                    }
+                    forward = Some(Either::Right(field.ident.clone().unwrap()));
+                }
+            }
+        }
+    }
+
+    forward.ok_or_else(|| {
+        Error::new(
+            Span::call_site(),
+            "语句结构体缺少 `#[sentence(forward = ...)]` 属性",
+        )
+    })
 }
 
 fn collect_arguments(fields: &FieldsNamed) -> Result<(Option<FieldInfo>, Vec<ArgumentInfo>)> {
@@ -209,6 +267,7 @@ impl FieldRole {
                         requires.append(&mut req);
                     }
 
+                    SentenceAttr::Forward(_) => {}
                     _ => return make_error("字段不能含有 `command` 或 `obsolete` 属性"),
                 }
             }

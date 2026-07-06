@@ -9,6 +9,7 @@ use syn::{
 pub enum SentenceAttr {
     Command(String),
     Validate(Path),
+    Forward(Option<Path>),
     Obsolete(Vec<(String, String)>),
     Content,
     Rename(String),
@@ -36,6 +37,18 @@ impl Parse for SentenceAttr {
                 input.parse::<Token![=]>()?;
                 Ok(Self::Command(input.parse::<LitStr>()?.value()))
             }
+            "validate" => {
+                input.parse::<Token![=]>()?;
+                Ok(Self::Validate(input.parse()?))
+            }
+            "forward" => {
+                if input.peek(Token![=]) {
+                    input.parse::<Token![=]>()?;
+                    Ok(Self::Forward(Some(input.parse()?)))
+                } else {
+                    Ok(Self::Forward(None))
+                }
+            }
             "obsolete" => {
                 input.parse::<Token![=]>()?;
                 Ok(Self::Obsolete(
@@ -45,10 +58,6 @@ impl Parse for SentenceAttr {
                         .map(|(argument, reason)| (argument.value(), reason.value()))
                         .collect(),
                 ))
-            }
-            "validate" => {
-                input.parse::<Token![=]>()?;
-                Ok(Self::Validate(input.parse()?))
             }
             "content" => Ok(Self::Content),
             "rename" => {

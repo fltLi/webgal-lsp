@@ -6,14 +6,14 @@ use derive_more::{From, Into, TryInto};
 
 pub use error::*;
 pub use primary::*;
-#[cfg(feature = "lsp")]
 pub use scene::*;
 pub use statement::*;
-pub use webgal_sentence_macro::Sentence; // 重新导出方便使用
+pub use webgal_sentence_macro::Sentence; // 重新导出方便使用 // 无法导出
+
+use crate::element::Forward;
 
 mod error;
 mod primary;
-#[cfg(feature = "lsp")]
 mod scene;
 mod statement;
 
@@ -21,6 +21,20 @@ mod statement;
 pub trait SentenceExt {
     /// 语句类型
     fn command(&self) -> &'static str;
+
+    /// 执行时序
+    fn forward(&self) -> Forward;
+
+    // /// 触发条件
+    // fn condition(&self) -> Option<&str>;
+
+    // /// 关联资源
+    // ///
+    // /// # Returns
+    // /// 资源类型和相对根的路径 (对于立绘可能包含类型后缀).
+    // fn resources(&self) -> Vec<(ResourceKind, &str)> {
+    //     Vec::default()
+    // }
 }
 
 /// 可从初级语句 [`PrimarySentence`] 构建的语句类型
@@ -110,6 +124,10 @@ impl Default for Sentence {
 impl SentenceExt for Sentence {
     fn command(&self) -> &'static str {
         crate::dispatch_sentence!(self.command())
+    }
+
+    fn forward(&self) -> Forward {
+        crate::dispatch_sentence!(self.forward())
     }
 }
 
@@ -231,11 +249,17 @@ impl SentenceOutput {
     }
 }
 
+impl From<SentenceOutput> for Sentence {
+    fn from(value: SentenceOutput) -> Self {
+        value.sentence
+    }
+}
+
 /// 调用 [`Sentence`] 所有变体语句的方法
 ///
 /// # Examples
 /// ```
-/// # use webgal_model::{dispatch_sentence, sentence::{Sentence}};
+/// # use webgal_model::{dispatch_sentence, sentence::Sentence};
 ///
 /// trait TypeName {
 ///     fn type_name(&self) -> &'static str;

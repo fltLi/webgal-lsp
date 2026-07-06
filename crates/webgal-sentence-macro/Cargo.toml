@@ -13,6 +13,7 @@ repository.workspace = true
 proc-macro = true
 
 [dependencies]
+either.workspace = true
 itertools.workspace = true
 
 quote = "1.0"

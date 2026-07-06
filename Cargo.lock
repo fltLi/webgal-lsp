@@ -2166,6 +2166,7 @@ dependencies = [
 name = "webgal-sentence-macro"
 version = "0.1.0"
 dependencies = [
+ "either",
  "itertools 0.14.0",
  "proc-macro2",
  "quote",
