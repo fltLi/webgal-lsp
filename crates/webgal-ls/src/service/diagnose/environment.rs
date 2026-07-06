@@ -3,7 +3,11 @@
 use std::{borrow::Borrow, ops};
 
 use path_tree::{Folder, canonicalize};
-use webgal_model::{resource::FigureInfo, sentence::*};
+use webgal_model::{
+    element::{ChoiceSplit, ChoiceView},
+    resource::FigureInfo,
+    sentence::*,
+};
 
 use crate::{
     project::Project,
@@ -328,20 +332,18 @@ fn diagnose_resource<F>(
         }
 
         Choose(_) if let Some(content) = primary.content => {
-            content
-                .split('|')
-                .filter_map(|choice| choice.split_once(':'))
-                .map(|(_, scene)| scene.trim())
-                .filter(|scene| {
-                    !project.ident().label.contains(&scene.to_string())
-                        && !project.resource().scene.contains(scene)
+            ChoiceSplit::new(content)
+                .filter_map(|ChoiceView { target, .. }| target.map(str::trim))
+                .filter(|target| {
+                    !project.resource().scene.contains(target)
+                        && !project.ident().label.contains(&target.to_string())
                 })
-                .for_each(|scene| {
+                .for_each(|target| {
                     diagnose(PrimaryDiagnostic {
-                        span: primary.get_span(scene),
+                        span: primary.get_span(target),
                         code: "WG007",
                         level: DiagnosticLevel::Warning,
-                        message: format!("找不到或无法识别场景选项: {scene}"),
+                        message: format!("找不到或无法识别场景选项: {target}"),
                     })
                 });
         }
