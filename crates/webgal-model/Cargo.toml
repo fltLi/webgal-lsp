@@ -9,6 +9,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+serde = []   # 数据模型 Serialize 派生
+
 [dependencies]
 path-tree.workspace = true
 json-complete.workspace = true

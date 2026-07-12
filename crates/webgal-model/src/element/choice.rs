@@ -2,10 +2,14 @@
 
 use std::fmt;
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
+
 use crate::util::{find_closing_delimiter, split_once_escaped};
 
 /// 分支选项
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct Choice {
     pub prompt: String,
     pub target: Option<String>,

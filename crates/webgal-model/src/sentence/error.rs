@@ -1,5 +1,7 @@
 use std::result;
 
+#[cfg(feature = "serde")]
+use serde_with::SerializeDisplay;
 use thiserror::Error;
 
 /// 语句解析返回类型
@@ -7,6 +9,7 @@ pub type Result<T> = result::Result<T, Error>;
 
 /// 语句解析错误类型
 #[derive(Debug, Error)]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay))]
 pub enum Error {
     #[error("语句主参数值类型错误: {0}")]
     ContentType(#[source] anyhow::Error),
