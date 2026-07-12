@@ -3,6 +3,8 @@
 use std::{fmt, result};
 
 use derive_more::{From, Into, TryInto};
+#[cfg(feature = "serde")]
+use serde::Serialize;
 
 pub use error::*;
 pub use primary::*;
@@ -52,6 +54,11 @@ pub trait FromPrimary: Sized {
 /// 为防止枚举膨胀, 部分枚举项存储在堆上.
 /// 实际使用中其它语句基本都是 `say`, 可忽略小语句的内存浪费.
 #[derive(Debug, Clone, PartialEq, PartialOrd, From, TryInto)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize),
+    serde(tag = "command", rename_all = "camelCase")
+)]
 pub enum Sentence {
     // 常规演出
     Say(SaySentence),

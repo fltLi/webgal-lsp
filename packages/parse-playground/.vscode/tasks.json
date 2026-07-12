@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Playground WASM",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build:wasm"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Playground",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "Start Playground Server",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev", "--", "--host", "0.0.0.0"],
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "vite",
+          "pattern": {
+            "regexp": "^.*(Local:|ready in).*$",
+            "file": 1,
+            "location": 2,
+            "message": 0
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*",
+            "endsPattern": ".*(Local:|ready in).*$"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Build and Start Playground",
+      "type": "shell",
+      "command": "echo",
+      "args": ["Build and start playground completed"],
+      "dependsOn": ["Build Playground", "Start Playground Server"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}

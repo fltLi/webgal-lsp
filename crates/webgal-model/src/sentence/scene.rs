@@ -2,6 +2,8 @@ use std::fmt::{self, Write};
 
 use ouroboros::self_referencing;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+#[cfg(feature = "serde")]
+use serde::Serialize;
 
 use crate::{
     sentence::{Error, FromPrimary, PrimarySentence, Sentence},
@@ -14,6 +16,7 @@ use crate::{
 ///
 /// 从语句字符串构建, 包含语句内容, 注释, nolint 标记以及解析错误.
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct SentenceInfo<'a> {
     // 语句内容
     pub content: &'a str,

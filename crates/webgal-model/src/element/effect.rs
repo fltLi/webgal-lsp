@@ -17,6 +17,7 @@ use crate::{
 
 /// 对象引用, 包括舞台 + 背景 + 立绘
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum ObjectId {
     Stage,
     Background,
@@ -56,6 +57,7 @@ impl fmt::Display for ObjectId {
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 pub enum FigureSide {
     #[default]
@@ -77,6 +79,7 @@ impl FigureSide {
 
 /// 立绘引用
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum FigureId {
     Id(String),
     Side(FigureSide),
@@ -119,6 +122,7 @@ impl<S: AsRef<str>> From<S> for FigureId {
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 pub enum FontSize {
     #[default]
@@ -130,6 +134,7 @@ pub enum FontSize {
 
 /// 通用颜色表示
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, From, Into)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct Color {
     pub red: u8,
     pub green: u8,
@@ -245,6 +250,7 @@ impl FromStr for Color {
 
 /// Live2D 立绘扩展显示区域
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct Live2dBounds {
     pub west: isize,
     pub north: isize,
@@ -383,6 +389,7 @@ pub enum Ease {
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 pub enum IntroAnimation {
     #[default]
@@ -690,6 +697,7 @@ impl ToJsonSchema for AnimationList {
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 pub enum Forward {
     #[default]
@@ -702,6 +710,7 @@ pub enum Forward {
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 pub enum Sustain {
     #[default]

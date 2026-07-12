@@ -2,6 +2,9 @@
 
 use std::{fmt, ops::Range, slice};
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
+
 use crate::util::{span_of, split_once_escaped};
 
 /// 初级语句
@@ -9,6 +12,7 @@ use crate::util::{span_of, split_once_escaped};
 /// 该阶段仅做词法级解析, 不验证语句是否合法 / 参数是否完备.
 /// 若要获得类型安全的 [`Sentence`] 枚举变体, 请使用 [`FromPrimary`] 进一步解析.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct PrimarySentence<'a> {
     pub command: &'a str,
     pub content: Option<&'a str>,

@@ -1,5 +1,7 @@
 use std::fmt::{self, Write};
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
 use webgal_sentence_macro::Sentence;
 
 use crate::{
@@ -16,6 +18,7 @@ use crate::{
 
 /// 普通对话语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct SaySentence {
     pub content: Vec<String>,
     pub speaker: Option<String>,
@@ -31,6 +34,7 @@ pub struct SaySentence {
 
 /// 切换背景语句
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
     #[sentence(content)]
@@ -58,6 +62,7 @@ pub struct ChangeBackgroundSentence {
 
 /// 切换立绘语句
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "changeFigure",
     validate = Self::validate,
@@ -112,6 +117,7 @@ pub struct ChangeFigureSentence {
 
 /// 背景音乐语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "bgm",
     forward = Next,
@@ -136,6 +142,7 @@ pub struct BgmSentence {
 
 /// 播放视频语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "playVideo",
     forward = Continue,
@@ -155,6 +162,7 @@ pub struct PlayVideoSentence {
 
 /// 效果声音语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "playEffect",
     forward = Next,
@@ -177,6 +185,7 @@ pub struct PlayEffectSentence {
 
 /// 调用动画语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setAnimation")]
 pub struct SetAnimationSentence {
     #[sentence(content)]
@@ -195,6 +204,7 @@ pub struct SetAnimationSentence {
 
 /// 复杂动画语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setComplexAnimation")]
 pub struct SetComplexAnimationSentence {
     #[sentence(content)]
@@ -212,6 +222,7 @@ pub struct SetComplexAnimationSentence {
 
 /// 单段动画语句
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setTransform", validate = Self::validate)]
 pub struct SetTransformSentence {
     #[sentence(content)]
@@ -233,6 +244,7 @@ pub struct SetTransformSentence {
 
 /// 多段动画语句
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setTempAnimation", validate = Self::validate)]
 pub struct SetTempAnimationSentence {
     #[sentence(content)]
@@ -251,6 +263,7 @@ pub struct SetTempAnimationSentence {
 
 /// 进出场动画语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setTransition",
     forward = Next,
@@ -271,6 +284,7 @@ pub struct SetTransitionSentence {
 
 /// 使用特效语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "pixiPerform",
     forward = Next,
@@ -288,6 +302,7 @@ pub struct PixiPerformSentence {
 
 /// 清除特效语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "pixiInit",
     forward = Next,
@@ -303,6 +318,7 @@ pub struct PixiInitSentence {
 
 /// 全屏文字语句
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "intro",
     validate = Self::validate,
@@ -345,6 +361,7 @@ pub struct IntroSentence {
 
 /// 角落头像语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "miniAvatar",
     forward = Next,
@@ -362,6 +379,7 @@ pub struct MiniAvatarSentence {
 
 /// 文本显示语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setTextbox",
     forward = Wait,
@@ -379,6 +397,7 @@ pub struct SetTextboxSentence {
 
 /// 电影模式语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "filmMode",
     forward = Wait,
@@ -398,6 +417,7 @@ pub struct FilmModeSentence {
 
 /// 调用场景语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "callScene",
     forward = Next,
@@ -415,6 +435,7 @@ pub struct CallSceneSentence {
 
 /// 切换场景语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "changeScene",
     forward = Next,
@@ -432,6 +453,7 @@ pub struct ChangeSceneSentence {
 
 /// 分支选择语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "choose",
     validate = Self::validate,
@@ -452,6 +474,7 @@ pub struct ChooseSentence {
 
 /// 标签语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "label",
     forward = Next,
@@ -469,6 +492,7 @@ pub struct LabelSentence {
 
 /// 跳转标签语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "jumpLabel",
     forward = Next,
@@ -488,6 +512,7 @@ pub struct JumpLabelSentence {
 
 /// 鉴赏图片语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "unlockCg",
     forward = Next,
@@ -509,6 +534,7 @@ pub struct UnlockCgSentence {
 
 /// 鉴赏音乐语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "unlockBgm",
     forward = Next,
@@ -532,6 +558,7 @@ pub struct UnlockBgmSentence {
 
 /// 获取输入语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "getUserInput",
     forward = Continue,
@@ -562,6 +589,7 @@ pub struct GetUserInputSentence {
 
 /// 设置变量语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setVar",
     forward = Next,
@@ -580,6 +608,7 @@ pub struct SetVarSentence {
 
 /// 显示变量语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "showVars",
     forward = Wait,
@@ -595,6 +624,7 @@ pub struct ShowVarsSentence {
 
 /// 等待语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "wait",
     forward = Continue,
@@ -612,6 +642,7 @@ pub struct WaitSentence {
 
 /// 应用样式语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "applyStyle",
     forward = Next,
@@ -633,6 +664,7 @@ pub struct ApplyStyleSentence {
 
 /// 调用 Steam 语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "callSteam",
     forward = Next,
@@ -650,6 +682,7 @@ pub struct CallSteamSentence {
 
 /// 结束游戏语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "end",
     forward = Next,
@@ -667,6 +700,7 @@ pub struct EndSentence {
 
 /// 空白注释语句
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "", forward = Next)]
 pub struct CommentSentence {} // 单元结构体暂时不可用
 
