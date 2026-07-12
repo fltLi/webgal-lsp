@@ -111,11 +111,19 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         if (model) {
             monaco.editor.setModelLanguage(model, 'webgal');
         }
+    };
 
-        editor.onDidChangeCursorPosition((event) => {
+    useEffect(() => {
+        if (!editorRef.current) {
+            return;
+        }
+
+        const disposable = editorRef.current.onDidChangeCursorPosition((event) => {
             onCursorChange?.(event.position.lineNumber - 1);
         });
-    };
+
+        return () => disposable.dispose();
+    }, [onCursorChange]);
 
     useEffect(() => {
         if (!wasm?.highlight_scene || !monacoRef.current || !isReady) {
@@ -132,7 +140,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         if (editor) {
             const model = editor.getModel();
             if (model) {
-                // 强制刷新语义
+                // 强制刷新语义高亮
                 monacoRef.current.editor.setModelLanguage(model, 'plaintext');
                 monacoRef.current.editor.setModelLanguage(model, 'webgal');
                 (editor as any).updateOptions({ 'semanticHighlighting.enabled': true });
