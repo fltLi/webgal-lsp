@@ -987,6 +987,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
+name = "lsp-encode"
+version = "0.1.0"
+dependencies = [
+ "lsp-types",
+ "rayon",
+ "webgal-model",
+]
+
+[[package]]
 name = "lsp-types"
 version = "0.94.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2146,6 +2155,7 @@ dependencies = [
  "futures-util",
  "getset",
  "json-complete",
+ "lsp-encode",
  "once_cell",
  "path-tree",
  "rayon",
@@ -2187,6 +2197,7 @@ dependencies = [
 name = "webgal-parse-wasm"
 version = "0.1.0"
 dependencies = [
+ "lsp-encode",
  "lsp-types",
  "serde",
  "serde-wasm-bindgen",

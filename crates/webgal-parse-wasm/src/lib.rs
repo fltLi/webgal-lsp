@@ -20,14 +20,19 @@ pub fn parse_sentence(text: &str) -> Result<JsValue, JsValue> {
 }
 
 /// 提供场景语义高亮, 返回 [`Vec<lsp_types::SemanticToken>`]
+///
+/// # Behavior
+/// * 返回的 token 自动转换为 UTF-16 格式.
 #[cfg(feature = "highlight")]
 #[wasm_bindgen]
 pub fn highlight_scene(text: &str) -> Result<JsValue, JsValue> {
+    use lsp_encode::highlights_utf8_to_utf16;
     use webgal_highlight::highlight;
     use webgal_model::sentence::Scene;
 
     let scene = Scene::from_str(text);
-    let tokens = highlight(&scene);
+    let mut tokens = highlight(&scene);
+    highlights_utf8_to_utf16(&scene, &mut tokens);
 
     serialize(
         &tokens

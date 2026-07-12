@@ -20,6 +20,7 @@ json-complete = { workspace = true, features = ["lsp"] }
 
 webgal-model.workspace = true
 webgal-highlight.workspace = true
+lsp-encode.workspace = true
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

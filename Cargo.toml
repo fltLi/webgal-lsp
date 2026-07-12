@@ -18,6 +18,7 @@ json-complete.path = "./crates/json-complete"
 webgal-model.path = "./crates/webgal-model"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"
 webgal-highlight.path = "./crates/webgal-highlight"
+lsp-encode.path = "./crates/lsp-encode"
 webgal-ls.path = "./crates/webgal-ls"
 webgal-parse-wasm.path = "./crates/webgal-parse-wasm"         # private
 
