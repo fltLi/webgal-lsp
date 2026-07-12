@@ -179,10 +179,10 @@ impl Live2dModel {
 #[serde(default)]
 pub struct Live2dLayout {
     #[serde(rename = "center_x")]
-    pub x: isize,
+    pub x: i32,
     #[serde(rename = "center_y")]
-    pub y: isize,
-    pub width: usize,
+    pub y: i32,
+    pub width: u32,
 }
 
 impl_from_str_for_serde_json!(Live2dLayout);
@@ -257,9 +257,9 @@ pub struct WmdlModel {
     pub transform_template: String,
     // 渲染
     #[serde(default)]
-    pub x: isize,
+    pub x: i32,
     #[serde(default)]
-    pub y: isize,
+    pub y: i32,
     #[serde(default)]
     pub scale: f32,
     #[serde(default)]
@@ -287,9 +287,9 @@ pub struct WmdlSubModel {
     pub model: String,
     // 渲染
     #[serde(default)]
-    pub offset_x: isize,
+    pub offset_x: i32,
     #[serde(default)]
-    pub offset_y: isize,
+    pub offset_y: i32,
 }
 
 impl_from_str_for_serde_json!(WmdlSubModel);

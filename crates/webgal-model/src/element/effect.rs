@@ -252,10 +252,10 @@ impl FromStr for Color {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct Live2dBounds {
-    pub west: isize,
-    pub north: isize,
-    pub east: isize,
-    pub south: isize,
+    pub west: i32,
+    pub north: i32,
+    pub east: i32,
+    pub south: i32,
 }
 
 impl FromStr for Live2dBounds {
@@ -276,7 +276,7 @@ impl FromStr for Live2dBounds {
                 south,
             })
         })()
-        .ok_or("`Live2dBounds` 应为 `isize,isize,isize,isize` 的格式")
+        .ok_or("`Live2dBounds` 应为 `i32,i32,i32,i32` 的格式")
     }
 }
 
@@ -295,14 +295,16 @@ impl fmt::Display for Live2dBounds {
 /// Live2D 立绘眨眼参数
 #[serde_as]
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Live2dBlink {
-    pub blink_interval: Option<usize>,
-    pub blink_interval_random: Option<usize>,
-    pub closing_duration: Option<usize>,
-    pub closed_duration: Option<usize>,
-    pub opening_duration: Option<usize>,
+    pub blink_interval: Option<u32>,
+    pub blink_interval_random: Option<u32>,
+    pub closing_duration: Option<u32>,
+    pub closed_duration: Option<u32>,
+    pub opening_duration: Option<u32>,
 }
 
 impl_from_str_for_serde_json!(Live2dBlink);
@@ -414,7 +416,7 @@ pub struct Transform {
     pub scale: Option<Scale>,
     // 基础效果
     pub alpha: Option<f32>,
-    pub blur: Option<usize>,
+    pub blur: Option<u8>,
     // 颜色调整滤镜
     pub brightness: Option<f32>,
     pub contrast: Option<f32>,
@@ -426,11 +428,11 @@ pub struct Transform {
     // 泛光滤镜
     pub bloom: Option<f32>,
     pub bloom_brightness: Option<f32>,
-    pub bloom_blur: Option<usize>,
+    pub bloom_blur: Option<u8>,
     pub bloom_threshold: Option<f32>,
     // 倒角滤镜
     pub bevel: Option<f32>,
-    pub bevel_thickness: Option<usize>,
+    pub bevel_thickness: Option<u8>,
     pub bevel_rotation: Option<f32>,
     pub bevel_red: Option<u8>,
     pub bevel_green: Option<u8>,
@@ -570,8 +572,8 @@ impl ToJsonSchema for Transform {
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 pub struct Position {
-    pub x: Option<isize>,
-    pub y: Option<isize>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
 }
 
 impl_from_str_for_serde_json!(Position);
@@ -628,7 +630,7 @@ impl ToJsonSchema for Scale {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Animation {
-    pub duration: usize,
+    pub duration: u32,
     pub ease: Option<Ease>,
     #[serde(flatten, default)]
     pub transform: Transform,

@@ -12,7 +12,7 @@ pub struct IdentTable {
     pub speaker: HashCounter<String>,
     pub label: HashCounter<String>,
     pub series: HashCounter<String>,
-    pub duration: HashCounter<usize>,
+    pub duration: HashCounter<u32>,
 }
 
 impl IdentTable {
@@ -80,7 +80,7 @@ enum IdentKind {
     Speaker(String),
     Label(String),
     Series(String),
-    Duration(usize),
+    Duration(u32),
 }
 
 fn ident_of<F>(sentence: &Sentence, mut f: F)

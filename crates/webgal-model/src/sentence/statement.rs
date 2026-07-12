@@ -50,11 +50,11 @@ pub struct ChangeBackgroundSentence {
     #[sentence(require = ["unlockname"])]
     pub series: Option<String>,
     // 控制
-    pub duration: Option<usize>,
+    pub duration: Option<u32>,
     #[sentence(rename = "enterDuration", require = ["enter"])]
-    pub enter_duration: Option<usize>,
+    pub enter_duration: Option<u32>,
     #[sentence(rename = "exitDuration", require = ["exit"])]
-    pub exit_duration: Option<usize>,
+    pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
@@ -103,13 +103,13 @@ pub struct ChangeFigureSentence {
     #[sentence(default)]
     pub ease: Ease,
     #[sentence(rename = "zIndex")]
-    pub z_index: Option<usize>,
+    pub z_index: Option<u8>,
     // 控制
-    pub duration: Option<usize>,
+    pub duration: Option<u32>,
     #[sentence(rename = "enterDuration", require = ["enter"])]
-    pub enter_duration: Option<usize>,
+    pub enter_duration: Option<u32>,
     #[sentence(rename = "exitDuration", require = ["exit"])]
-    pub exit_duration: Option<usize>,
+    pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
@@ -130,8 +130,8 @@ pub struct BgmSentence {
     #[sentence(content)]
     pub bgm: String,
     // 效果
-    pub volume: Option<usize>,
-    pub enter: Option<usize>,
+    pub volume: Option<u32>,
+    pub enter: Option<u32>,
     // 鉴赏
     pub unlockname: Option<String>,
     #[sentence(require = ["unlockname"])]
@@ -176,7 +176,7 @@ pub struct PlayEffectSentence {
     pub vocal: String,
     pub id: Option<String>,
     // 效果
-    pub volume: Option<usize>,
+    pub volume: Option<u32>,
     // 控制
     pub when: Option<String>,
 }
@@ -214,7 +214,7 @@ pub struct SetComplexAnimationSentence {
     #[sentence(rename = "writeDefault")]
     pub write_default: bool,
     // 控制
-    pub duration: Option<usize>,
+    pub duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     pub when: Option<String>,
@@ -234,7 +234,7 @@ pub struct SetTransformSentence {
     #[sentence(default)]
     pub ease: Ease,
     // 控制
-    pub duration: Option<usize>,
+    pub duration: Option<u32>,
     #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
@@ -352,7 +352,7 @@ pub struct IntroSentence {
     pub animation: IntroAnimation,
     // 控制
     #[sentence(rename = "delayTime")]
-    pub delay: Option<usize>,
+    pub delay: Option<u32>,
     pub hold: bool,
     #[sentence(rename = "userForward")]
     pub user_forward: bool,
@@ -468,7 +468,7 @@ pub struct ChooseSentence {
     pub choices: Vec<Choice>,
     // 控制
     #[sentence(rename = "defaultChoice")]
-    pub default_choice: Option<usize>,
+    pub default_choice: Option<u8>,
     pub when: Option<String>,
 }
 
@@ -635,7 +635,7 @@ pub struct ShowVarsSentence {
 )]
 pub struct WaitSentence {
     #[sentence(content)]
-    pub duration: usize,
+    pub duration: u32,
     // 控制
     pub when: Option<String>,
 }
@@ -796,7 +796,7 @@ impl IntroSentence {
 impl ChooseSentence {
     pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(default_choice) = self.default_choice
-            && !(1..self.choices.len()).contains(&default_choice)
+            && !(1..self.choices.len()).contains(&(default_choice as usize))
             && let Some((index, _)) = primary.get_argument("defaultChoice")
         {
             errors.push(Error::ArgumentType(
