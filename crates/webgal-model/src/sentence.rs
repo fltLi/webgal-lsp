@@ -57,7 +57,7 @@ pub trait FromPrimary: Sized {
 #[cfg_attr(
     feature = "serde",
     derive(Serialize),
-    serde(tag = "type", rename_all = "camelCase")
+    serde(tag = "command", rename_all = "camelCase")
 )]
 pub enum Sentence {
     // 常规演出

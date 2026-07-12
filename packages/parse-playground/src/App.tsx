@@ -21,30 +21,44 @@ function buildLineRanges(data: unknown): Array<{ startLine: number; endLine: num
   const json = JSON.stringify(data, null, 2);
   const lines = json.split('\n');
   const ranges: Array<{ startLine: number; endLine: number }> = [];
+  let index = 0;
 
-  for (let index = 0; index < lines.length; index += 1) {
+  while (index < lines.length) {
     const line = lines[index];
-    if (!/^  \{$/.test(line)) {
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+
+    if (indent === 2 && /^\s*\{$/.test(line)) {
+      let depth = 0;
+      let endLine = index;
+
+      for (let cursor = index; cursor < lines.length; cursor += 1) {
+        const currentLine = lines[cursor];
+        depth += (currentLine.match(/\{/g) ?? []).length;
+        depth -= (currentLine.match(/\}/g) ?? []).length;
+        if (depth === 0) {
+          endLine = cursor;
+          break;
+        }
+      }
+
+      ranges.push({ startLine: index, endLine });
+      index = endLine + 1;
       continue;
     }
 
-    let depth = 0;
-    let endLine = index;
-
-    for (let cursor = index; cursor < lines.length; cursor += 1) {
-      const currentLine = lines[cursor];
-      depth += (currentLine.match(/\{/g) ?? []).length;
-      depth -= (currentLine.match(/\}/g) ?? []).length;
-      if (depth === 0) {
-        endLine = cursor;
-        break;
-      }
-    }
-
-    ranges.push({ startLine: index, endLine });
+    index += 1;
   }
 
   return ranges;
+}
+
+function buildSentenceLineMap(text: string): number[] {
+  return text.split('\n').reduce<number[]>((lines, currentLine, index) => {
+    if (currentLine.trim().length > 0) {
+      lines.push(index);
+    }
+    return lines;
+  }, []);
 }
 
 export function App() {
@@ -111,16 +125,31 @@ export function App() {
       return;
     }
 
-    const targetIndex = Math.max(0, Math.min(cursorLine, lineRanges.length - 1));
+    const sentenceLineMap = buildSentenceLineMap(text);
+    if (sentenceLineMap.length === 0) {
+      setLineRange(null);
+      return;
+    }
+
+    let sentenceIndex = -1;
+    for (let index = 0; index < sentenceLineMap.length; index += 1) {
+      if (sentenceLineMap[index] <= cursorLine) {
+        sentenceIndex = index;
+      } else {
+        break;
+      }
+    }
+
+    const targetIndex = sentenceIndex === -1 ? 0 : Math.min(sentenceIndex, lineRanges.length - 1);
     setLineRange(lineRanges[targetIndex]);
-  }, [cursorLine, lineRanges, isSyncEnabled]);
+  }, [cursorLine, lineRanges, isSyncEnabled, text]);
 
   const layoutStyle = useMemo<React.CSSProperties>(
     () => ({
       display: 'flex',
       flexDirection: 'column',
-      height: '100vh',
-      width: '100vw',
+      height: '100%',
+      width: '100%',
       overflow: 'hidden',
       background: '#252526',
       color: '#f5f5f5',
@@ -139,11 +168,11 @@ export function App() {
           <div style={{ color: '#d4d4d4' }}>耗时：{elapsedMs}</div>
         </div>
       </div>
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <div style={{ flex: 1, borderRight: '1px solid #3c3c3c' }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, borderRight: '1px solid #3c3c3c' }}>
           <SceneEditor value={text} onChange={setText} onCursorChange={isSyncEnabled ? setCursorLine : undefined} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <Output data={data} error={error} lineRange={lineRange} />
         </div>
       </div>

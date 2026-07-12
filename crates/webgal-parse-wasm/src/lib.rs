@@ -4,9 +4,10 @@ use webgal_model::sentence::SentenceInfo;
 
 /// 解析场景, 以 [`JsValue`] 格式返回数据结构
 #[wasm_bindgen]
-pub fn parse_scene(text: &str) -> Result<JsValue, JsValue> {
-    let scene: Vec<_> = text.lines().map(SentenceInfo::from_str).collect();
-    serialize(&scene)
+pub fn parse_scene(text: &str) -> Result<Vec<JsValue>, JsValue> {
+    text.lines()
+        .map(|line| serialize(&SentenceInfo::from_str(line)))
+        .collect()
 }
 
 /// 解析语句, 以 [`JsValue`] 格式返回数据结构
