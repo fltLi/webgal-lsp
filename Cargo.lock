@@ -2163,16 +2163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "webgal-parse-wasm"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wasm-bindgen",
- "webgal-model",
-]
-
-[[package]]
 name = "webgal-sentence-macro"
 version = "0.1.0"
 dependencies = [

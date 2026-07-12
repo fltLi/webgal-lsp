@@ -7,7 +7,6 @@ use derive_more::{From, Into, TryInto};
 pub use error::*;
 pub use primary::*;
 pub use scene::*;
-use serde::Serialize;
 pub use statement::*;
 pub use webgal_sentence_macro::Sentence; // 重新导出方便使用 // 无法导出
 
@@ -52,7 +51,7 @@ pub trait FromPrimary: Sized {
 /// # Performance
 /// 为防止枚举膨胀, 部分枚举项存储在堆上.
 /// 实际使用中其它语句基本都是 `say`, 可忽略小语句的内存浪费.
-#[derive(Debug, Clone, PartialEq, PartialOrd, From, TryInto, Serialize)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, From, TryInto)]
 pub enum Sentence {
     // 常规演出
     Say(SaySentence),

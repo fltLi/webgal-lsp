@@ -16,7 +16,7 @@ use crate::{
 // -------- 对象 --------
 
 /// 对象引用, 包括舞台 + 背景 + 立绘
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectId {
     Stage,
     Background,
@@ -54,18 +54,7 @@ impl fmt::Display for ObjectId {
 
 /// 立绘位置
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Display,
-    EnumString,
-    Serialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
 pub enum FigureSide {
@@ -87,7 +76,7 @@ impl FigureSide {
 }
 
 /// 立绘引用
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FigureId {
     Id(String),
     Side(FigureSide),
@@ -128,18 +117,7 @@ impl<S: AsRef<str>> From<S> for FigureId {
 
 /// 字体大小
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Display,
-    EnumString,
-    Serialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
 pub enum FontSize {
@@ -151,7 +129,7 @@ pub enum FontSize {
 }
 
 /// 通用颜色表示
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, From, Into, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, From, Into)]
 pub struct Color {
     pub red: u8,
     pub green: u8,
@@ -266,9 +244,7 @@ impl FromStr for Color {
 }
 
 /// Live2D 立绘扩展显示区域
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize,
-)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into)]
 pub struct Live2dBounds {
     pub west: isize,
     pub north: isize,
@@ -405,18 +381,7 @@ pub enum Ease {
 
 /// 全屏文字动画效果
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Display,
-    EnumString,
-    Serialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
 pub enum IntroAnimation {
@@ -723,18 +688,7 @@ impl ToJsonSchema for AnimationList {
 
 /// 执行时序
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Display,
-    EnumString,
-    Serialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
 pub enum Forward {
@@ -746,18 +700,7 @@ pub enum Forward {
 
 /// 持续模式
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Display,
-    EnumString,
-    Serialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
 )]
 #[strum(serialize_all = "camelCase")]
 pub enum Sustain {

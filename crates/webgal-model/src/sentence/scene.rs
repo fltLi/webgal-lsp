@@ -2,11 +2,10 @@ use std::fmt::{self, Write};
 
 use ouroboros::self_referencing;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use serde::Serialize;
 
 use crate::{
     sentence::{Error, FromPrimary, PrimarySentence, Sentence},
-    util::{serialize_debug, write_joined},
+    util::write_joined,
 };
 
 // -------- sentence --------
@@ -14,7 +13,7 @@ use crate::{
 /// 语句信息 (LSP)
 ///
 /// 从语句字符串构建, 包含语句内容, 注释, nolint 标记以及解析错误.
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct SentenceInfo<'a> {
     // 语句内容
     pub content: &'a str,
@@ -24,7 +23,6 @@ pub struct SentenceInfo<'a> {
     pub comment: &'a str,
     pub nolints: Vec<&'a str>,
     // 解析错误
-    #[serde(serialize_with = "serialize_debug")]
     pub errors: Vec<Error>,
 }
 

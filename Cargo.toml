@@ -17,8 +17,7 @@ json-complete.path = "./crates/json-complete"
 
 webgal-ls.path = "./crates/webgal-ls"
 webgal-model.path = "./crates/webgal-model"
-webgal-sentence-macro.path = "./crates/webgal-sentence-macro" # private
-webgal-parse-wasm.path = "./crates/webgal-parse-wasm"         # private
+webgal-sentence-macro.path = "./crates/webgal-sentence-macro"
 
 anyhow = "1.0"
 thiserror = "2.0"

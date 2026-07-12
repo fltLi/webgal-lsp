@@ -241,11 +241,3 @@ pub fn span_of(haystack: &str, needle: &str) -> Range<usize> {
         .expect("字串需要在母串的内存内");
     start..start + needle.len()
 }
-
-pub(crate) fn serialize_debug<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-where
-    T: fmt::Debug,
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&format!("{value:?}"))
-}
