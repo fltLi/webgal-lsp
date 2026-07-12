@@ -11,7 +11,7 @@ repository.workspace = true
 
 [features]
 default = []
-lsp = ["lsp-types"] # LSP 类型转换
+lsp = ["dep:lsp-types"] # LSP 类型转换
 
 [dependencies]
 lsp-types = { workspace = true, optional = true }
