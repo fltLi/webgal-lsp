@@ -5,8 +5,7 @@ import { SceneEditor } from './Editor';
 import { Output } from './Output';
 import { loadWasm, type WasmModule } from './wasm';
 
-const defaultText = `changeBg:bg.png;
-Alice:Hello!;`;
+const defaultText = '';
 
 interface LineRange {
   startLine: number;
@@ -74,6 +73,24 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+
+    fetch('/example.txt')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load example script: ${response.status}`);
+        }
+        return response.text();
+      })
+      .then((content) => {
+        if (active) {
+          setText(content || defaultText);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setText(defaultText);
+        }
+      });
 
     loadWasm()
       .then((module) => {
@@ -170,7 +187,7 @@ export function App() {
       </div>
       <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, borderRight: '1px solid #3c3c3c' }}>
-          <SceneEditor value={text} onChange={setText} onCursorChange={isSyncEnabled ? setCursorLine : undefined} />
+          <SceneEditor value={text} onChange={setText} onCursorChange={isSyncEnabled ? setCursorLine : undefined} wasm={wasm} />
         </div>
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <Output data={data} error={error} lineRange={lineRange} />

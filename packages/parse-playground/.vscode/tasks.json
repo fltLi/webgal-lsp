@@ -9,6 +9,13 @@
       "problemMatcher": []
     },
     {
+      "label": "Build Playground",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "problemMatcher": ["$tsc"]
+    },
+    {
       "label": "Start Playground Server",
       "type": "shell",
       "command": "npm",
@@ -30,6 +37,15 @@
           }
         }
       ]
+    },
+    {
+      "label": "Build and Start Playground",
+      "type": "shell",
+      "command": "echo",
+      "args": ["Build and start playground completed"],
+      "dependsOn": ["Build Playground", "Start Playground Server"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
     }
   ]
 }

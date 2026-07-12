@@ -7,7 +7,7 @@
       "request": "launch",
       "url": "http://localhost:5173",
       "webRoot": "${workspaceFolder}/packages/parse-playground",
-      "preLaunchTask": "Start Playground Server",
+      "preLaunchTask": "Build and Start Playground",
       "runtimeArgs": ["--disable-web-security"],
       "sourceMapPathOverrides": {
         "webpack:///./*": "${webRoot}/*"
