@@ -25,10 +25,11 @@ pub fn diagnose_sentence_error(
                 message: format!("语句主参数值 `{content}` 类型错误: {error}"),
             })
         }
+
         ArgumentType(index, error) => {
             let (name, value) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(primary.get_full_argument(*index)),
+                span: primary.get_span(value.unwrap_or(name)),
                 code: "WG002",
                 level: DiagnosticLevel::Error,
                 message: match value {
@@ -39,37 +40,41 @@ pub fn diagnose_sentence_error(
                 },
             })
         }
+
         ArgumentRepeated(index) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(primary.get_full_argument(*index)),
+                span: primary.get_span(name),
                 code: "WG003",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 重复设置或与其他参数冲突"),
             })
         }
+
         ArgumentMissingDependencies(index, missings) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(primary.get_full_argument(*index)),
+                span: primary.get_span(name),
                 code: "WG004",
                 level: DiagnosticLevel::Error,
                 message: format!("语句中缺少参数 `{name}` 所依赖的相关参数: {missings:?}"),
             })
         }
+
         ArgumentObsolete(index, reason) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(primary.get_full_argument(*index)),
+                span: primary.get_span(name),
                 code: "WG005",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 已被弃用或不建议使用, 理由: {reason}"),
             })
         }
+
         ArgumentUnknown(index) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(primary.get_full_argument(*index)),
+                span: primary.get_span(name),
                 code: "WG006",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 未知或无法识别"),

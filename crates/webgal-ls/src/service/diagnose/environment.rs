@@ -87,7 +87,7 @@ fn diagnose_resource<F>(
 
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_span_of("enter", primary)
+                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -98,7 +98,7 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_span_of("exit", primary)
+                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -187,7 +187,7 @@ fn diagnose_resource<F>(
                 if let Some(motion) = motion
                     && let FigureInfo::Live2d { motions, .. } = info
                     && !motions.contains(motion)
-                    && let Some(span) = argument_span_of("motion", primary)
+                    && let Some(span) = argument_value_or_name_span_of("motion", primary)
                 {
                     diagnose(PrimaryDiagnostic {
                         span,
@@ -199,7 +199,7 @@ fn diagnose_resource<F>(
                 if let Some(expression) = expression
                     && let FigureInfo::Live2d { expressions, .. } = info
                     && !expressions.contains(expression)
-                    && let Some(span) = argument_span_of("expression", primary)
+                    && let Some(span) = argument_value_or_name_span_of("expression", primary)
                 {
                     diagnose(PrimaryDiagnostic {
                         span,
@@ -212,7 +212,7 @@ fn diagnose_resource<F>(
 
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_span_of("enter", primary)
+                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -223,7 +223,7 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_span_of("exit", primary)
+                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -279,7 +279,7 @@ fn diagnose_resource<F>(
         SetTransition(SetTransitionSentence { enter, exit, .. }) => {
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_span_of("enter", primary)
+                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -290,7 +290,7 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_span_of("exit", primary)
+                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
                     span,
@@ -395,7 +395,7 @@ where
 {
     if let Some(path) = path.borrow().as_ref().map(P::as_ref)
         && !folder.contains(&canonicalize(path).unwrap_or_else(|| path.to_string()))
-        && let Some(span) = argument_span_of(name, primary)
+        && let Some(span) = argument_value_or_name_span_of(name, primary)
     {
         Some(PrimaryDiagnostic {
             span,
@@ -410,8 +410,17 @@ where
 
 // -------- util --------
 
-fn argument_span_of(name: &str, primary: &PrimarySentence) -> Option<ops::Range<usize>> {
+// fn argument_name_span_of(name: &str, primary: &PrimarySentence) -> Option<ops::Range<usize>> {
+//     let (index, _) = primary.get_argument(name)?;
+//     let (name, _) = primary.arguments[index];
+//     Some(primary.get_span(name))
+// }
+
+fn argument_value_or_name_span_of(
+    name: &str,
+    primary: &PrimarySentence,
+) -> Option<ops::Range<usize>> {
     let (index, _) = primary.get_argument(name)?;
-    let argument = primary.get_full_argument(index);
-    Some(primary.get_span(argument))
+    let (name, value) = primary.arguments[index];
+    Some(primary.get_span(value.unwrap_or(name)))
 }
