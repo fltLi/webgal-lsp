@@ -2126,6 +2126,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webgal-highlight"
+version = "0.1.0"
+dependencies = [
+ "lsp-types",
+ "rayon",
+ "webgal-model",
+]
+
+[[package]]
 name = "webgal-ls"
 version = "0.1.0"
 dependencies = [
@@ -2150,6 +2159,7 @@ dependencies = [
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
+ "webgal-highlight",
  "webgal-model",
 ]
 
@@ -2177,9 +2187,11 @@ dependencies = [
 name = "webgal-parse-wasm"
 version = "0.1.0"
 dependencies = [
+ "lsp-types",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
+ "webgal-highlight",
  "webgal-model",
 ]
 

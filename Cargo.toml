@@ -15,9 +15,10 @@ count.path = "./crates/count"
 path-tree.path = "./crates/path-tree"
 json-complete.path = "./crates/json-complete"
 
-webgal-ls.path = "./crates/webgal-ls"
 webgal-model.path = "./crates/webgal-model"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"
+webgal-highlight.path = "./crates/webgal-highlight"
+webgal-ls.path = "./crates/webgal-ls"
 webgal-parse-wasm.path = "./crates/webgal-parse-wasm"         # private
 
 anyhow = "1.0"
