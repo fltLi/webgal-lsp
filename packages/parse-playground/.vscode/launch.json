@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "Launch Playground",
-      "type": "chrome",
+      "type": "msedge",
       "request": "launch",
       "url": "http://localhost:5173",
       "webRoot": "${workspaceFolder}/packages/parse-playground",
