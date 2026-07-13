@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: webgal-ls-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: webgal-ls-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: webgal-ls-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: webgal-ls-macos-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - run: cargo build -p webgal-ls --target ${{ matrix.target }} --release
+
+      - name: Package binary
+        shell: bash
+        run: |
+          BIN_NAME="webgal-ls"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN_NAME="webgal-ls.exe"
+          fi
+          SRC="target/${{ matrix.target }}/release/${BIN_NAME}"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ASSET_FILE="${{ matrix.artifact }}.zip"
+            7z a "$ASSET_FILE" "$SRC"
+          else
+            ASSET_FILE="${{ matrix.artifact }}.tar.gz"
+            chmod +x "$SRC"
+            tar czf "$ASSET_FILE" -C "$(dirname "$SRC")" "$(basename "$SRC")"
+          fi
+          echo "ASSET_FILE=$ASSET_FILE" >> $GITHUB_ENV
+
+      - name: Upload binary
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET_FILE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
