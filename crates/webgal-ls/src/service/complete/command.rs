@@ -1,12 +1,17 @@
-use std::iter;
-
 use count::HashCounter;
 use tower_lsp::lsp_types::*;
 
-use crate::{project::Project, service::complete::make_span};
+use crate::{
+    project::Project,
+    service::complete::{PrimaryCompletion, make_span},
+};
 
 /// 补全语句类型
-pub fn complete_command(input: &str, position: Position, project: &Project) -> Vec<CompletionItem> {
+pub fn complete_command(
+    input: &str,
+    position: Position,
+    project: &Project,
+) -> Vec<PrimaryCompletion> {
     let mut completions = complete_speaker(&project.ident().speaker, input, position);
     default_commands()
         .iter()
@@ -18,23 +23,17 @@ fn complete_speaker(
     speakers: &HashCounter<String>,
     input: &str,
     position: Position,
-) -> Vec<CompletionItem> {
+) -> Vec<PrimaryCompletion> {
     speakers
         .iter_with_count()
         .filter(|(name, _)| name.starts_with(input))
-        .map(|(name, count)| CompletionItem {
-            label: name.to_string(),
-            label_details: Some(CompletionItemLabelDetails {
-                detail: None,
-                description: Some("人物".to_string()),
-            }),
-            kind: Some(CompletionItemKind::VARIABLE),
-            sort_text: Some(format!("b{:016x}{name}", !count)),
-            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                range: make_span(position, input.len()),
-                new_text: format!("{name}:"),
-            })),
-            ..Default::default()
+        .map(|(name, count)| PrimaryCompletion {
+            name: name.clone(),
+            kind: CompletionItemKind::VARIABLE,
+            description: Some("人物".to_string()),
+            sort_key: Some(format!("b{:016x}{name}", !count)),
+            span: make_span(position, input.len()),
+            insert_text: Some(format!("{name}:")),
         })
         .collect()
 }
@@ -49,65 +48,48 @@ struct CommandInfo {
 struct CommandTemplate {
     name: &'static str,
     description: &'static str,
-    template: &'static [&'static str],
+    template: &'static str,
 }
 
 impl CommandInfo {
-    fn complete(&self, input: &str, position: Position, completions: &mut Vec<CompletionItem>) {
+    fn complete(&self, input: &str, position: Position, completions: &mut Vec<PrimaryCompletion>) {
         // 语句类型补全
         if self.name.starts_with(input) {
-            completions.push(CompletionItem {
-                label: self.name.to_string(),
-                label_details: Some(CompletionItemLabelDetails {
-                    detail: None,
-                    description: Some(self.description.to_string()),
+            completions.push(PrimaryCompletion {
+                name: self.name.to_string(),
+                kind: CompletionItemKind::FUNCTION,
+                description: Some(self.description.to_string()),
+                sort_key: Some(format!("a{}", self.name)),
+                span: make_span(position, input.len()),
+                insert_text: Some(if self.with_content {
+                    format!("{}:", self.name)
+                } else {
+                    format!("{};", self.name)
                 }),
-                kind: Some(CompletionItemKind::FUNCTION),
-                sort_text: Some(format!("a{}", self.name)),
-                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                    range: make_span(position, input.len()),
-                    new_text: if self.with_content {
-                        format!("{}:", self.name)
-                    } else {
-                        format!("{};", self.name)
-                    },
-                })),
-                ..Default::default()
             });
         }
+
         // 语句模板补全
         completions.extend(
             self.templates
                 .iter()
                 .filter(|CommandTemplate { name, .. }| name.starts_with(input))
                 .map(
-                    |CommandTemplate {
+                    |&CommandTemplate {
                          name,
                          description,
                          template,
-                     }| CompletionItem {
-                        label: name.to_string(),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(if description.is_empty() {
-                                self.description.to_string()
-                            } else {
-                                format!("{} ({description})", self.description)
-                            }),
+                     }| PrimaryCompletion {
+                        name: name.to_string(),
+                        kind: CompletionItemKind::SNIPPET,
+                        description: Some(if description.is_empty() {
+                            self.description.to_string()
+                        } else {
+                            format!("{} ({description})", self.description)
                         }),
-                        kind: Some(CompletionItemKind::SNIPPET),
-                        sort_text: Some(format!("a{name}")),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                            range: make_span(position, input.len()),
-                            new_text: template
-                                .iter()
-                                .enumerate()
-                                .map(|(i, token)| format!("{}${}", token, i + 1))
-                                .chain(iter::once(";$0".to_string()))
-                                .collect(),
-                        })),
-                        ..Default::default()
+                        sort_key: Some(format!("a{name}")),
+                        span: make_span(position, input.len()),
+                        insert_text: Some(template.to_string()),
                     },
                 ),
         );
@@ -125,12 +107,12 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "say",
                     description: "",
-                    template: &["", ":"],
+                    template: "$1:$2;$0",
                 },
                 CommandTemplate {
                     name: "say.figure",
                     description: "指定立绘",
-                    template: &["", ":", " -figureId="],
+                    template: "$1:$2 -figureId=$3;$0",
                 },
             ],
         },
@@ -142,23 +124,17 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "changeBg.enter",
                     description: "",
-                    template: &["changeBg:", " -transform=", " -next"],
+                    template: "changeBg:$1 -transform=$2 -next;$0",
                 },
                 CommandTemplate {
                     name: "changeBg.exit",
                     description: "清除",
-                    template: &["changeBg: -next"],
+                    template: "changeBg:$1 -next;$0",
                 },
                 CommandTemplate {
                     name: "changeBg.unlock",
                     description: "鉴赏",
-                    template: &[
-                        "changeBg:",
-                        " -transform=",
-                        " -unlockname=",
-                        " -series=",
-                        " -next",
-                    ],
+                    template: "changeBg:$1 -transform=$2 -unlockname=$3 -series=$4 -next;$0",
                 },
             ],
         },
@@ -170,34 +146,32 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "changeFigure.motion",
                     description: "修改动作",
-                    template: &["changeFigure:", " -id=", " -motion=", " -next"],
+                    template: "changeFigure:$1 -id=$2 -motion=$3 -next;$0",
                 },
                 CommandTemplate {
                     name: "changeFigure.expression",
                     description: "修改动作和表情",
-                    template: &[
-                        "changeFigure:",
-                        " -id=",
-                        " -motion=",
-                        " -expression=",
-                        " -next",
-                    ],
+                    template: "changeFigure:$1 -id=$2 -motion=$3 -expression=$4 -next;$0",
                 },
                 CommandTemplate {
                     name: "changeFigure.enter",
                     description: "入场",
-                    template: &[
-                        "changeFigure:",
-                        " -id=",
-                        " -motion=",
-                        " -transform=",
-                        " -next",
-                    ],
+                    template: "changeFigure:$1 -id=$2 -motion=$3 -transform=$4 -next;$0",
+                },
+                CommandTemplate {
+                    name: "changeFigure.enterLeft",
+                    description: "入场 (左侧)",
+                    template: "changeFigure:$1 -left -id=$2 -motion=$3 -transform=$4 -next;$0",
+                },
+                CommandTemplate {
+                    name: "changeFigure.enterRight",
+                    description: "入场 (右侧)",
+                    template: "changeFigure:$1 -right -id=$2 -motion=$3 -transform=$4 -next;$0",
                 },
                 CommandTemplate {
                     name: "changeFigure.exit",
                     description: "退场",
-                    template: &["changeFigure: -id=", " -next"],
+                    template: "changeFigure: -id=$1 -next;$0",
                 },
             ],
         },
@@ -208,7 +182,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "bgm.unlock",
                 description: "鉴赏",
-                template: &["bgm:", " -unlockname=", " -series="],
+                template: "bgm:$1 -unlockname=$2 -series=$3;$0",
             }],
         },
         CommandInfo {
@@ -224,7 +198,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "playEffect.repeat",
                 description: "循环",
-                template: &["playEffect:", " -id"],
+                template: "playEffect:$1 -id=$2;$0",
             }],
         },
         // 舞台对象控制
@@ -236,17 +210,17 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "setAnimation.next",
                     description: "连续执行",
-                    template: &["setAnimation:", " -target=", " -next"],
+                    template: "setAnimation:$1 -target=$2 -next;$0",
                 },
                 CommandTemplate {
                     name: "setAnimation.keep",
                     description: "持续执行",
-                    template: &["setAnimation:", " -target=", " -keep"],
+                    template: "setAnimation:$1 -target=$2 -keep -next;$0",
                 },
                 CommandTemplate {
                     name: "setAnimation.parallel",
                     description: "同步执行",
-                    template: &["setAnimation:", " -target=", " -parallel"],
+                    template: "setAnimation:$1 -target=$2 -parallel -next;$0",
                 },
             ],
         },
@@ -257,7 +231,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "setComplexAnimation",
                 description: "",
-                template: &["setComplexAnimation:", " -target=", " -next"],
+                template: "setComplexAnimation:$1 -target=$2 -next;$0",
             }],
         },
         CommandInfo {
@@ -268,22 +242,22 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "setTransform.next",
                     description: "连续执行",
-                    template: &["setTransform:", " -target=", " -duration=", " -next"],
+                    template: "setTransform:$1 -target=$2 -duration=$3 -next;$0",
                 },
                 CommandTemplate {
                     name: "setTransform.keep",
                     description: "持续执行",
-                    template: &["setTransform:", " -target=", " -duration=", " -keep"],
+                    template: "setTransform:$1 -target=$2 -duration=$3 -keep -next;$0",
                 },
                 CommandTemplate {
                     name: "setTransform.parallel",
                     description: "同步执行",
-                    template: &["setTransform:", " -target=", " -duration=", " -parallel"],
+                    template: "setTransform:$1 -target=$2 -duration=$3 -parallel -next;$0",
                 },
                 CommandTemplate {
                     name: "setTransform.clear",
                     description: "清除",
-                    template: &["setTransform:{} -target=", " -writeDefault", " -next"],
+                    template: "setTransform:$1 -target=$2 -writeDefault -next;$0",
                 },
             ],
         },
@@ -295,17 +269,17 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "setTempAnimation.next",
                     description: "连续执行",
-                    template: &["setTempAnimation:", " -target=", " -next"],
+                    template: "setTempAnimation:$1 -target=$2 -next;$0",
                 },
                 CommandTemplate {
                     name: "setTempAnimation.keep",
                     description: "持续执行",
-                    template: &["setTempAnimation:", " -target=", " -keep"],
+                    template: "setTempAnimation:$1 -target=$2 -keep -next;$0",
                 },
                 CommandTemplate {
                     name: "setTempAnimation.parallel",
                     description: "同步执行",
-                    template: &["setTempAnimation:", " -target=", " -parallel"],
+                    template: "setTempAnimation:$1 -target=$2 -parallel -next;$0",
                 },
             ],
         },
@@ -317,12 +291,12 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "setTransition.enter",
                     description: "入场",
-                    template: &["setTempAnimation:", " -target=", " -enter="],
+                    template: "setTempAnimation:$1 -target=$2 -enter=$3;$0",
                 },
                 CommandTemplate {
                     name: "setTransition.exit",
                     description: "出场",
-                    template: &["setTempAnimation:", " -target=", " -exit="],
+                    template: "setTempAnimation:$1 -target=$2 -exit=$3;$0",
                 },
             ],
         },
@@ -380,11 +354,18 @@ fn default_commands() -> &'static [CommandInfo] {
             name: "choose",
             description: "分支选择",
             with_content: true,
-            templates: &[CommandTemplate {
-                name: "choose.default",
-                description: "默认选项",
-                template: &["choose:", " -defaultChoice="],
-            }],
+            templates: &[
+                CommandTemplate {
+                    name: "choose.three",
+                    description: "三选一",
+                    template: "choose:$1:$2|$3:$4|$5:$6;$0",
+                },
+                CommandTemplate {
+                    name: "choose.default",
+                    description: "默认选项",
+                    template: "choose:$1 -defaultChoice=$2;$0",
+                },
+            ],
         },
         CommandInfo {
             name: "label",
@@ -406,7 +387,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "unlockCg",
                 description: "",
-                template: &["unlockCg:", " -name=", " -series="],
+                template: "unlockCg:$1 -name=$2 -series=$3;$0",
             }],
         },
         CommandInfo {
@@ -416,7 +397,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "unlockBgm",
                 description: "",
-                template: &["unlockBgm:", " -name=", " -series="],
+                template: "unlockBgm:$1 -name=$2 -series=$3;$0",
             }],
         },
         // 游戏控制
@@ -428,26 +409,15 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "getUserInput",
                     description: "",
-                    template: &[
-                        "getUserInput:",
-                        " -title=",
-                        " -buttonText=",
-                        " -defaultValue=",
-                    ],
+                    template: "getUserInput:$1 -title=$2 -buttonText=$3 -defaultValue=$4;$0",
                 },
                 CommandTemplate {
                     name: "getUserInput.validate",
                     description: "校验",
-                    template: &[
-                        "getUserInput:",
-                        " -title=",
-                        " -buttonText=",
-                        " -defaultValue=",
-                        " -rule=",
-                        " -ruleFlag=",
-                        " -ruleText=",
-                        " -ruleButtonText=",
-                    ],
+                    template: concat!(
+                        "getUserInput:$1 -title=$2 -buttonText=$3 -defaultValue=$4",
+                        " -rule=$5 -ruleFlag=$6 -ruleText=$7 -ruleButtonText=$8;$0"
+                    ),
                 },
             ],
         },
@@ -459,12 +429,12 @@ fn default_commands() -> &'static [CommandInfo] {
                 CommandTemplate {
                     name: "setVar",
                     description: "",
-                    template: &["setVar:", "="],
+                    template: "setVar:$1=$2;$0",
                 },
                 CommandTemplate {
                     name: "setVar.global",
                     description: "",
-                    template: &["setVar:", "=", " -global"],
+                    template: "setVar:$1=$2 -global;$0",
                 },
             ],
         },
@@ -487,7 +457,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "applyStyle",
                 description: "",
-                template: &["applyStyle:", "->"],
+                template: "applyStyle:$1->$2;$0",
             }],
         },
         CommandInfo {
@@ -497,7 +467,7 @@ fn default_commands() -> &'static [CommandInfo] {
             templates: &[CommandTemplate {
                 name: "callSteam.achivement",
                 description: "解锁成就",
-                template: &["callSteam:", " -achivementId="],
+                template: "callSteam:$1 -achivementId=$2;$0",
             }],
         },
         CommandInfo {

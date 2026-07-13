@@ -37,15 +37,108 @@ pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<Com
         Some(sentence) => sentence,
         None => return Vec::default(),
     };
+
     // 转发补全
     match Location::locate(primary, position) {
-        Location::Command(input) => complete_command(input, position, project),
-        Location::Content(input) => sentence.complete_content(input, position, project),
-        Location::ArgumentName(input) => sentence.complete_argument_name(input, position, project),
-        Location::ArgumentValue(name, input) => {
-            sentence.complete_argument_value(name, input, position, project)
-        }
+        Location::Command(input) => complete_command(input, position, project)
+            .into_iter()
+            .map(From::from)
+            .collect(),
+        Location::Content(input) => sentence
+            .complete_content(input, position, project)
+            .into_iter()
+            .map(From::from)
+            .collect(),
+        Location::ArgumentName(input) => sentence
+            .complete_argument_name(input, position, project)
+            .into_iter()
+            .map(From::from)
+            .collect(),
+        Location::ArgumentValue(name, input) => sentence
+            .complete_argument_value(name, input, position, project)
+            .into_iter()
+            .map(From::from)
+            .collect(),
         Location::Other => Vec::default(),
+    }
+}
+
+struct PrimaryCompletion {
+    // 描述
+    name: String,
+    kind: CompletionItemKind,
+    description: Option<String>,
+    sort_key: Option<String>,
+    // 执行
+    span: Range,
+    insert_text: Option<String>,
+}
+
+impl From<PrimaryCompletion> for CompletionItem {
+    fn from(value: PrimaryCompletion) -> Self {
+        let PrimaryCompletion {
+            name,
+            kind,
+            description,
+            sort_key,
+            span,
+            insert_text,
+        } = value;
+
+        let insert_text = insert_text.unwrap_or_else(|| name.clone());
+        let insert_text_format = if insert_text.ends_with("$0") {
+            InsertTextFormat::SNIPPET
+        } else {
+            InsertTextFormat::PLAIN_TEXT
+        };
+
+        Self {
+            label: name,
+            label_details: Some(CompletionItemLabelDetails {
+                detail: None,
+                description,
+            }),
+            kind: Some(kind),
+            sort_text: sort_key,
+            insert_text_format: Some(insert_text_format),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: span,
+                new_text: insert_text,
+            })),
+            ..Default::default()
+        }
+    }
+}
+
+// 兼容 json-complete 返回的 CompletionItem, 请不要在其他地方执行!
+impl From<CompletionItem> for PrimaryCompletion {
+    fn from(value: CompletionItem) -> Self {
+        let CompletionItem {
+            label,
+            label_details,
+            kind,
+            sort_text,
+            text_edit,
+            ..
+        } = value;
+
+        let description = label_details.and_then(|ld| ld.description);
+        let (span, insert_text) = match text_edit {
+            Some(CompletionTextEdit::Edit(edit)) => (edit.range, Some(edit.new_text)),
+            Some(CompletionTextEdit::InsertAndReplace(insert_and_replace)) => {
+                (insert_and_replace.insert, Some(insert_and_replace.new_text))
+            }
+            None => (Range::default(), None),
+        };
+
+        Self {
+            name: label,
+            kind: kind.unwrap_or(CompletionItemKind::TEXT),
+            description,
+            sort_key: sort_text,
+            span,
+            insert_text,
+        }
     }
 }
 

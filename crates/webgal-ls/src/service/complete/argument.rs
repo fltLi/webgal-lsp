@@ -12,7 +12,10 @@ use webgal_model::{
     sentence::*,
 };
 
-use crate::{project::Project, service::complete::make_span};
+use crate::{
+    project::Project,
+    service::complete::{PrimaryCompletion, make_span},
+};
 
 /// 语句的代码补全服务
 ///
@@ -25,7 +28,7 @@ pub trait Complete {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         Default::default()
     }
 
@@ -36,7 +39,7 @@ pub trait Complete {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         Default::default()
     }
 
@@ -48,7 +51,7 @@ pub trait Complete {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         Default::default()
     }
 }
@@ -59,7 +62,7 @@ impl Complete for Sentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         dispatch_sentence!(self.complete_content(input, position, project))
     }
 
@@ -68,7 +71,7 @@ impl Complete for Sentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         dispatch_sentence!(self.complete_argument_name(input, position, project))
     }
 
@@ -78,7 +81,7 @@ impl Complete for Sentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         dispatch_sentence!(self.complete_argument_value(name, input, position, project))
     }
 }
@@ -89,7 +92,7 @@ fn complete_file<T, F>(
     describe: F,
     input: &str,
     position: Position,
-) -> Vec<CompletionItem>
+) -> Vec<PrimaryCompletion>
 where
     F: Fn(&str, &T) -> (CompletionItemKind, String),
 {
@@ -111,30 +114,22 @@ where
             match node {
                 Node::Item(item) => {
                     let (kind, description) = describe(name, item);
-                    CompletionItem {
-                        label: name.to_string(),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(description),
-                        }),
-                        kind: Some(kind),
-                        sort_text: Some(format!("b{name}")),
-                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                            range: span,
-                            new_text: name.to_string(),
-                        })),
-                        ..Default::default()
+                    PrimaryCompletion {
+                        name: name.to_string(),
+                        kind,
+                        description: Some(description),
+                        sort_key: Some(format!("c{name}")),
+                        span,
+                        insert_text: None,
                     }
                 }
-                Node::Folder(_) => CompletionItem {
-                    label: name.to_string(),
-                    kind: Some(CompletionItemKind::FOLDER),
-                    sort_text: Some(format!("a{name}")),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                        range: span,
-                        new_text: format!("{name}/"),
-                    })),
-                    ..Default::default()
+                Node::Folder(_) => PrimaryCompletion {
+                    name: name.to_string(),
+                    kind: CompletionItemKind::FOLDER,
+                    description: None,
+                    sort_key: Some(format!("b{name}")),
+                    span,
+                    insert_text: Some(format!("{name}/")),
                 },
             }
         })
@@ -146,7 +141,7 @@ fn complete_enum<I, N, D>(
     kind: CompletionItemKind,
     input: &str,
     position: Position,
-) -> Vec<CompletionItem>
+) -> Vec<PrimaryCompletion>
 where
     I: IntoIterator<Item = (N, D)>,
     N: AsRef<str>,
@@ -168,7 +163,7 @@ fn complete_enum_with_order<I, N, D>(
     kind: CompletionItemKind,
     input: &str,
     position: Position,
-) -> Vec<CompletionItem>
+) -> Vec<PrimaryCompletion>
 where
     I: IntoIterator<Item = (usize, N, D)>,
     N: AsRef<str>,
@@ -177,19 +172,13 @@ where
     iter.into_iter()
         .filter_map(|(i, name, description)| {
             let name = name.as_ref();
-            name.starts_with(input).then(|| CompletionItem {
-                label: name.to_string(),
-                label_details: Some(CompletionItemLabelDetails {
-                    detail: None,
-                    description: Some(description.as_ref().to_string()),
-                }),
-                kind: Some(kind),
-                sort_text: Some(format!("{i:016x}{name}")),
-                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                    range: make_span(position, input.len()),
-                    new_text: name.to_string(),
-                })),
-                ..Default::default()
+            name.starts_with(input).then(|| PrimaryCompletion {
+                name: name.to_string(),
+                kind,
+                description: Some(description.as_ref().to_string()),
+                sort_key: Some(format!("{i:016x}{name}")),
+                span: make_span(position, input.len()),
+                insert_text: None,
             })
         })
         .collect()
@@ -200,7 +189,7 @@ fn complete_image_figure_file(
     input: &str,
     position: Position,
     project: &Project,
-) -> Vec<CompletionItem> {
+) -> Vec<PrimaryCompletion> {
     complete_file(
         &project.resource().figure,
         |_, info| {
@@ -217,7 +206,11 @@ fn complete_image_figure_file(
     )
 }
 
-fn complete_scene_file(input: &str, position: Position, project: &Project) -> Vec<CompletionItem> {
+fn complete_scene_file(
+    input: &str,
+    position: Position,
+    project: &Project,
+) -> Vec<PrimaryCompletion> {
     complete_file(
         &project.resource().scene,
         |name, _| {
@@ -239,7 +232,7 @@ fn complete_animation_enum(
     input: &str,
     position: Position,
     project: &Project,
-) -> Vec<CompletionItem> {
+) -> Vec<PrimaryCompletion> {
     complete_enum(
         project
             .resource()
@@ -257,7 +250,7 @@ fn complete_ident_enum<T: Eq + Hash + AsRef<str>>(
     description: &str,
     input: &str,
     position: Position,
-) -> Vec<CompletionItem> {
+) -> Vec<PrimaryCompletion> {
     complete_enum_with_order(
         ident
             .iter_with_count()
@@ -273,7 +266,7 @@ fn complete_duration_enum(
     input: &str,
     position: Position,
     project: &Project,
-) -> Vec<CompletionItem> {
+) -> Vec<PrimaryCompletion> {
     complete_enum_with_order(
         project
             .ident()
@@ -286,7 +279,7 @@ fn complete_duration_enum(
     )
 }
 
-fn complete_font_size_enum(input: &str, position: Position) -> Vec<CompletionItem> {
+fn complete_font_size_enum(input: &str, position: Position) -> Vec<PrimaryCompletion> {
     complete_enum(
         [("small", "小号"), ("medium", "中号"), ("large", "大号")],
         CompletionItemKind::ENUM_MEMBER,
@@ -295,7 +288,7 @@ fn complete_font_size_enum(input: &str, position: Position) -> Vec<CompletionIte
     )
 }
 
-fn complete_ease_enum(input: &str, position: Position) -> Vec<CompletionItem> {
+fn complete_ease_enum(input: &str, position: Position) -> Vec<PrimaryCompletion> {
     complete_enum(
         [
             ("linear", "线性"),
@@ -347,19 +340,13 @@ macro_rules! complete_argument_name_collect {
         let mut completions = Vec::new();
         $(
             if $guard && $name.starts_with($input)  {
-                completions.push(CompletionItem {
-                    label: $name.to_string(),
-                    label_details: Some(CompletionItemLabelDetails {
-                        detail: None,
-                        description: Some($description.to_string()),
-                    }),
-                    kind: Some(CompletionItemKind::PROPERTY),
-                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                        range: make_span($position, $input.len()),
-                        new_text: $insert.to_string(),
-                    })),
-                    ..Default::default()
+                completions.push(PrimaryCompletion {
+                    name: $name.to_string(),
+                    kind: CompletionItemKind::PROPERTY,
+                    description: Some($description.to_string()),
+                    sort_key: Some(format!("a{}", $name)),
+                    span: make_span($position, $input.len()),
+                    insert_text: Some($insert.to_string()),
                 });
             }
         )*
@@ -375,7 +362,7 @@ impl Complete for SaySentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         // 补全参数
         let mut arguments = complete_argument_name_collect! {
             (input, position): {
@@ -391,6 +378,7 @@ impl Complete for SaySentence {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         };
+
         // 补全语音
         let mut vocal = complete_file(
             &project.resource().vocal,
@@ -409,7 +397,7 @@ impl Complete for SaySentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "speaker" => complete_ident_enum(&project.ident().speaker, "人物", input, position),
             "vocal" => complete_file(
@@ -431,7 +419,7 @@ impl Complete for ChangeBackgroundSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().background,
             |_, _| (CompletionItemKind::FILE, "背景".to_string()),
@@ -445,7 +433,7 @@ impl Complete for ChangeBackgroundSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.transform.is_none() => ("transform", "transform=", "设置变换效果"),
@@ -470,9 +458,13 @@ impl Complete for ChangeBackgroundSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
-            "transform" => transform_json_schema().complete_lsp(input, position),
+            "transform" => transform_json_schema()
+                .complete_lsp(input, position)
+                .into_iter()
+                .map(From::from)
+                .collect(),
             "enter" => complete_animation_enum(input, position, project),
             "exit" => complete_animation_enum(input, position, project),
             "ease" => complete_ease_enum(input, position),
@@ -491,7 +483,7 @@ impl Complete for ChangeFigureSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().figure,
             |_, info| {
@@ -517,7 +509,7 @@ impl Complete for ChangeFigureSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.side != FigureSide::Left => ("left", "left", "将立绘置于左侧"),
@@ -531,7 +523,7 @@ impl Complete for ChangeFigureSentence {
                 self.skin.is_none() => ("skin", "skin=", "Spine 皮肤"),
                 self.motion.is_none() => ("motion", "motion=", "Live2D 动作"),
                 self.expression.is_none() => ("expression", "expression=", "Live2D 表情"),
-                self.bounds.is_none() => ("bounds", "bounds=", "Live2D 的边界"),
+                self.bounds.is_none() => ("bounds", "bounds=[$1,$2,$3,$4]$0", "Live2D 的边界"),
                 self.blink.is_none() => ("blink", "blink=", "Live2D 立绘眨眼"),
                 self.focus.is_none() => ("focus", "focus=", "Live2D 立绘注视"),
                 self.transform.is_none() => ("transform", "transform=", "设置变换效果"),
@@ -555,7 +547,7 @@ impl Complete for ChangeFigureSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "id" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
             "mouthOpen" => complete_image_figure_file("图片立绘", input, position, project),
@@ -598,9 +590,21 @@ impl Complete for ChangeFigureSentence {
                     position,
                 )
             }
-            "blink" => live2d_blink_json_schema().complete_lsp(input, position),
-            "focus" => live2d_focus_json_schema().complete_lsp(input, position),
-            "transform" => transform_json_schema().complete_lsp(input, position),
+            "blink" => live2d_blink_json_schema()
+                .complete_lsp(input, position)
+                .into_iter()
+                .map(From::from)
+                .collect(),
+            "focus" => live2d_focus_json_schema()
+                .complete_lsp(input, position)
+                .into_iter()
+                .map(From::from)
+                .collect(),
+            "transform" => transform_json_schema()
+                .complete_lsp(input, position)
+                .into_iter()
+                .map(From::from)
+                .collect(),
             "enter" => complete_animation_enum(input, position, project),
             "exit" => complete_animation_enum(input, position, project),
             "ease" => complete_ease_enum(input, position),
@@ -618,7 +622,7 @@ impl Complete for BgmSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().bgm,
             |_, _| (CompletionItemKind::FILE, "音乐".to_string()),
@@ -632,7 +636,7 @@ impl Complete for BgmSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.volume.is_none() => ("volume", "volume=", "音量大小 [0..100]"),
@@ -650,7 +654,7 @@ impl Complete for BgmSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "enter" => complete_duration_enum("淡入淡出时间 (ms)", input, position, project),
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
@@ -665,7 +669,7 @@ impl Complete for PlayVideoSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().video,
             |_, _| (CompletionItemKind::FILE, "视频".to_string()),
@@ -679,7 +683,7 @@ impl Complete for PlayVideoSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 !self.skip_off => ("skipOff", "skipOff", "禁止跳过"),
@@ -695,7 +699,7 @@ impl Complete for PlayEffectSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().vocal,
             |_, _| (CompletionItemKind::FILE, "语音".to_string()),
@@ -709,7 +713,7 @@ impl Complete for PlayEffectSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.id.is_none() => ("id", "id=", "设置 ID"),
@@ -725,7 +729,7 @@ impl Complete for PlayEffectSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "id" => complete_ident_enum(&project.ident().id, "语音 ID", input, position),
             _ => Vec::default(),
@@ -741,7 +745,7 @@ impl Complete for SetAnimationSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         // complete_file(
         //     &project.resource().animation,
         //     |name| name.strip_suffix(".json").unwrap_or(name).to_string(),
@@ -757,7 +761,7 @@ impl Complete for SetAnimationSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
@@ -777,7 +781,7 @@ impl Complete for SetAnimationSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             _ => Vec::default(),
@@ -791,7 +795,7 @@ impl Complete for SetComplexAnimationSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_enum(
             [
                 ("universalSoftIn", "通用透明度淡入"),
@@ -808,7 +812,7 @@ impl Complete for SetComplexAnimationSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
@@ -827,7 +831,7 @@ impl Complete for SetComplexAnimationSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
@@ -842,8 +846,12 @@ impl Complete for SetTransformSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
-        transform_json_schema().complete_lsp(input, position)
+    ) -> Vec<PrimaryCompletion> {
+        transform_json_schema()
+            .complete_lsp(input, position)
+            .into_iter()
+            .map(From::from)
+            .collect()
     }
 
     fn complete_argument_name(
@@ -851,7 +859,7 @@ impl Complete for SetTransformSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
@@ -873,7 +881,7 @@ impl Complete for SetTransformSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
             "ease" => complete_ease_enum(input, position),
@@ -889,8 +897,12 @@ impl Complete for SetTempAnimationSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
-        animation_list_json_schema().complete_lsp(input, position)
+    ) -> Vec<PrimaryCompletion> {
+        animation_list_json_schema()
+            .complete_lsp(input, position)
+            .into_iter()
+            .map(From::from)
+            .collect()
     }
 
     fn complete_argument_name(
@@ -898,7 +910,7 @@ impl Complete for SetTempAnimationSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
@@ -918,7 +930,7 @@ impl Complete for SetTempAnimationSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             _ => Vec::default(),
@@ -932,7 +944,7 @@ impl Complete for SetTransitionSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
@@ -949,7 +961,7 @@ impl Complete for SetTransitionSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             "enter" => complete_animation_enum(input, position, project),
@@ -967,7 +979,7 @@ impl Complete for PixiPerformSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_enum(
             [
                 ("snow", "雪"),
@@ -986,7 +998,7 @@ impl Complete for PixiPerformSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1001,7 +1013,7 @@ impl Complete for PixiInitSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1016,7 +1028,7 @@ impl Complete for IntroSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.font_size == Default::default() => ("fontSize", "fontSize=", "字体大小"),
@@ -1038,7 +1050,7 @@ impl Complete for IntroSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "fontSize" => complete_font_size_enum(input, position),
             "backgroundImage" => complete_file(
@@ -1071,7 +1083,7 @@ impl Complete for MiniAvatarSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_image_figure_file("小头像", input, position, project)
     }
 
@@ -1080,7 +1092,7 @@ impl Complete for MiniAvatarSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1095,7 +1107,7 @@ impl Complete for SetTextboxSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_enum(
             [("on", "显示"), ("hide", "隐藏")],
             CompletionItemKind::ENUM_MEMBER,
@@ -1109,7 +1121,7 @@ impl Complete for SetTextboxSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1124,7 +1136,7 @@ impl Complete for FilmModeSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_enum(
             [("enable", "开启"), ("none", "关闭")],
             CompletionItemKind::ENUM_MEMBER,
@@ -1138,7 +1150,7 @@ impl Complete for FilmModeSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1155,7 +1167,7 @@ impl Complete for CallSceneSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_scene_file(input, position, project)
     }
 
@@ -1164,7 +1176,7 @@ impl Complete for CallSceneSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1179,7 +1191,7 @@ impl Complete for ChangeSceneSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_scene_file(input, position, project)
     }
 
@@ -1188,7 +1200,7 @@ impl Complete for ChangeSceneSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1203,7 +1215,7 @@ impl Complete for ChooseSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         // 提取最近一个选项
         let (_, choice) = input.rsplit_once('|').unwrap_or(("", input));
         let input = match choice.split_once(':') {
@@ -1224,7 +1236,7 @@ impl Complete for ChooseSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.default_choice.is_none() => ("defaultChoice", "defaultChoice=", "快速预览默认选项"),
@@ -1239,7 +1251,7 @@ impl Complete for ChooseSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "defaultChoice" => complete_enum(
                 (1..=self.choices.len()).map(|i| (i.to_string(), "选项")),
@@ -1258,7 +1270,7 @@ impl Complete for LabelSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1273,7 +1285,7 @@ impl Complete for JumpLabelSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_ident_enum(&project.ident().label, "标签", input, position)
     }
 
@@ -1282,7 +1294,7 @@ impl Complete for JumpLabelSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1299,7 +1311,7 @@ impl Complete for UnlockCgSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().background,
             |_, _| (CompletionItemKind::FILE, "背景".to_string()),
@@ -1313,7 +1325,7 @@ impl Complete for UnlockCgSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.name.is_none() => ("name", "name=", "鉴赏解锁名称"),
@@ -1329,7 +1341,7 @@ impl Complete for UnlockCgSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
             _ => Vec::default(),
@@ -1343,7 +1355,7 @@ impl Complete for UnlockBgmSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_file(
             &project.resource().bgm,
             |_, _| (CompletionItemKind::FILE, "音乐".to_string()),
@@ -1357,7 +1369,7 @@ impl Complete for UnlockBgmSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.name.is_none() => ("name", "name=", "鉴赏解锁名称"),
@@ -1373,7 +1385,7 @@ impl Complete for UnlockBgmSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         match name {
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
             _ => Vec::default(),
@@ -1389,7 +1401,7 @@ impl Complete for GetUserInputSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.title.is_none() => ("title", "title=", "对话框标题"),
@@ -1411,7 +1423,7 @@ impl Complete for SetVarSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 !self.global => ("global", "global", "全局变量"),
@@ -1427,7 +1439,7 @@ impl Complete for ShowVarsSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1442,7 +1454,7 @@ impl Complete for WaitSentence {
         input: &str,
         position: Position,
         project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_duration_enum("持续时间 (ms)", input, position, project)
     }
 
@@ -1451,7 +1463,7 @@ impl Complete for WaitSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1466,7 +1478,7 @@ impl Complete for ApplyStyleSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1481,7 +1493,7 @@ impl Complete for CallSteamSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.achivement_id.is_none() => ("achivementId", "achivementId=", "成就 ID"),
@@ -1497,7 +1509,7 @@ impl Complete for EndSentence {
         input: &str,
         position: Position,
         _project: &Project,
-    ) -> Vec<CompletionItem> {
+    ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             (input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
