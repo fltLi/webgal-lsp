@@ -374,7 +374,8 @@ impl TokenType {
     fn from_arguemnt(name: &str, sentence: &Sentence) -> Option<Self> {
         match name {
             // 标识符
-            "speaker" | "figureId" | "id" | "target" => Some(Self::Variable),
+            "speaker" => Some(Self::Type),
+            "figureId" | "id" | "target" => Some(Self::Variable),
             "name" | "unlockname" | "series" => Some(Self::Variable),
             "achivementId" => Some(Self::Variable),
 
