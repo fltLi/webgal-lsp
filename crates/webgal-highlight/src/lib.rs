@@ -3,6 +3,7 @@ use std::ops;
 use lsp_types::*;
 use rayon::prelude::*;
 use webgal_model::{
+    element::TokenSplit,
     sentence::{Scene, Sentence, SentenceInfo},
     util::{span_of, split_once_escaped},
 };
@@ -20,7 +21,7 @@ pub fn highlight_capability() -> SemanticTokensServerCapabilities {
             semantic_tokens_options: SemanticTokensOptions {
                 work_done_progress_options: WorkDoneProgressOptions::default(),
                 legend: SemanticTokensLegend {
-                    token_types: TokenType::all().to_vec(),
+                    token_types: token_types().to_vec(),
                     token_modifiers: vec![],
                 },
                 range: Some(false),
@@ -29,6 +30,10 @@ pub fn highlight_capability() -> SemanticTokensServerCapabilities {
             static_registration_options: StaticRegistrationOptions::default(),
         },
     )
+}
+
+pub const fn token_types() -> &'static [SemanticTokenType] {
+    TokenType::all()
 }
 
 /// 为场景提供语义高亮
@@ -95,16 +100,21 @@ where
     } = sentence;
 
     // 语句类型高亮
-    push(PrimaryToken {
-        span: primary.get_span(primary.command),
-        kind: if !sentence.is_say() {
-            TokenType::Function
-        } else if primary.content.is_some() {
-            TokenType::Variable
-        } else {
-            TokenType::String
-        },
-    });
+    if !sentence.is_say() {
+        push(PrimaryToken {
+            span: primary.get_span(primary.command),
+            kind: TokenType::Function,
+        });
+    } else if primary.content.is_some() {
+        // 对话者
+        push(PrimaryToken {
+            span: primary.get_span(primary.command),
+            kind: TokenType::Type,
+        });
+    } else {
+        // 对话内容
+        highlight_say_content(primary.command, &mut push);
+    }
 
     // 主参数高亮
     if let Some(content) = primary.content {
@@ -112,19 +122,21 @@ where
         let pos = primary.command.len();
         push(PrimaryToken::from_position(pos, TokenType::Operator));
 
-        if matches!(sentence, Sentence::Choose(_)) {
-            // 参数值 (choose)
-            highlight_choose_content(content, |mut token| {
-                token.span.start += pos + 1;
-                token.span.end += pos + 1;
-                push(token)
-            });
-        } else if let Some(kind) = TokenType::from_content(sentence) {
-            // 参数值 (常规)
-            push(PrimaryToken {
+        let shifted_push = |mut token: PrimaryToken| {
+            token.span.start += pos + 1;
+            token.span.end += pos + 1;
+            push(token)
+        };
+
+        // 参数值
+        match sentence {
+            Sentence::Say(_) => highlight_say_content(content, shifted_push),
+            Sentence::Choose(_) => highlight_choose_content(content, shifted_push),
+            _ if let Some(kind) = TokenType::from_content(sentence) => push(PrimaryToken {
                 span: primary.get_span(content),
                 kind,
-            });
+            }),
+            _ => {}
         }
     }
 
@@ -170,6 +182,29 @@ where
             span: primary.get_span(comment),
             kind: TokenType::Comment,
         });
+    }
+}
+
+fn highlight_say_content<F>(content: &str, mut push: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    for token in content.split('|').flat_map(TokenSplit::new) {
+        // 文本
+        if !token.text.is_empty() {
+            push(PrimaryToken {
+                span: span_of(content, token.text),
+                kind: TokenType::String,
+            });
+        }
+
+        // 注音和样式
+        if let Some(style) = token.get_full_style() {
+            push(PrimaryToken {
+                span: span_of(content, style),
+                kind: TokenType::Regex,
+            })
+        }
     }
 }
 
@@ -270,6 +305,7 @@ impl PrimaryToken {
 
 #[derive(Clone, Copy)]
 enum TokenType {
+    Type,
     Variable,
     Property,
     EnumMember,
@@ -377,20 +413,22 @@ impl TokenType {
 
     fn to_id(self) -> u32 {
         match self {
-            Self::Variable => 0,
-            Self::Property => 1,
-            Self::EnumMember => 2,
-            Self::Function => 3,
-            Self::Comment => 4,
-            Self::String => 5,
-            Self::Number => 6,
-            Self::Regex => 7,
-            Self::Operator => 8,
+            Self::Type => 0,
+            Self::Variable => 1,
+            Self::Property => 2,
+            Self::EnumMember => 3,
+            Self::Function => 4,
+            Self::Comment => 5,
+            Self::String => 6,
+            Self::Number => 7,
+            Self::Regex => 8,
+            Self::Operator => 9,
         }
     }
 
     const fn all() -> &'static [SemanticTokenType] {
         const TOKEN_TYPES: &[SemanticTokenType] = &[
+            SemanticTokenType::TYPE,
             SemanticTokenType::VARIABLE,
             SemanticTokenType::PROPERTY,
             SemanticTokenType::ENUM_MEMBER,
@@ -408,6 +446,7 @@ impl TokenType {
 impl From<TokenType> for SemanticTokenType {
     fn from(value: TokenType) -> Self {
         match value {
+            TokenType::Type => Self::TYPE,
             TokenType::Variable => Self::VARIABLE,
             TokenType::Property => Self::PROPERTY,
             TokenType::EnumMember => Self::ENUM_MEMBER,

@@ -19,6 +19,18 @@ pub fn parse_sentence(text: &str) -> Result<JsValue, JsValue> {
     serialize(&sentence)
 }
 
+/// 获取语义高亮 token 类型列表
+#[cfg(feature = "highlight")]
+#[wasm_bindgen]
+pub fn highlight_token_types() -> Vec<String> {
+    use webgal_highlight::token_types;
+
+    token_types()
+        .iter()
+        .map(|token_type| token_type.as_str().to_string())
+        .collect()
+}
+
 /// 提供场景语义高亮, 返回 [`Vec<lsp_types::SemanticToken>`]
 ///
 /// # Behavior

@@ -2,7 +2,7 @@
 
 use std::{
     fmt::{self, Write},
-    mem,
+    iter, mem, slice,
 };
 
 use derive_more::{Deref, DerefMut, From, Into};
@@ -119,6 +119,51 @@ impl<'a> Token<'a> {
             .binary_search_by_key(&name, |&(probe, _)| probe)
             .ok()
             .map(|index| arguments[index].1)
+    }
+
+    /// 获取注音和样式完整字符串
+    ///
+    /// # Safety
+    /// 确保注音和样式位于同一字符串.
+    /// 对于由 [`Self::from_str`] 构造的语句, 此操作安全性已保证.
+    pub fn get_full_style(&self) -> Option<&'a str> {
+        let mut start = None;
+        let mut end = None;
+
+        // 寻找样式和注音字符串首尾
+        for text in self
+            .style
+            .iter()
+            .flat_map(|(group, arguments)| {
+                arguments
+                    .iter()
+                    .flat_map(|&(name, value)| [name, value])
+                    .chain(iter::once(*group))
+            })
+            .chain(iter::once(self.ruby))
+            .filter(|text| !text.is_empty())
+        {
+            let current_start = text.as_ptr() as usize;
+            let current_end = current_start + text.len();
+
+            if start.is_none_or(|start| start > current_start) {
+                start = Some(current_start);
+            }
+            if end.is_none_or(|end| end < current_end) {
+                end = Some(current_end);
+            }
+        }
+
+        // 生成字符串
+        if let Some(start) = start
+            && let Some(end) = end
+        {
+            Some(unsafe {
+                str::from_utf8_unchecked(slice::from_raw_parts(start as *const _, end - start))
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -390,5 +435,40 @@ mod tests {
         assert_eq!(token.get_style("group1", "b"), Some("2"));
         assert_eq!(token.get_style("group2", "x"), Some("9"));
         assert_eq!(token.get_style("group2", "y"), None);
+    }
+
+    // -------- get_full_style --------
+
+    #[test]
+    fn token_get_full_style() {
+        // 1. 只有注音 (无样式)
+        let token = Token::with_text_and_style("漢字", "ふりがな");
+        assert_eq!(token.get_full_style(), Some("ふりがな"));
+
+        // 2. 只有样式组
+        let token = Token::with_text_and_style("文字", "style=color:red");
+        assert_eq!(token.get_full_style(), Some("style=color:red"));
+
+        // 3. 样式组 + 注音 (注音在样式字符串内)
+        let token = Token::with_text_and_style("漢字", "style=color:red\\; ruby=かんじ");
+        assert_eq!(
+            token.get_full_style(),
+            Some("style=color:red\\; ruby=かんじ")
+        );
+
+        // 4. 多个样式组
+        let token = Token::with_text_and_style("test", "z=0\\; a=1\\; m=2");
+        assert_eq!(token.get_full_style(), Some("z=0\\; a=1\\; m=2"));
+
+        // 5. 无任何样式 (纯文本)
+        let token = Token::with_text("plain");
+        assert_eq!(token.get_full_style(), None);
+
+        // 6. 样式组中的参数值包含特殊字符 (确保指针范围正确)
+        let token = Token::with_text_and_style("特殊", "style=color:#FF8800\\; size:large");
+        assert_eq!(
+            token.get_full_style(),
+            Some("style=color:#FF8800\\; size:large")
+        );
     }
 }

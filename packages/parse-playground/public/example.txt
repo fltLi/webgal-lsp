@@ -14,7 +14,6 @@ wait:2500;
 callScene:3.txt;
 wait:2500;
 callScene:4.txt;
-label:soyo123;
 wait:2500;
 intro:END -delayTime=3000 -hold;
 wait:2500;

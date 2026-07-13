@@ -7,7 +7,10 @@ interface EditorProps {
     value: string;
     onChange: (value: string) => void;
     onCursorChange?: (line: number) => void;
-    wasm?: { highlight_scene?: (input: string) => unknown } | null;
+    wasm?: {
+        highlight_token_types?: () => string[];
+        highlight_scene?: (input: string) => unknown;
+    } | null;
 }
 
 export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorProps) {
@@ -15,7 +18,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
     const monacoRef = useRef<Monaco | null>(null);
     const [isReady, setIsReady] = useState(false);
 
-    const initLanguage = (monaco: Monaco, highlightFn: (input: string) => unknown) => {
+    const initLanguage = (monaco: Monaco) => {
         const languageId = 'webgal';
 
         if (monaco.languages.getLanguages().some((lang: { id: string }) => lang.id === languageId)) {
@@ -43,18 +46,11 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
             ],
         });
 
+        // 从 WASM 获取 token 类型列表
+        const tokenTypes = wasm?.highlight_token_types?.() ?? [];
+
         const legend = {
-            tokenTypes: [
-                'variable',
-                'property',
-                'enumMember',
-                'function',
-                'comment',
-                'string',
-                'number',
-                'regexp',
-                'operator',
-            ],
+            tokenTypes,
             tokenModifiers: [],
         };
 
@@ -62,7 +58,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
             getLegend: () => legend,
             provideDocumentSemanticTokens(model: { getValue(): string }) {
                 try {
-                    const result = (highlightFn as (input: string) => Array<{
+                    const result = (wasm?.highlight_scene as (input: string) => Array<{
                         deltaLine: number;
                         deltaStart: number;
                         length: number;
@@ -104,7 +100,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         setIsReady(true);
 
         if (wasm?.highlight_scene) {
-            initLanguage(monaco, wasm.highlight_scene);
+            initLanguage(monaco);
         }
 
         const model = editor.getModel();
@@ -133,7 +129,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
             .getLanguages()
             .some((lang: { id: string }) => lang.id === 'webgal');
         if (!alreadyRegistered) {
-            initLanguage(monacoRef.current, wasm.highlight_scene);
+            initLanguage(monacoRef.current);
         }
 
         const editor = editorRef.current;
