@@ -38,6 +38,7 @@ once_cell.workspace = true
 rayon.workspace = true
 
 tower-lsp.workspace = true
+percent-encoding = "2.3"
 async-trait = "0.1"
 futures-util = "0.3"
 tokio = { version = "1", features = [

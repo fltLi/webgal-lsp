@@ -1,10 +1,14 @@
 //! 工作区多项目管理与路由
 
-use std::sync::{Arc, RwLock};
+use std::{
+    borrow::Cow,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{Result, anyhow};
 use derive_more::{From, Into};
 use path_tree::{Entry, Folder, Node, PATH_SEPARATORS, join, split_path_once};
+use percent_encoding::percent_decode_str;
 
 use crate::project::Project;
 
@@ -27,7 +31,8 @@ impl Workspace {
     /// # Behavior
     /// * 相对路径 (`.`, `..`) 将被视为目录名, 而不执行跳跃.
     pub fn get(&self, path: &str) -> Option<GetProjectResult> {
-        let (root, mut remain) = split_root(path);
+        let path = decode_uri(path);
+        let (root, mut remain) = split_root(&path);
         remain = remain.trim_start_matches(PATH_SEPARATORS);
 
         let mut folder = &self.projects;
@@ -127,13 +132,21 @@ pub struct GetProjectResult {
     pub project: Arc<RwLock<Project>>,
 }
 
+/// 转码 URI 为 UTF-8 (失败时回退)
+fn decode_uri(path: &str) -> Cow<'_, str> {
+    percent_decode_str(path)
+        .decode_utf8()
+        .unwrap_or(Cow::Borrowed(path))
+}
+
 fn split_root(path: &str) -> (&str, &str) {
     path.split_once("://").unwrap_or(("", path))
 }
 
-/// 整理规范 URI (形如 `root://...`) 为 `root/...`
+/// 整理规范 URI (形如 `root://...`) 为 `root/...`, 并编码为 UTF-8
 fn canonicalize(path: &str) -> String {
-    let (root, path) = split_root(path);
+    let path = decode_uri(path);
+    let (root, path) = split_root(&path);
     join(root, path)
 }
 
@@ -153,10 +166,34 @@ mod tests {
         ws.insert(uri, make_project()).unwrap()
     }
 
+    // -------- uri --------
+
+    #[test]
+    fn decode_uri_to_utf8() {
+        assert_eq!(decode_uri("hello"), "hello");
+        assert_eq!(decode_uri("hello%20world"), "hello world");
+        assert_eq!(decode_uri("%E4%BD%A0%E5%A5%BD"), "你好");
+        assert_eq!(
+            decode_uri("file:///C:/%E6%96%87%E4%BB%B6"),
+            "file:///C:/文件"
+        );
+        assert_eq!(decode_uri("%FF"), "%FF");
+    }
+
+    #[test]
+    fn canonicalize_uri() {
+        assert_eq!(canonicalize("file:///C:/game"), "file/C:/game");
+        assert_eq!(
+            canonicalize("file:///C:/%E6%96%87%E4%BB%B6"),
+            "file/C:/文件"
+        );
+        assert_eq!(canonicalize("C:/%20game"), "C:/ game");
+    }
+
     // -------- insert and get --------
 
     #[test]
-    fn test_insert_and_get_simple() {
+    fn insert_and_get_simple() {
         let mut ws = Workspace::new();
         let proj_arc = insert_project(&mut ws, "file:///C:/game");
 
@@ -167,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_project_root_itself() {
+    fn get_project_root_itself() {
         let mut ws = Workspace::new();
         let proj_arc = insert_project(&mut ws, "file:///C:/game");
 
@@ -178,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_with_trailing_slash() {
+    fn get_with_trailing_slash() {
         let mut ws = Workspace::new();
         insert_project(&mut ws, "file:///C:/game");
 
@@ -188,7 +225,20 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_without_scheme() {
+    fn get_decoded_paths() {
+        let mut ws = Workspace::new();
+        let project_path = "file:///C:/%E6%B8%B8%E6%88%8F/%E9%A1%B9%E7%9B%AE";
+        insert_project(&mut ws, project_path);
+
+        let resource_uri =
+            "file:///C:/%E6%B8%B8%E6%88%8F/%E9%A1%B9%E7%9B%AE/%E5%9C%BA%E6%99%AF/start.txt";
+        let result = ws.get(resource_uri).unwrap();
+        assert_eq!(result.project_path, "file:///C:/游戏/项目");
+        assert_eq!(result.resource_path, "场景/start.txt");
+    }
+
+    #[test]
+    fn insert_without_scheme() {
         let mut ws = Workspace::new();
         insert_project(&mut ws, "C:/game");
 
@@ -200,7 +250,7 @@ mod tests {
     // -------- nested projects are disallowed --------
 
     #[test]
-    fn test_insert_nested_project_disallowed() {
+    fn insert_nested_project_disallowed() {
         let mut ws = Workspace::new();
         // Insert parent project
         insert_project(&mut ws, "file:///C:/workspace");
@@ -210,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_parent_over_child_disallowed() {
+    fn insert_parent_over_child_disallowed() {
         let mut ws = Workspace::new();
         // Insert child project first
         insert_project(&mut ws, "file:///C:/workspace/sub");
@@ -222,7 +272,7 @@ mod tests {
     // -------- not found --------
 
     #[test]
-    fn test_get_not_found() {
+    fn get_not_found() {
         let mut ws = Workspace::new();
         insert_project(&mut ws, "file:///C:/game");
 
@@ -236,7 +286,7 @@ mod tests {
     // -------- remove --------
 
     #[test]
-    fn test_remove_project() {
+    fn remove_project() {
         let mut ws = Workspace::new();
         insert_project(&mut ws, "file:///C:/game");
 
@@ -247,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_all_under() {
+    fn remove_all_under() {
         let mut ws = Workspace::new();
         // Insert two projects under the same root (but not nested)
         insert_project(&mut ws, "file:///C:/root/proj1");

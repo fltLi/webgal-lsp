@@ -150,7 +150,7 @@ mod tests {
     // -------- info --------
 
     #[test]
-    fn test_kind_from_path() {
+    fn kind_from_path() {
         let cases = [
             ("config.txt", (ResourceKind::Config, "config.txt")),
             ("scene/start.txt", (ResourceKind::Scene, "start.txt")),
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resource_info_from_path() {
+    fn resource_info_from_path() {
         let info = ResourceInfo::from_path("scene/start.txt");
         assert_eq!(info.kind, ResourceKind::Scene);
         assert_eq!(info.path, "start.txt");
@@ -203,7 +203,7 @@ mod tests {
     // -------- extension --------
 
     #[test]
-    fn test_extensions_sorted() {
+    fn extensions_sorted() {
         for kind in [
             ResourceKind::Config,
             ResourceKind::Scene,
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_extension_relevant() {
+    fn is_extension_relevant() {
         let kind = ResourceKind::Background;
         assert!(kind.is_extension_relevant("png"));
         assert!(kind.is_extension_relevant("jpg"));
