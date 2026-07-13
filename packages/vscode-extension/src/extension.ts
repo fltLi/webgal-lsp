@@ -8,11 +8,14 @@ import {
     RequestType
 } from 'vscode-languageclient/node';
 
+type ExistsParams = { path: string };
+type ExistsResult = { exists: boolean; isDirectory: boolean };
 type ReadDirectoryParams = { path: string };
 type ReadDirectoryResult = { name: string; isDirectory: boolean }[];
 type ReadFileParams = { path: string };
 type ReadFileResult = string;
 
+const ExistsRequest = new RequestType<ExistsParams, ExistsResult, void>('workspace/fs/exists');
 const ReadDirectoryRequest = new RequestType<ReadDirectoryParams, ReadDirectoryResult, void>('workspace/fs/readDirectory');
 const ReadFileRequest = new RequestType<ReadFileParams, ReadFileResult, void>('workspace/fs/readFile');
 
@@ -44,6 +47,22 @@ export async function activate(context: vscode.ExtensionContext) {
             const uri = vscode.Uri.parse(params.path, true);
             const data = await vscode.workspace.fs.readFile(uri);
             return Buffer.from(data).toString('utf8');
+        }),
+        client.onRequest(ExistsRequest, async (params) => {
+            const uri = vscode.Uri.parse(params.path, true);
+            try {
+                const stat = await vscode.workspace.fs.stat(uri);
+                return {
+                    exists: true,
+                    isDirectory: stat.type === vscode.FileType.Directory,
+                };
+            } catch (error) {
+                // 文件不存在或其他错误 (如权限) 视为不存在
+                return {
+                    exists: false,
+                    isDirectory: false,
+                };
+            }
         })
     );
 

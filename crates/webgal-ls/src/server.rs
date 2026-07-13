@@ -58,6 +58,16 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///     ```json
 ///     "文件内容字符串"
 ///     ```
+///
+/// * `workspace/fs/exists` - 查询文件或目录是否存在.
+///   * 请求参数
+///     ```json
+///     { "path": "文件或目录路径" }
+///     ```
+///   * 成功响应
+///     ```json
+///     { "exists": true / false, "isDirectory": true / false }
+///     ```
 #[derive(Debug, Clone)]
 pub struct Backend {
     client: Client,
@@ -413,6 +423,24 @@ impl LanguageServer for Backend {
                 return;
             }
         };
+
+        // 如果文件不存在于磁盘, 就移除映射
+        if let Ok(result) = self.client.exists(&path).await
+            && !result.exists_file()
+        {
+            if let Err(error) = spawn_blocking({
+                let resource_path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+                move || project.write().unwrap().remove(resource_path)
+            })
+            .await
+            .unwrap()
+            {
+                error!(project = %project_path, path = %resource_path, %error, "Failed to remove resource on change");
+            } else {
+                debug!(project = %project_path, path = %resource_path, "Removed resource via close");
+            }
+            return;
+        }
 
         // 重置资源为磁盘内容
         let project = match spawn_blocking({
