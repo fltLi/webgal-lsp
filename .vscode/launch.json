@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Parse Playground",
+            "type": "msedge",
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/packages/parse-playground",
+            "preLaunchTask": "launch:playground",
+            "runtimeArgs": [
+                "--disable-web-security"
+            ],
+            "sourceMapPathOverrides": {
+                "webpack:///./*": "${webRoot}/*"
+            }
+        },
+        {
+            "name": "Launch VSCode Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-extension"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/packages/vscode-extension/dist/**/*.js"
+            ],
+            "preLaunchTask": "build:extension",
+            "env": {
+                "SERVER_PATH": "${workspaceFolder}/target/debug/webgal-ls.exe"
+            }
+        }
+    ]
+}

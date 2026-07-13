@@ -1,0 +1,101 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // -------- webgal-ls --------
+        {
+            "label": "build:server",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "build",
+                "-p",
+                "webgal-ls"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$rustc"
+            ]
+        },
+        // -------- parse-playground --------
+        {
+            "label": "build:playground",
+            "type": "shell",
+            "command": "npm",
+            "args": [
+                "run",
+                "build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/packages/parse-playground"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$tsc"
+            ]
+        },
+        {
+            "label": "start:playground-server",
+            "type": "shell",
+            "command": "npm",
+            "args": [
+                "run",
+                "dev",
+                "--",
+                "--host",
+                "0.0.0.0"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/packages/parse-playground"
+            },
+            "isBackground": true,
+            "problemMatcher": [
+                {
+                    "owner": "vite",
+                    "pattern": {
+                        "regexp": "^.*(Local:|ready in).*$",
+                        "file": 1,
+                        "location": 2,
+                        "message": 0
+                    },
+                    "background": {
+                        "activeOnStart": true,
+                        "beginsPattern": ".*",
+                        "endsPattern": ".*(Local:|ready in).*$"
+                    }
+                }
+            ]
+        },
+        {
+            "label": "launch:playground",
+            "dependsOn": [
+                "build:playground",
+                "start:playground-server"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        // -------- vscode-extension --------
+        {
+            "label": "build:extension",
+            "type": "shell",
+            "command": "npm",
+            "args": [
+                "run",
+                "compile"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/packages/vscode-extension"
+            },
+            "group": "build",
+            "dependsOn": [
+                "build:server"
+            ],
+            "problemMatcher": [
+                "$tsc"
+            ]
+        }
+    ]
+}

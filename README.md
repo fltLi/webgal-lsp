@@ -70,8 +70,7 @@ cargo run -p webgal-ls -- --log-level debug --log-format plain
    npm install
    ```
 
-2. 在 VS Code 中打开该目录，按 `F5` 启动调试窗口。  
-   扩展将自动编译 TS / Rust 前后端并启动语言服务器。
+2. 在 VS Code 中打开项目根目录，按 `F5` 并选择 **`Launch VSCode Extension`** 调试配置以编译服务器并启动扩展开发窗口。
 
 ---
 
@@ -80,7 +79,7 @@ cargo run -p webgal-ls -- --log-level debug --log-format plain
 > WebGAL 解析器的在线演示工具，支持实时解析和语义高亮。
 
 - **在线预览**：[https://fltli.github.io/webgal-lsp](https://fltli.github.io/webgal-lsp)
-- **本地运行**：在 VS Code 中打开项目根目录，按 `F5` 并选择 `Launch Playground` 调试配置即可启动。
+- **本地运行**：在 VS Code 中打开项目根目录，按 `F5` 并选择 **`Launch Parse Playground`** 调试配置以编译运行并打开网页。
 
 ## :page_facing_up: 许可证
 
