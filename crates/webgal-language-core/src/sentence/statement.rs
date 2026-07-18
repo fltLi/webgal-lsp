@@ -574,6 +574,7 @@ pub struct GetUserInputSentence {
     pub title: Option<String>,
     #[sentence(rename = "buttonText")]
     pub button_text: Option<String>,
+    #[sentence(rename = "defaultValue")]
     pub default_value: Option<String>,
     // 校验
     pub rule: Option<String>,
