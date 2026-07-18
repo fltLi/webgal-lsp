@@ -8,6 +8,7 @@ readme = "README.md"
 
 authors = ["fltLi"]
 license = "MPL-2.0"
+license-file = "LICENSE"
 repository = "https://github.com/fltLi/webgal-lsp"
 
 [workspace.dependencies]
