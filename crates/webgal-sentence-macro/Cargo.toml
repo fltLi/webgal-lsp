@@ -7,7 +7,6 @@ description = "WebGAL 语句序列化反序列化派生宏"
 
 authors.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 
 [lib]
