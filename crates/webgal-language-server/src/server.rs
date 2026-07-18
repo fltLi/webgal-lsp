@@ -22,12 +22,9 @@ use tokio::{
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
 use tracing::{debug, error, info, warn};
 use webgal_language_core::resource::ResourceKind;
+use webgal_language_service::{encode::*, service::*};
 
-use crate::{
-    encode::*,
-    project::{DirEntry, FileSystem, GetProjectResult, Project, Workspace},
-    service::*,
-};
+use crate::project::{DirEntry, FileSystem, GetProjectResult, Project, Workspace, load_project};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -153,7 +150,7 @@ impl Backend {
                 info!(project = %project_path, "Loading project");
 
                 let mut errors = Vec::new();
-                let project = Project::load(project_path, &self.client, &mut errors).await;
+                let project = load_project(project_path, &self.client, &mut errors).await;
 
                 match self.workspace.write().await.insert(project_path, project) {
                     Ok(project) => self.diagnose_project(project_path, project),

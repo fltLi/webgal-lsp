@@ -1,7 +1,7 @@
 use std::ops;
 
+use lsp_types::*;
 use rayon::prelude::*;
-use tower_lsp::lsp_types::*;
 use webgal_language_core::sentence::*;
 
 use crate::{

@@ -2,9 +2,9 @@ use std::hash::Hash;
 
 use count::HashCounter;
 use json_complete::{ToJsonSchema, Value};
+use lsp_types::*;
 use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
-use tower_lsp::lsp_types::*;
 use webgal_language_core::{
     dispatch_sentence,
     element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},

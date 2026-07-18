@@ -1,5 +1,5 @@
 use count::HashCounter;
-use tower_lsp::lsp_types::*;
+use lsp_types::*;
 
 use crate::{
     project::Project,

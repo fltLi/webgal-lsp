@@ -6,13 +6,13 @@ use derive_more::{From, Into, TryInto};
 #[cfg(feature = "serde")]
 use serde::Serialize;
 
+use crate::element::Forward;
+
 pub use error::*;
 pub use primary::*;
 pub use scene::*;
 pub use statement::*;
 pub use webgal_sentence_macro::Sentence; // 重新导出方便使用 // 无法导出
-
-use crate::element::Forward;
 
 mod error;
 mod primary;

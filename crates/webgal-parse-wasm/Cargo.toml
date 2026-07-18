@@ -12,22 +12,13 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-default = ["highlight"]
-highlight = [
-    "dep:webgal-highlight",
-    "dep:lsp-encode",
-    "dep:lsp-types",
-] # LSP 语义高亮封装
-
 [dependencies]
 webgal-language-core = { workspace = true, features = ["serde"] }
-webgal-highlight = { workspace = true, optional = true }
-lsp-encode = { workspace = true, optional = true }
+webgal-language-service.workspace = true
 
 serde.workspace = true
 serde-wasm-bindgen = "0.6"
 
 wasm-bindgen = "0.2"
 
-lsp-types = { workspace = true, optional = true }
+lsp-types.workspace = true
