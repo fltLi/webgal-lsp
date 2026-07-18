@@ -2090,21 +2090,12 @@ dependencies = [
  "once_cell",
  "path-tree",
  "rayon",
- "serde_json",
- "thiserror",
- "webgal-language-core",
-]
-
-[[package]]
-name = "webgal-parse-wasm"
-version = "0.1.0"
-dependencies = [
- "lsp-types",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
+ "thiserror",
  "wasm-bindgen",
  "webgal-language-core",
- "webgal-language-service",
 ]
 
 [[package]]

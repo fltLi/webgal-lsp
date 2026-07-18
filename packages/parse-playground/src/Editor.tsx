@@ -2,15 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
+import { type WasmModule } from './wasm';
 
 interface EditorProps {
     value: string;
     onChange: (value: string) => void;
     onCursorChange?: (line: number) => void;
-    wasm?: {
-        highlight_token_types?: () => string[];
-        highlight_scene?: (input: string) => unknown;
-    } | null;
+    wasm?: WasmModule | null;
 }
 
 export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorProps) {
@@ -46,9 +44,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
             ],
         });
 
-        // 从 WASM 获取 token 类型列表
         const tokenTypes = wasm?.highlight_token_types?.() ?? [];
-
         const legend = {
             tokenTypes,
             tokenModifiers: [],
@@ -56,32 +52,13 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
 
         monaco.languages.registerDocumentSemanticTokensProvider(languageId, {
             getLegend: () => legend,
-            provideDocumentSemanticTokens(model: { getValue(): string }) {
+            provideDocumentSemanticTokens() {
                 try {
-                    const result = (wasm?.highlight_scene as (input: string) => Array<{
-                        deltaLine: number;
-                        deltaStart: number;
-                        length: number;
-                        tokenType: number;
-                        tokenModifiersBitset: number;
-                    }>)(model.getValue());
-
-                    if (!Array.isArray(result) || result.length === 0) {
+                    const result = wasm?.highlightScene?.();
+                    if (!result || result.length === 0) {
                         return { data: new Uint32Array(), resultId: null };
                     }
-
-                    const data = new Uint32Array(result.length * 5);
-                    for (let i = 0; i < result.length; i++) {
-                        const token = result[i];
-                        const offset = i * 5;
-                        data[offset] = token.deltaLine;
-                        data[offset + 1] = token.deltaStart;
-                        data[offset + 2] = token.length;
-                        data[offset + 3] = token.tokenType;
-                        data[offset + 4] = token.tokenModifiersBitset || 0;
-                    }
-
-                    return { data, resultId: null };
+                    return { data: result, resultId: null };
                 } catch (e) {
                     console.error('Highlight error:', e);
                     return { data: new Uint32Array(), resultId: null };
@@ -99,7 +76,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         monaco.editor.setTheme('vs-dark');
         setIsReady(true);
 
-        if (wasm?.highlight_scene) {
+        if (wasm?.highlightScene) {
             initLanguage(monaco);
         }
 
@@ -122,7 +99,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
     }, [onCursorChange]);
 
     useEffect(() => {
-        if (!wasm?.highlight_scene || !monacoRef.current || !isReady) {
+        if (!wasm?.highlightScene || !monacoRef.current || !isReady) {
             return;
         }
         const alreadyRegistered = monacoRef.current.languages

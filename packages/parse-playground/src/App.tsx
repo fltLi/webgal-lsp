@@ -110,26 +110,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!wasm) {
-      return;
+    if (!wasm) return;
+
+    wasm.updateScene(text);
+    const parseTime = wasm.getLastParseTime();
+    if (parseTime !== null) {
+      setElapsedMs(`${parseTime.toFixed(1)} ms`);
     }
 
     const timer = window.setTimeout(() => {
-      const start = performance.now();
       try {
-        const parsed = wasm.parse_scene(text) as unknown;
-        const elapsed = performance.now() - start;
-        setData(parsed);
-        setLineRanges(buildLineRanges(parsed));
-        setElapsedMs(`${elapsed.toFixed(1)} ms`);
+        const sentences = wasm.getSentences();
+        setData(sentences);
+        setLineRanges(buildLineRanges(sentences));
         setError(null);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
         setData(null);
         setLineRanges([]);
-        setLineRange(null);
-        setElapsedMs('--');
       }
     }, 300);
 

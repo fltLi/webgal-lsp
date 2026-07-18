@@ -26,7 +26,7 @@
             "command": "npm",
             "args": [
                 "run",
-                "build"
+                "build:dev"
             ],
             "options": {
                 "cwd": "${workspaceFolder}/packages/parse-playground"

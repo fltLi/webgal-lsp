@@ -1,5 +1,5 @@
 {
-  "name": "vscode-webgal",
+  "name": "webgal-vscode-extension",
   "displayName": "WebGAL Language Support (Dev)",
   "description": "Language server for WebGAL scenario files (development only)",
   "version": "0.1.0",

@@ -20,7 +20,6 @@ webgal-language-core.path = "./crates/webgal-language-core"
 webgal-language-service.path = "./crates/webgal-language-service"
 webgal-language-server.path = "./crates/webgal-language-server"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"     # private
-webgal-parse-wasm.path = "./crates/webgal-parse-wasm"             # private
 
 anyhow = "1.0"
 thiserror = "2.0"
