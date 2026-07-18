@@ -28,7 +28,7 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
         .par_bridge()
         .filter_map(|(path, scene)| {
             let scene = scene.as_item()?;
-            let diagnostics = diagnose_scene(scene, project);
+            let diagnostics = diagnose_scene(scene, Some(project));
             Some((path, scene, diagnostics))
         })
         .collect()
@@ -38,7 +38,8 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
 ///
 /// # Behavior
 /// * 存在 ERROR, WARNING, INFORMATION 三种级别, 仅当不存在前两者时才推送 INFO 级别的诊断.
-pub fn diagnose_scene(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
+/// * 当 `project` 为 `None` 时, 跳过环境诊断 (如资源检查, 符号引用等).
+pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnostic> {
     // 并行收集诊断
     let diagnostics: Vec<_> = scene
         .sentences()
@@ -74,7 +75,7 @@ pub fn diagnose_scene(scene: &Scene, project: &Project) -> Vec<Diagnostic> {
 }
 
 /// 生成一条语句的诊断
-fn diagnose_sentence<F>(sentence: &SentenceInfo, project: &Project, mut diagnose: F)
+fn diagnose_sentence<F>(sentence: &SentenceInfo, project: Option<&Project>, mut diagnose: F)
 where
     F: FnMut(PrimaryDiagnostic),
 {
@@ -96,13 +97,15 @@ where
     }
 
     // 环境诊断
-    diagnose_environment(
-        sentence.content,
-        &sentence.primary,
-        &sentence.sentence,
-        project,
-        &mut diagnose,
-    );
+    if let Some(proj) = project {
+        diagnose_environment(
+            sentence.content,
+            &sentence.primary,
+            &sentence.sentence,
+            proj,
+            &mut diagnose,
+        );
+    }
 }
 
 struct PrimaryDiagnostic {

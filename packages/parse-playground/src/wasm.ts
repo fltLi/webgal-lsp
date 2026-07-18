@@ -4,11 +4,17 @@ let currentScene: Scene | null = null;
 let lastParseTime: number | null = null;
 
 export interface WasmModule {
-    highlight_token_types: () => string[];
+    // 场景管理
     updateScene: (text: string) => void;
-    highlightScene: () => Uint32Array;
     getSentences: () => unknown[];
     getLastParseTime: () => number | null;
+
+    // 语言服务
+    highlight: () => Uint32Array;
+    highlightTokenTypes: () => string[];
+    complete: (line: number, character: number) => unknown[];
+    diagnose: () => unknown[];
+    format: () => unknown[];
 }
 
 let wasmPromise: Promise<WasmModule> | null = null;
@@ -16,7 +22,6 @@ let wasmPromise: Promise<WasmModule> | null = null;
 export function loadWasm(): Promise<WasmModule> {
     if (wasmPromise === null) {
         wasmPromise = init().then(() => ({
-            highlight_token_types: () => Scene.highlight_token_types(),
             updateScene: (text: string) => {
                 if (currentScene) {
                     currentScene.free();
@@ -26,19 +31,28 @@ export function loadWasm(): Promise<WasmModule> {
                 const elapsed = performance.now() - start;
                 lastParseTime = elapsed;
             },
-            highlightScene: () => {
-                if (!currentScene) {
-                    return new Uint32Array();
-                }
-                return currentScene.highlight();
-            },
             getSentences: () => {
-                if (!currentScene) {
-                    return [];
-                }
+                if (!currentScene) return [];
                 return currentScene.sentences();
             },
             getLastParseTime: () => lastParseTime,
+            highlight: () => {
+                if (!currentScene) return new Uint32Array();
+                return currentScene.highlight();
+            },
+            highlightTokenTypes: () => Scene.highlight_token_types(),
+            complete: (line: number, character: number) => {
+                if (!currentScene) return [];
+                return currentScene.complete(line, character);
+            },
+            diagnose: () => {
+                if (!currentScene) return [];
+                return currentScene.diagnose();
+            },
+            format: () => {
+                if (!currentScene) return [];
+                return currentScene.format();
+            },
         }));
     }
     return wasmPromise!;

@@ -1,15 +1,11 @@
-//! 单脚本语言服务 WASM 封装
+//! 单场景语言服务 WASM 封装
 
-use std::result;
-
+use lsp_types::*;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use webgal_language_core::sentence::Scene as SceneInfo;
 
-use crate::{
-    encode::highlights_utf8_to_utf16,
-    service::{highlight, token_types},
-};
+use crate::{encode::*, project::Project, service::*};
 
 /// WebGAL 场景实例
 ///
@@ -27,11 +23,18 @@ impl Scene {
         Self { scene }
     }
 
-    pub fn sentences(&self) -> Result<Vec<JsValue>> {
+    pub fn sentences(&self) -> Vec<JsValue> {
         self.scene.sentences().iter().map(serialize).collect()
     }
 
     // -------- service --------
+
+    pub fn diagnose(&self) -> Vec<JsValue> {
+        let mut diagnostics = diagnose_scene(&self.scene, None);
+        diagnostics_utf8_to_utf16(&self.scene, &mut diagnostics);
+
+        diagnostics.into_iter().map(serialize).collect()
+    }
 
     pub fn highlight_token_types() -> Vec<String> {
         token_types()
@@ -66,12 +69,26 @@ impl Scene {
             })
             .collect()
     }
+
+    pub fn complete(&self, line: u32, character: u32) -> Vec<JsValue> {
+        let position = position_utf16_to_utf8(&self.scene, Position { line, character });
+
+        let mut completions = complete(&self.scene, position, &Project::default());
+        completions_utf8_to_utf16(&self.scene, &mut completions);
+
+        completions.into_iter().map(serialize).collect()
+    }
+
+    pub fn format(&self) -> Vec<JsValue> {
+        let mut edits = format(&self.scene);
+        formatting_utf8_to_utf16(&self.scene, &mut edits);
+
+        edits.into_iter().map(serialize).collect()
+    }
 }
 
 // -------- util --------
 
-type Result<T> = result::Result<T, JsValue>;
-
-fn serialize<T: Serialize>(value: &T) -> Result<JsValue> {
-    serde_wasm_bindgen::to_value(value).map_err(From::from)
+fn serialize<T: Serialize>(value: T) -> JsValue {
+    serde_wasm_bindgen::to_value(&value).unwrap()
 }
