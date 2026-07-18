@@ -134,7 +134,7 @@ impl PrimaryDiagnostic {
             },
             severity: Some(level.into()),
             code: Some(NumberOrString::String(code.to_string())),
-            source: Some("webgal-ls".to_string()),
+            // source: Some("webgal-language-server".to_string()),
             message,
             ..Default::default()
         }

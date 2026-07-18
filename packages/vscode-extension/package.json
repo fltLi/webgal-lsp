@@ -22,7 +22,7 @@
       "type": "object",
       "title": "WebGAL Language Server",
       "properties": {
-        "webgal-ls.trace.server": {
+        "webgal-language-server.trace.server": {
           "type": "string",
           "scope": "window",
           "enum": ["off", "messages", "verbose"],

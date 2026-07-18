@@ -27,7 +27,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tower_lsp::{ClientSocket, LspService, Server};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use webgal_ls::server::Backend;
+use webgal_language_server::server::Backend;
 
 /// 日志级别
 #[derive(

@@ -19,8 +19,8 @@ webgal-language-core.path = "./crates/webgal-language-core"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"
 webgal-highlight.path = "./crates/webgal-highlight"
 lsp-encode.path = "./crates/lsp-encode"
-webgal-ls.path = "./crates/webgal-ls"
-webgal-parse-wasm.path = "./crates/webgal-parse-wasm"         # private
+webgal-language-server.path = "./crates/webgal-language-server"
+webgal-parse-wasm.path = "./crates/webgal-parse-wasm"           # private
 
 anyhow = "1.0"
 thiserror = "2.0"

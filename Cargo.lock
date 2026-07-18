@@ -2164,7 +2164,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "webgal-ls"
+name = "webgal-language-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",

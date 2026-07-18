@@ -1,7 +1,7 @@
 {
     "version": "2.0.0",
     "tasks": [
-        // -------- webgal-ls --------
+        // -------- webgal-language-server --------
         {
             "label": "build:server",
             "type": "shell",
@@ -9,7 +9,7 @@
             "args": [
                 "build",
                 "-p",
-                "webgal-ls"
+                "webgal-language-server"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"

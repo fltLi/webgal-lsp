@@ -24,7 +24,7 @@ let client: LanguageClient;
 export async function activate(context: vscode.ExtensionContext) {
     // 使用纯文本格式 debug 日志
     const run: Executable = {
-        command: process.env.SERVER_PATH || 'webgal-ls',
+        command: process.env.SERVER_PATH || 'webgal-language-server',
         args: ['--log-level', 'debug', '--log-format', 'plain'],
     };
 
@@ -34,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext) {
         outputChannel: vscode.window.createOutputChannel('WebGAL LSP', { log: true }),
     };
 
-    client = new LanguageClient('webgal-ls', 'WebGAL LSP', { run, debug: run }, clientOptions);
+    client = new LanguageClient('webgal-language-server', 'WebGAL LSP', { run, debug: run }, clientOptions);
 
     // 注册文件系统扩展请求
     context.subscriptions.push(

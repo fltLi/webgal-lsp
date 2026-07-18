@@ -280,7 +280,7 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities,
             server_info: Some(ServerInfo {
-                name: "webgal-ls".to_string(),
+                name: "webgal-language-server".to_string(),
                 version: Some(VERSION.to_string()),
             }),
         })

@@ -26,7 +26,7 @@ WebGAL 语言基础设施。
 #### 编译
 
 ```bash
-cargo build -p webgal-ls
+cargo build -p webgal-language-server
 ```
 
 #### 启动模式
@@ -36,13 +36,13 @@ cargo build -p webgal-ls
 - **:computer: stdio 模式（默认）**  
   适用于 VS Code 等桌面客户端。
   ```bash
-  cargo run -p webgal-ls
+  cargo run -p webgal-language-server
   ```
 
 - **:globe_with_meridians: WebSocket 模式**  
   适用于浏览器环境（如 Monaco）。
   ```bash
-  cargo run -p webgal-ls -- --port 8765
+  cargo run -p webgal-language-server -- --port 8765
   ```
   服务器将监听 `ws://127.0.0.1:8765`，接受一个 WebSocket 连接。
 
@@ -55,7 +55,7 @@ cargo build -p webgal-ls
 
 示例：
 ```bash
-cargo run -p webgal-ls -- --log-level debug --log-format plain
+cargo run -p webgal-language-server -- --log-level debug --log-format plain
 ```
 
 ---
