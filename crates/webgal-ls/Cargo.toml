@@ -18,7 +18,7 @@ count = { workspace = true, features = ["hash"] }
 path-tree.workspace = true
 json-complete = { workspace = true, features = ["lsp"] }
 
-webgal-model.workspace = true
+webgal-language-core.workspace = true
 webgal-highlight.workspace = true
 lsp-encode.workspace = true
 

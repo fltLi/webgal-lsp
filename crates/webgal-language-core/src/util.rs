@@ -1,5 +1,6 @@
 use std::{fmt, ops::Range};
 
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NeverError;
 
@@ -53,7 +54,7 @@ macro_rules! impl_display_for_serde_json {
 ///
 /// # Examples
 /// ```
-/// # use webgal_model::util::split_once_escaped;
+/// # use webgal_language_core::util::split_once_escaped;
 ///
 /// assert_eq!(split_once_escaped("a;b", ';'), Some(("a", "b")));
 /// assert_eq!(split_once_escaped("a\\b;c", ';'), Some(("a\\b", "c")));
@@ -92,7 +93,7 @@ pub fn split_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
 /// ```
 /// # use std::ops::Range;
 ///
-/// # use webgal_model::util::find_closing_delimiter;
+/// # use webgal_language_core::util::find_closing_delimiter;
 ///
 /// let s = "foo(bar(baz))";
 /// assert_eq!(find_closing_delimiter(s, '(', ')'), Some(3..13));
@@ -223,7 +224,7 @@ where
 /// ```
 /// # use std::ops::Range;
 ///
-/// # use webgal_model::util::span_of;
+/// # use webgal_language_core::util::span_of;
 ///
 /// let haystack = "Hello, world!";
 /// let needle = &haystack[7..12];

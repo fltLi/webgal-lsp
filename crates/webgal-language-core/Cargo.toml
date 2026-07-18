@@ -1,5 +1,5 @@
 [package]
-name = "webgal-model"
+name = "webgal-language-core"
 version = "0.1.0"
 edition.workspace = true
 readme.workspace = true

@@ -21,7 +21,7 @@ use tokio::{
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
 use tracing::{debug, error, info, warn};
-use webgal_model::resource::ResourceKind;
+use webgal_language_core::resource::ResourceKind;
 
 use crate::{
     encode::*,

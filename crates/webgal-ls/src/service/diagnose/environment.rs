@@ -3,7 +3,7 @@
 use std::{borrow::Borrow, ops};
 
 use path_tree::{Folder, canonicalize};
-use webgal_model::{
+use webgal_language_core::{
     element::{ChoiceSplit, ChoiceView},
     resource::FigureInfo,
     sentence::*,

@@ -21,7 +21,7 @@ highlight = [
 ] # LSP 语义高亮封装
 
 [dependencies]
-webgal-model = { workspace = true, features = ["serde"] }
+webgal-language-core = { workspace = true, features = ["serde"] }
 webgal-highlight = { workspace = true, optional = true }
 lsp-encode = { workspace = true, optional = true }
 

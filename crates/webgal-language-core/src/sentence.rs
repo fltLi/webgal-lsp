@@ -266,7 +266,7 @@ impl From<SentenceOutput> for Sentence {
 ///
 /// # Examples
 /// ```
-/// # use webgal_model::{dispatch_sentence, sentence::Sentence};
+/// # use webgal_language_core::{dispatch_sentence, sentence::Sentence};
 ///
 /// trait TypeName {
 ///     fn type_name(&self) -> &'static str;
@@ -280,10 +280,10 @@ impl From<SentenceOutput> for Sentence {
 ///
 /// let sentence = Sentence::from_str("hello?").sentence;
 ///
-/// assert_eq!(sentence.type_name(), "webgal_model::sentence::Sentence");
+/// assert_eq!(sentence.type_name(), "webgal_language_core::sentence::Sentence");
 /// assert_eq!(
 ///     dispatch_sentence!(sentence.type_name()),
-///     "webgal_model::sentence::statement::SaySentence",
+///     "webgal_language_core::sentence::statement::SaySentence",
 /// );
 /// ```
 #[macro_export]

@@ -15,7 +15,7 @@ count.path = "./crates/count"
 path-tree.path = "./crates/path-tree"
 json-complete.path = "./crates/json-complete"
 
-webgal-model.path = "./crates/webgal-model"
+webgal-language-core.path = "./crates/webgal-language-core"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"
 webgal-highlight.path = "./crates/webgal-highlight"
 lsp-encode.path = "./crates/lsp-encode"

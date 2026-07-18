@@ -2,7 +2,7 @@ use std::mem;
 
 use lsp_types::*;
 use rayon::prelude::*;
-use webgal_model::sentence::Scene;
+use webgal_language_core::sentence::Scene;
 
 pub fn offset_utf16_to_utf8(content: &str, offset: u32) -> u32 {
     let mut utf8_pos: usize = 0;

@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
-use webgal_model::sentence::Scene;
+use webgal_language_core::sentence::Scene;
 
 pub fn format_capability() -> OneOf<bool, DocumentFormattingOptions> {
     OneOf::Left(true)

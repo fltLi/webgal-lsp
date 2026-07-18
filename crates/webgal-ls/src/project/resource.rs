@@ -3,7 +3,7 @@
 use std::result;
 
 use path_tree::{Folder, Node};
-use webgal_model::{
+use webgal_language_core::{
     resource::{FigureInfo, FigureKind, Live2dModel, WmdlModel},
     sentence::Scene,
 };

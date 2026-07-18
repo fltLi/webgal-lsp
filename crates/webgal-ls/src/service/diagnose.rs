@@ -2,7 +2,7 @@ use std::ops;
 
 use rayon::prelude::*;
 use tower_lsp::lsp_types::*;
-use webgal_model::sentence::*;
+use webgal_language_core::sentence::*;
 
 use crate::{
     project::Project,

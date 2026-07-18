@@ -2,7 +2,7 @@
 use lsp_types::SemanticToken;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
-use webgal_model::sentence::SentenceInfo;
+use webgal_language_core::sentence::SentenceInfo;
 
 /// 解析场景, 以 [`JsValue`] 格式返回数据结构
 #[wasm_bindgen]
@@ -40,7 +40,7 @@ pub fn highlight_token_types() -> Vec<String> {
 pub fn highlight_scene(text: &str) -> Result<JsValue, JsValue> {
     use lsp_encode::highlights_utf8_to_utf16;
     use webgal_highlight::highlight;
-    use webgal_model::sentence::Scene;
+    use webgal_language_core::sentence::Scene;
 
     let scene = Scene::from_str(text);
     let mut tokens = highlight(&scene);

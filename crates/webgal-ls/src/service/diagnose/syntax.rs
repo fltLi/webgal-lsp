@@ -1,10 +1,10 @@
 //! 单语句基础语法和独立语义检查
 
-use webgal_model::sentence::{self, PrimarySentence, SentenceInfo};
+use webgal_language_core::sentence::{self, PrimarySentence, SentenceInfo};
 
 use crate::service::diagnose::{DiagnosticLevel, PrimaryDiagnostic};
 
-/// 将 [`webgal_model::sentence::Sentence`] 解析产生的错误转换为诊断信息
+/// 将 [`webgal_language_core::sentence::Sentence`] 解析产生的错误转换为诊断信息
 pub fn diagnose_sentence_error(
     primary: &PrimarySentence,
     error: &sentence::Error,

@@ -10,7 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-webgal-model.workspace = true
+webgal-language-core.workspace = true
 
 rayon.workspace = true
 

@@ -1,7 +1,7 @@
 //! 全场景符号收集与维护
 
 use count::HashCounter;
-use webgal_model::sentence::*;
+use webgal_language_core::sentence::*;
 
 /// 场景符号表
 ///

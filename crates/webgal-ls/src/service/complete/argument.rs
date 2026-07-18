@@ -5,7 +5,7 @@ use json_complete::{ToJsonSchema, Value};
 use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
 use tower_lsp::lsp_types::*;
-use webgal_model::{
+use webgal_language_core::{
     dispatch_sentence,
     element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},
     resource::{FigureInfo, FigureKind},
@@ -19,7 +19,7 @@ use crate::{
 
 /// 语句的代码补全服务
 ///
-/// 为 [`webgal_model::sentence::Sentence`] 枚举项及其自身实现.
+/// 为 [`webgal_language_core::sentence::Sentence`] 枚举项及其自身实现.
 pub trait Complete {
     /// 补全主参数
     #[allow(unused_variables)]

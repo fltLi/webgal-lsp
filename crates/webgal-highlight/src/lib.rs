@@ -2,7 +2,7 @@ use std::ops;
 
 use lsp_types::*;
 use rayon::prelude::*;
-use webgal_model::{
+use webgal_language_core::{
     element::TokenSplit,
     sentence::{Scene, Sentence, SentenceInfo},
     util::{span_of, split_once_escaped},

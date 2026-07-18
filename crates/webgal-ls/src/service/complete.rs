@@ -1,7 +1,7 @@
 use std::ops;
 
 use tower_lsp::lsp_types::*;
-use webgal_model::sentence::{PrimarySentence, Scene, SentenceInfo};
+use webgal_language_core::sentence::{PrimarySentence, Scene, SentenceInfo};
 
 use crate::{
     project::Project,

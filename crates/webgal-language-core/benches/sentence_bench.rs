@@ -4,7 +4,7 @@ use std::{hint::black_box, time::Duration};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use webgal_model::sentence::{FromPrimary, PrimarySentence, Sentence};
+use webgal_language_core::sentence::{FromPrimary, PrimarySentence, Sentence};
 
 // -------- data --------
 

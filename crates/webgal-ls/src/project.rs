@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use getset::Getters;
 use path_tree::{Entry, Folder, Node, canonicalize, join};
 use tokio::{runtime::Handle, task::spawn_blocking};
-use webgal_model::{
+use webgal_language_core::{
     resource::{Config, RESOURCE_ROOTS, ResourceInfo, ResourceKind},
     sentence::Scene,
 };

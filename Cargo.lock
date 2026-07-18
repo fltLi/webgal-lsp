@@ -992,7 +992,7 @@ version = "0.1.0"
 dependencies = [
  "lsp-types",
  "rayon",
- "webgal-model",
+ "webgal-language-core",
 ]
 
 [[package]]
@@ -2140,7 +2140,27 @@ version = "0.1.0"
 dependencies = [
  "lsp-types",
  "rayon",
- "webgal-model",
+ "webgal-language-core",
+]
+
+[[package]]
+name = "webgal-language-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "derive_more",
+ "json-complete",
+ "ouroboros",
+ "path-tree",
+ "rand 0.10.1",
+ "rayon",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
+ "webgal-sentence-macro",
 ]
 
 [[package]]
@@ -2171,27 +2191,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webgal-highlight",
- "webgal-model",
-]
-
-[[package]]
-name = "webgal-model"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "criterion",
- "derive_more",
- "json-complete",
- "ouroboros",
- "path-tree",
- "rand 0.10.1",
- "rayon",
- "serde",
- "serde_json",
- "serde_with",
- "strum",
- "thiserror",
- "webgal-sentence-macro",
+ "webgal-language-core",
 ]
 
 [[package]]
@@ -2204,7 +2204,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "wasm-bindgen",
  "webgal-highlight",
- "webgal-model",
+ "webgal-language-core",
 ]
 
 [[package]]

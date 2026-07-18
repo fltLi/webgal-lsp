@@ -1,7 +1,7 @@
 use std::result;
 
 use thiserror::Error;
-use webgal_model::resource::ResourceKind;
+use webgal_language_core::resource::ResourceKind;
 
 /// 项目管理返回类型
 pub type Result<T> = result::Result<T, Error>;
