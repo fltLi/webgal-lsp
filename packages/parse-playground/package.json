@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "cd ../../crates/webgal-parse-wasm && wasm-pack build --target web --no-opt",
+    "build:wasm": "cd ../../crates/webgal-parse-wasm && wasm-pack build --target web",
     "dev": "vite",
     "build": "npm run build:wasm && tsc && vite build",
     "preview": "vite preview"
