@@ -110,26 +110,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!wasm) {
-      return;
+    if (!wasm) return;
+
+    wasm.updateScene(text);
+    const parseTime = wasm.getLastParseTime();
+    if (parseTime !== null) {
+      setElapsedMs(`${parseTime.toFixed(1)} ms`);
     }
 
     const timer = window.setTimeout(() => {
-      const start = performance.now();
       try {
-        const parsed = wasm.parse_scene(text) as unknown;
-        const elapsed = performance.now() - start;
-        setData(parsed);
-        setLineRanges(buildLineRanges(parsed));
-        setElapsedMs(`${elapsed.toFixed(1)} ms`);
+        const sentences = wasm.getSentences();
+        setData(sentences);
+        setLineRanges(buildLineRanges(sentences));
         setError(null);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
         setData(null);
         setLineRanges([]);
-        setLineRange(null);
-        setElapsedMs('--');
       }
     }, 300);
 
@@ -177,7 +176,28 @@ export function App() {
   return (
     <div style={layoutStyle}>
       <div style={{ height: '48px', background: '#2d2d30', borderBottom: '1px solid #3c3c3c', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 1rem' }}>
-        <div style={{ fontWeight: 700 }}>WebGAL Parse Playground</div>
+        <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          WebGAL Parse Playground
+          <span
+            className="info-icon"
+            data-tooltip="此 Playground 仅提供高亮和诊断功能，补全和格式化已禁用。"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '18px',
+              height: '18px',
+              borderRadius: '50%',
+              border: '1px solid #888',
+              color: '#888',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              cursor: 'help',
+            }}
+          >
+            i
+          </span>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button onClick={() => setIsSyncEnabled((value) => !value)} style={{ border: '1px solid #3c3c3c', background: isSyncEnabled ? '#0e639c' : '#3c3c3c', color: '#f5f5f5', padding: '0.35rem 0.75rem', borderRadius: '4px', cursor: 'pointer' }}>
             {isSyncEnabled ? '同步：开' : '同步：关'}

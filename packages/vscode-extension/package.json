@@ -1,5 +1,5 @@
 {
-  "name": "vscode-webgal",
+  "name": "webgal-vscode-extension",
   "displayName": "WebGAL Language Support (Dev)",
   "description": "Language server for WebGAL scenario files (development only)",
   "version": "0.1.0",
@@ -22,7 +22,7 @@
       "type": "object",
       "title": "WebGAL Language Server",
       "properties": {
-        "webgal-ls.trace.server": {
+        "webgal-language-server.trace.server": {
           "type": "string",
           "scope": "window",
           "enum": ["off", "messages", "verbose"],

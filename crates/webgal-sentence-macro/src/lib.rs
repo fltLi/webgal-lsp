@@ -21,8 +21,8 @@ mod info;
 /// * [`FromPrimary`] - 支持从初级语句反序列化.
 /// * [`Display`] - 支持序列化为语句字符串.
 ///
-/// 此宏依赖 crate `webgal-model`,
-/// 并由其重新导出至 [`webgal_model::sentence::Sentence`].
+/// 此宏依赖 crate `webgal-language-core`,
+/// 并由其重新导出至 [`webgal_language_core::sentence::Sentence`].
 ///
 /// # Attributes
 /// 此宏通过 `#[sentence(...)]` 接收下列选项:

@@ -15,16 +15,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: webgal-ls-linux-x86_64
+            artifact: webgal-language-server-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: webgal-ls-windows-x86_64.exe
+            artifact: webgal-language-server-windows-x86_64.exe
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: webgal-ls-macos-x86_64
+            artifact: webgal-language-server-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: webgal-ls-macos-aarch64
+            artifact: webgal-language-server-macos-aarch64
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +36,14 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - run: cargo build -p webgal-ls --target ${{ matrix.target }} --release
+      - run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
 
       - name: Package binary
         shell: bash
         run: |
-          BIN_NAME="webgal-ls"
+          BIN_NAME="webgal-language-server"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            BIN_NAME="webgal-ls.exe"
+            BIN_NAME="webgal-language-server.exe"
           fi
           SRC="target/${{ matrix.target }}/release/${BIN_NAME}"
 

@@ -28,7 +28,7 @@
             ],
             "preLaunchTask": "build:extension",
             "env": {
-                "SERVER_PATH": "${workspaceFolder}/target/debug/webgal-ls.exe"
+                "SERVER_PATH": "${workspaceFolder}/target/debug/webgal-language-server.exe"
             }
         }
     ]

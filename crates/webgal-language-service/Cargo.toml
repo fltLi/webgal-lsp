@@ -1,0 +1,45 @@
+[package]
+name = "webgal-language-service"
+version = "0.1.0"
+edition.workspace = true
+readme.workspace = true
+description = "WebGAL 语言服务"
+
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+count = { workspace = true, features = ["hash"] }
+path-tree.workspace = true
+json-complete = { workspace = true, features = ["lsp"] }
+
+webgal-language-core.workspace = true
+
+anyhow.workspace = true
+thiserror.workspace = true
+
+getset.workspace = true
+serde_json.workspace = true
+
+once_cell.workspace = true
+rayon.workspace = true
+
+lsp-types.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+webgal-language-core = { workspace = true, features = ["serde"] }
+
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = ["-O1", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

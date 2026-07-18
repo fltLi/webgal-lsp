@@ -1,6 +1,6 @@
 # 自动补全
 
-`webgal-ls` 提供了对 WebGAL 脚本丰富的自动补全功能。
+`webgal-language-service` 提供了对 WebGAL 脚本丰富的自动补全功能。
 
 ## 触发
 
@@ -10,7 +10,7 @@
 command:content -name -name=value; comment
 ```
 
-下面简单介绍处于不同位置输入时 `webgal-ls` 的补全方案。
+下面简单介绍处于不同位置输入时 `webgal-language-service` 的补全方案。
 
 ### 语句类型
 
@@ -23,7 +23,7 @@ command:content -name -name=value; comment
    对于不需要参数的语句，将直接生成 `command;|`，即跳到语句末尾。
 
 2. **展开语句模板**  
-   `webgal-ls` 内置了一些方便的语句模板，通常以 `command.feature` 的形式显示。  
+   `webgal-language-service` 内置了一些方便的语句模板，通常以 `command.feature` 的形式显示。  
    选择模板后，将展开模板对应的补全。
 
    例如：`changeFigure.motion` -> `changeFigure:| -id=| -motion=| -next|;`。
@@ -48,11 +48,11 @@ command:content -name -name=value; comment
 
 ### 主参数 / 参数值
 
-主参数 / 参数值是 `webgal-ls` 的一大亮点，具体请看[类型](#类型)章节。
+主参数 / 参数值是 `webgal-language-service` 的一大亮点，具体请看[类型](#类型)章节。
 
 ## 类型
 
-对于不同类型的主参数和参数值，`webgal-ls` 也提供了相关的补全功能。
+对于不同类型的主参数和参数值，`webgal-language-service` 也提供了相关的补全功能。
 
 ### 枚举
 
