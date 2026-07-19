@@ -57,7 +57,7 @@ fn diagnose_resource<F>(
             diagnose(PrimaryDiagnostic {
                 span,
                 code: "WG007",
-                level: DiagnosticLevel::Warning,
+                level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别语音: {vocal}"),
             });
         }
@@ -80,7 +80,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span: primary.get_span(content),
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别背景: {background}"),
                 })
             }
@@ -92,7 +92,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
                 })
             }
@@ -103,7 +103,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
                 })
             }
@@ -176,7 +176,7 @@ fn diagnose_resource<F>(
                             diagnose(PrimaryDiagnostic {
                                 span: primary.get_span(content),
                                 code: "WG007",
-                                level: DiagnosticLevel::Warning,
+                                level: DiagnosticLevel::Error,
                                 message: format!("找不到或无法识别立绘: {figure}"),
                             })
                         }
@@ -192,7 +192,7 @@ fn diagnose_resource<F>(
                     diagnose(PrimaryDiagnostic {
                         span,
                         code: "WG007",
-                        level: DiagnosticLevel::Warning,
+                        level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别立绘动作: {motion}"),
                     })
                 }
@@ -204,7 +204,7 @@ fn diagnose_resource<F>(
                     diagnose(PrimaryDiagnostic {
                         span,
                         code: "WG007",
-                        level: DiagnosticLevel::Warning,
+                        level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别 Live2D 表情: {expression}"),
                     })
                 }
@@ -217,7 +217,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
                 })
             }
@@ -228,7 +228,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
                 })
             }
@@ -259,7 +259,7 @@ fn diagnose_resource<F>(
             diagnose(PrimaryDiagnostic {
                 span: primary.get_span(content),
                 code: "WG007",
-                level: DiagnosticLevel::Warning,
+                level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别动画: {animation}"),
             });
         }
@@ -271,7 +271,7 @@ fn diagnose_resource<F>(
             diagnose(PrimaryDiagnostic {
                 span: primary.get_span(content),
                 code: "WG007",
-                level: DiagnosticLevel::Warning,
+                level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别复杂动画: {animation}"),
             })
         }
@@ -284,7 +284,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
                 })
             }
@@ -295,7 +295,7 @@ fn diagnose_resource<F>(
                 diagnose(PrimaryDiagnostic {
                     span,
                     code: "WG007",
-                    level: DiagnosticLevel::Warning,
+                    level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
                 })
             }
@@ -342,7 +342,7 @@ fn diagnose_resource<F>(
                     diagnose(PrimaryDiagnostic {
                         span: primary.get_span(target),
                         code: "WG007",
-                        level: DiagnosticLevel::Warning,
+                        level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别场景选项: {target}"),
                     })
                 });
@@ -375,7 +375,7 @@ fn diagnose_content_resource<T>(
         Some(PrimaryDiagnostic {
             span: primary.get_span(content),
             code: "WG007",
-            level: DiagnosticLevel::Warning,
+            level: DiagnosticLevel::Error,
             message: format!("找不到或无法识别{description}: {path}"),
         })
     } else {
@@ -400,7 +400,7 @@ where
         Some(PrimaryDiagnostic {
             span,
             code: "WG007",
-            level: DiagnosticLevel::Warning,
+            level: DiagnosticLevel::Error,
             message: format!("找不到或无法识别{description}: {path}"),
         })
     } else {
