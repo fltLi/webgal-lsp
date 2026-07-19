@@ -12,6 +12,7 @@ pub enum SentenceAttr {
     Forward(Option<Path>),
     Obsolete(Vec<(String, String)>),
     Content,
+    Condition,
     Rename(String),
     Default,
     SerializeWith(Path),
@@ -60,6 +61,7 @@ impl Parse for SentenceAttr {
                 ))
             }
             "content" => Ok(Self::Content),
+            "condition" => Ok(Self::Condition),
             "rename" => {
                 input.parse::<Token![=]>()?;
                 Ok(Self::Rename(input.parse::<LitStr>()?.value()))

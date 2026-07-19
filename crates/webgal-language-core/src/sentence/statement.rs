@@ -57,6 +57,7 @@ pub struct ChangeBackgroundSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -112,6 +113,7 @@ pub struct ChangeFigureSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -137,6 +139,7 @@ pub struct BgmSentence {
     #[sentence(require = ["unlockname"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -157,6 +160,7 @@ pub struct PlayVideoSentence {
     // 控制
     #[sentence(rename = "skipOff")]
     pub skip_off: bool,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -178,6 +182,7 @@ pub struct PlayEffectSentence {
     // 效果
     pub volume: Option<u32>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -199,6 +204,7 @@ pub struct SetAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -217,6 +223,7 @@ pub struct SetComplexAnimationSentence {
     pub duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -239,6 +246,7 @@ pub struct SetTransformSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -258,6 +266,7 @@ pub struct SetTempAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -277,6 +286,7 @@ pub struct SetTransitionSentence {
     pub enter: Option<String>,
     pub exit: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -297,6 +307,7 @@ pub struct PixiPerformSentence {
     #[sentence(content)]
     pub effect: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -313,6 +324,7 @@ pub struct PixiPerformSentence {
 )]
 pub struct PixiInitSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -356,6 +368,7 @@ pub struct IntroSentence {
     pub hold: bool,
     #[sentence(rename = "userForward")]
     pub user_forward: bool,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -374,6 +387,7 @@ pub struct MiniAvatarSentence {
     #[sentence(content)]
     pub avatar: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -392,6 +406,7 @@ pub struct SetTextboxSentence {
     #[sentence(content, serialize_with = display_show, deserialize_with = parse_show)]
     pub show: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -410,6 +425,7 @@ pub struct FilmModeSentence {
     #[sentence(content, serialize_with = display_enable, deserialize_with = parse_enable)]
     pub enable: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -430,6 +446,7 @@ pub struct CallSceneSentence {
     #[sentence(content)]
     pub scene: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -448,6 +465,7 @@ pub struct ChangeSceneSentence {
     #[sentence(content)]
     pub scene: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -469,6 +487,7 @@ pub struct ChooseSentence {
     // 控制
     #[sentence(rename = "defaultChoice")]
     pub default_choice: Option<u8>,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -487,6 +506,7 @@ pub struct LabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -505,6 +525,7 @@ pub struct JumpLabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -529,6 +550,7 @@ pub struct UnlockCgSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -551,6 +573,7 @@ pub struct UnlockBgmSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -585,6 +608,7 @@ pub struct GetUserInputSentence {
     #[sentence(rename = "ruleButtonText", require = ["rule"])]
     pub rule_button_text: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -604,6 +628,7 @@ pub struct SetVarSentence {
     pub expression: String,
     pub global: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -620,6 +645,7 @@ pub struct SetVarSentence {
 )]
 pub struct ShowVarsSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -638,6 +664,7 @@ pub struct WaitSentence {
     #[sentence(content)]
     pub duration: u32,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -660,6 +687,7 @@ pub struct ApplyStyleSentence {
     )]
     pub applications: Vec<(String, String)>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -678,6 +706,7 @@ pub struct CallSteamSentence {
     #[sentence(rename = "achivementId")]
     pub achivement_id: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -694,6 +723,7 @@ pub struct CallSteamSentence {
 )]
 pub struct EndSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -836,6 +866,10 @@ impl SentenceExt for SaySentence {
         } else {
             Forward::Wait
         }
+    }
+
+    fn condition(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 }
 

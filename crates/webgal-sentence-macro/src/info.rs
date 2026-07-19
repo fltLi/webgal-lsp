@@ -12,6 +12,7 @@ pub struct SentenceInfo {
     pub forward: Either<Path, Ident>,
     pub obsolete: Vec<(String, String)>,
     pub content: Option<FieldInfo>,
+    pub condition: Option<Ident>,
     pub arguments: Vec<ArgumentInfo>,
 }
 
@@ -45,7 +46,8 @@ impl SentenceInfo {
     pub fn from_ast(ident: Ident, attrs: &[Attribute], fields: &FieldsNamed) -> Result<Self> {
         let (command, validate, obsolete) = collect_struct(attrs)?;
         let forward = collect_forward(attrs, fields)?;
-        let (content, arguments) = collect_arguments(fields)?;
+        let (content, condition, arguments) = collect_arguments(fields)?;
+
         Ok(Self {
             ident,
             command,
@@ -53,6 +55,7 @@ impl SentenceInfo {
             forward,
             obsolete,
             content,
+            condition,
             arguments,
         })
     }
@@ -157,31 +160,46 @@ fn collect_forward(attrs: &[Attribute], fields: &FieldsNamed) -> Result<Either<P
     })
 }
 
-fn collect_arguments(fields: &FieldsNamed) -> Result<(Option<FieldInfo>, Vec<ArgumentInfo>)> {
+fn collect_arguments(
+    fields: &FieldsNamed,
+) -> Result<(Option<FieldInfo>, Option<Ident>, Vec<ArgumentInfo>)> {
     let mut content = None;
+    let mut condition = None;
     let mut arguments = Vec::new();
 
     for field in &fields.named {
+        let make_error = |msg| Err(Error::new(field.span(), msg));
+
         match FieldRole::from_field(field)? {
             FieldRole::Content(info) => {
                 if content.is_some() {
-                    return Err(Error::new(
-                        field.span(),
-                        "语句结构体只能有一个 `content` 字段",
-                    ));
+                    return make_error("语句结构体只能有一个 `content` 字段");
                 }
                 content = Some(info);
             }
-            FieldRole::Argument(info) => arguments.push(info),
+
+            FieldRole::Argument { info, is_condition } => {
+                if is_condition {
+                    if condition.is_some() {
+                        return make_error("语句结构体只能有一个 `condition` 字段");
+                    }
+                    condition = Some(info.ident.clone());
+                }
+
+                arguments.push(info);
+            }
         }
     }
 
-    Ok((content, arguments))
+    Ok((content, condition, arguments))
 }
 
 enum FieldRole {
     Content(FieldInfo),
-    Argument(ArgumentInfo),
+    Argument {
+        info: ArgumentInfo,
+        is_condition: bool,
+    },
 }
 
 impl FieldRole {
@@ -190,6 +208,7 @@ impl FieldRole {
         let ty = field.ty.clone();
 
         let mut is_content = false;
+        let mut is_condition = false;
         let mut name = None;
         let mut default = false;
         let mut serialize_with = None;
@@ -214,6 +233,16 @@ impl FieldRole {
                             return make_error("字段不能同时为 `content` 和 `argument`");
                         }
                         is_content = true;
+                    }
+
+                    SentenceAttr::Condition => {
+                        if is_content {
+                            return make_error("字段不能同时为 `content` 和 `condition`");
+                        }
+                        if is_condition {
+                            return make_error("重复的 `condition` 属性");
+                        }
+                        is_condition = true;
                     }
 
                     SentenceAttr::Rename(rename) => {
@@ -303,11 +332,14 @@ impl FieldRole {
             },
         };
 
-        Ok(Self::Argument(ArgumentInfo {
-            ident,
-            ty,
-            kind,
-            requires,
-        }))
+        Ok(Self::Argument {
+            info: ArgumentInfo {
+                ident,
+                ty,
+                kind,
+                requires,
+            },
+            is_condition,
+        })
     }
 }
