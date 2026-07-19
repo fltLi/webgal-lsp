@@ -109,14 +109,16 @@ impl Backend {
             };
 
             for DirEntry { name, is_directory } in children {
-                let path = join(&root, name);
+                let path = join(&root, &name);
                 if is_directory {
                     stack.push(path);
                     continue;
                 }
 
                 // 执行更改
-                if let Err(error) = self.change_file(&path, FileChangeKind::Create).await {
+                if name == "config.txt"
+                    && let Err(error) = self.change_file(&path, FileChangeKind::Create).await
+                {
                     errors.push(error);
                 }
             }
