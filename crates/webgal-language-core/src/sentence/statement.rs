@@ -797,7 +797,7 @@ impl IntroSentence {
 impl ChooseSentence {
     pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(default_choice) = self.default_choice
-            && !(1..self.choices.len()).contains(&(default_choice as usize))
+            && !(1..=self.choices.len()).contains(&(default_choice as usize))
             && let Some((index, _)) = primary.get_argument("defaultChoice")
         {
             errors.push(Error::ArgumentType(
