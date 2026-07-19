@@ -76,7 +76,6 @@ impl Project {
                 let scene = Scene::from_str(content);
 
                 // 更新符号
-                self.ident.insert_scene(&scene);
                 if let Entry::Occupied(o) = &entry {
                     self.ident.remove_scene(
                         o.get()
@@ -84,6 +83,7 @@ impl Project {
                             .expect("场景条目已在 [`try_entry_of`] 校验"),
                     );
                 }
+                self.ident.insert_scene(&scene);
 
                 // 插入场景
                 entry.insert_entry(Node::Item(scene));
