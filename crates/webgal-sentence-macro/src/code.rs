@@ -467,7 +467,7 @@ fn gen_argument_display(argument: &ArgumentInfo, no_content: bool) -> TokenStrea
             serialize_with: Some(serialize_with),
             ..
         } => quote! {
-            if self.#ident != Default::default() {
+            if self.#ident != <#ty>::default() {
                 #no_content_check
                 write!(f, " -{}=", #name)?;
                 #serialize_with(&self.#ident, f)?;

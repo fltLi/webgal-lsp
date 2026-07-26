@@ -55,7 +55,7 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
     let has_error_or_warning = diagnostics
         .iter()
         .flat_map(|(_, diagnostics)| diagnostics)
-        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Information);
+        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Info);
 
     // 正式推送诊断
     diagnostics
@@ -66,7 +66,7 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
                 .filter_map(|diagnostic| {
                     // 含高于 info 级别诊断时, 过滤 info 级别诊断
                     let reserve =
-                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Information;
+                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Info;
                     reserve.then(|| diagnostic.into_diagnostic(line))
                 })
                 .collect::<Vec<_>>()
@@ -146,7 +146,7 @@ impl PrimaryDiagnostic {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DiagnosticLevel {
-    Information,
+    Info,
     Warning,
     Error,
 }
@@ -156,7 +156,7 @@ impl From<DiagnosticLevel> for DiagnosticSeverity {
         match value {
             DiagnosticLevel::Error => Self::ERROR,
             DiagnosticLevel::Warning => Self::WARNING,
-            DiagnosticLevel::Information => Self::INFORMATION,
+            DiagnosticLevel::Info => Self::INFORMATION,
         }
     }
 }

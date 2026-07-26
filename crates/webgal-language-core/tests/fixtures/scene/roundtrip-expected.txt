@@ -6,14 +6,14 @@ changeFigure:ext/爱音复古棕色风衣/037_school_winter-2023.model.json -rig
 ; -------- start.txt --------
 ; 自动播放速度: 18
 wait:5000;
-intro:永生者长崎素世和穿越者千早爱音|原作: LOFTER @断红尘 -fontSize=medium -fontColor=rgba(255,255,255,1) -backgroundColor=rgba(0,0,0,1) -delayTime=1600 -hold;
+intro:永生者长崎素世和穿越者千早爱音|原作: LOFTER @断红尘 -fontSize=medium -fontColor=rgba(255, 255, 255, 1) -backgroundColor=rgba(0, 0, 0, 1) -delayTime=1600 -hold;
 wait:600;
 callScene:1.txt;
 wait:1600;
 callScene:2.txt;
 wait:2000;
 callScene:3.txt;
-intro:END -fontSize=medium -fontColor=rgba(255,255,255,1) -backgroundColor=rgba(0,0,0,1) -delayTime=3000 -hold;
+intro:END -fontSize=medium -fontColor=rgba(255, 255, 255, 1) -backgroundColor=rgba(0, 0, 0, 1) -delayTime=3000 -hold;
 ; -------- 1.txt --------
 bgm:ext/夢の歩みを見上げて.flac;
 :千早爱音死了。;

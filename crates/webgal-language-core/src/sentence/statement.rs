@@ -1,5 +1,9 @@
-use std::fmt::{self, Write};
+use std::{
+    borrow::Cow,
+    fmt::{self, Write},
+};
 
+use regex::Regex;
 #[cfg(feature = "serde")]
 use serde::Serialize;
 use webgal_sentence_macro::Sentence;
@@ -584,6 +588,7 @@ pub struct UnlockBgmSentence {
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "getUserInput",
+    validate = Self::validate,
     forward = Continue,
     obsolete = {
         "next": "控制的演出时序无意义",
@@ -610,6 +615,13 @@ pub struct GetUserInputSentence {
     // 控制
     #[sentence(condition)]
     pub when: Option<String>,
+    #[sentence(
+        rename = "lintValues",
+        default,
+        serialize_with = display_lint_values,
+        deserialize_with = parse_lint_values,
+    )]
+    pub lint_values: Vec<String>,
 }
 
 /// 设置变量语句
@@ -624,8 +636,12 @@ pub struct GetUserInputSentence {
     }
 )]
 pub struct SetVarSentence {
-    #[sentence(content)]
-    pub expression: String,
+    #[sentence(
+        content,
+        serialize_with = display_set_variable,
+        deserialize_with = parse_set_variable,
+    )]
+    pub expression: (String, String),
     pub global: bool,
     // 控制
     #[sentence(condition)]
@@ -837,6 +853,63 @@ impl ChooseSentence {
                     self.choices.len()
                 ),
             ));
+        }
+    }
+}
+
+impl GetUserInputSentence {
+    /// 校验用户输入是否正确
+    pub fn validate_input(&self, input: &str) -> Option<anyhow::Error> {
+        let rule = self.rule.as_ref()?; // 没有 rule 则跳过
+        let rule_flag = self.rule_flag.as_deref().unwrap_or("");
+
+        // 将 JavaScript 风格的正则标志转换为 Rust 内联标志
+        let flags: String = ['i', 'm', 's']
+            .iter()
+            .filter(|flag| rule_flag.contains(**flag))
+            .collect();
+
+        let pattern = if flags.is_empty() {
+            Cow::Borrowed(rule)
+        } else {
+            Cow::Owned(format!("(?{flags}){rule}"))
+        };
+
+        // 编译正则, 若失败则返回错误
+        let regex = match Regex::new(&pattern) {
+            Ok(v) => v,
+            Err(error) => return Some(anyhow::anyhow!("无效的正则表达式: {error}")),
+        };
+
+        if regex.is_match(input) {
+            None
+        } else {
+            Some(anyhow::anyhow!("输入值 `{input}` 不符合规则 `{rule}`"))
+        }
+    }
+
+    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+        // 校验默认值
+        if let Some(value) = &self.default_value
+            && let Some(error) = self.validate_input(value)
+            && let Some((index, _)) = primary.get_argument("defaultValue")
+        {
+            errors.push(Error::ArgumentType(
+                index,
+                anyhow::anyhow!("默认值未通过校验: {error}"),
+            ));
+        }
+
+        // 校验静态分析代入值
+        for (i, value) in self.lint_values.iter().enumerate() {
+            if let Some(error) = self.validate_input(value)
+                && let Some((index, _)) = primary.get_argument("lintValues")
+            {
+                errors.push(Error::ArgumentType(
+                    index,
+                    anyhow::anyhow!("第 {} 个静态分析代入值未通过校验: {error}", i + 1),
+                ));
+            }
         }
     }
 }
@@ -1120,6 +1193,36 @@ fn parse_choices(choices: &str) -> (Vec<Choice>, Option<anyhow::Error>) {
 
 fn display_choices(choices: &[Choice], f: &mut fmt::Formatter) -> fmt::Result {
     write_joined(f, choices.iter(), "|")
+}
+
+fn parse_lint_values(values: &str) -> (Vec<String>, Option<anyhow::Error>) {
+    match serde_json::from_str(values) {
+        Ok(values) => (values, None),
+        Err(error) => (Vec::default(), Some(error.into())),
+    }
+}
+
+fn display_lint_values(values: &[String], f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{values:?}")
+}
+
+fn parse_set_variable(expression: &str) -> ((String, String), Option<anyhow::Error>) {
+    match expression.split_once('=') {
+        Some((variable, expression)) => ((variable.to_string(), expression.to_string()), None),
+        None => (
+            Default::default(),
+            Some(anyhow::anyhow!(
+                "变量设置语句应为 `variable=expression` 的格式"
+            )),
+        ),
+    }
+}
+
+fn display_set_variable(
+    (variable, expression): &(String, String),
+    f: &mut fmt::Formatter,
+) -> fmt::Result {
+    write!(f, "{variable}={expression}")
 }
 
 fn parse_style_applications(applications: &str) -> (Vec<(String, String)>, Option<anyhow::Error>) {
@@ -1569,6 +1672,28 @@ mod tests {
                 .errors
                 .iter()
                 .any(|e| matches!(e, Error::ArgumentObsolete(_, _)))
+        );
+    }
+
+    #[test]
+    fn get_user_input_validate_default_value_ok() {
+        // 匹配规则 (带大小写不敏感标志)
+        let s = "getUserInput:name -defaultValue=Tom -rule=^tom$ -ruleFlag=i;";
+        let output = Sentence::from_str(s);
+        assert!(output.errors.is_empty(), "应有错误: {:?}", output.errors);
+    }
+
+    #[test]
+    fn get_user_input_validate_default_value_err() {
+        // 不匹配规则 (数字规则, 字母输入)
+        let s = "getUserInput:age -defaultValue=12a -rule=^\\d+$;";
+        let output = Sentence::from_str(s);
+        assert!(!output.errors.is_empty());
+        assert!(
+            output
+                .errors
+                .iter()
+                .any(|e| matches!(e, Error::ArgumentType(_, _)))
         );
     }
 }

@@ -30,6 +30,7 @@ serde_with.workspace = true
 serde_json.workspace = true
 
 rayon.workspace = true
+regex = "1.13"
 
 [dev-dependencies]
 rand.workspace = true

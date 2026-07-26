@@ -209,7 +209,7 @@ impl Color {
         let Self {
             red, green, blue, ..
         } = self;
-        write!(f, "rgb({red},{green},{blue})")
+        write!(f, "rgb({red}, {green}, {blue})")
     }
 
     pub fn fmt_css_rgba<W: fmt::Write>(&self, f: &mut W) -> fmt::Result {
@@ -219,7 +219,7 @@ impl Color {
             blue,
             alpha,
         } = self;
-        write!(f, "rgba({red},{green},{blue},{alpha})")
+        write!(f, "rgba({red}, {green}, {blue}, {alpha})")
     }
 }
 
@@ -242,7 +242,7 @@ impl FromStr for Color {
             .or_else(|| Self::from_str_rgb(s))
             .or_else(|| Self::from_str_rgba(s))
             .ok_or(concat!(
-                "`Color` 应为 `#RRGGBB` / `rgb(R,G,B)` / `rgba(R,G,B,A)` 的格式, ",
+                "`Color` 应为 `#RRGGBB` / `rgb(R, G, B)` / `rgba(R, G, B, A)` 的格式, ",
                 "颜色在 [0..256) 间, 透明度在 [0,1] 间"
             ))
     }
@@ -276,7 +276,7 @@ impl FromStr for Live2dBounds {
                 south,
             })
         })()
-        .ok_or("`Live2dBounds` 应为 `i32,i32,i32,i32` 的格式")
+        .ok_or("`Live2dBounds` 应为 `i32, i32, i32, i32` 的格式")
     }
 }
 
@@ -288,7 +288,7 @@ impl fmt::Display for Live2dBounds {
             east,
             south,
         } = self;
-        write!(f, "{west},{north},{east},{south}")
+        write!(f, "{west}, {north}, {east}, {south}")
     }
 }
 
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn color_roundtrip_rgb() {
-        let original = "rgb(12,34,56)";
+        let original = "rgb(12, 34, 56)";
         let color = Color::from_str(original).unwrap();
         let mut output = String::new();
         color.fmt_css_rgb(&mut output).unwrap();
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn color_roundtrip_rgba() {
-        let original = "rgba(10,20,30,0.75)";
+        let original = "rgba(10, 20, 30, 0.75)";
         let color = Color::from_str(original).unwrap();
         let mut output = String::new();
         color.fmt_css_rgba(&mut output).unwrap();
@@ -756,7 +756,7 @@ mod tests {
 
     #[test]
     fn live2d_bounds_roundtrip() {
-        let original = "10,-20,30,-40";
+        let original = "10, -20, 30, -40";
         let bounds = Live2dBounds::from_str(original).unwrap();
         let output = bounds.to_string();
         assert_eq!(output, original);
