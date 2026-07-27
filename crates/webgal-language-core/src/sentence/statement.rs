@@ -754,7 +754,7 @@ pub struct CommentSentence {} // 单元结构体暂时不可用
 // -------- 校验 --------
 
 impl ChangeBackgroundSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(transform) = &self.transform
             && let Err(error) = transform.validate()
             && let Some((index, _)) = primary.get_argument("transform")
@@ -765,7 +765,7 @@ impl ChangeBackgroundSentence {
 }
 
 impl ChangeFigureSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(transform) = &self.transform
             && let Err(error) = transform.validate()
             && let Some((index, _)) = primary.get_argument("transform")
@@ -811,7 +811,7 @@ impl ChangeFigureSentence {
 }
 
 impl SetTransformSentence {
-    pub fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Err(error) = self.transform.validate() {
             errors.push(Error::ContentType(error));
         }
@@ -819,7 +819,7 @@ impl SetTransformSentence {
 }
 
 impl SetTempAnimationSentence {
-    pub fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Err(error) = self.animation.validate() {
             errors.push(Error::ContentType(error));
         }
@@ -827,7 +827,7 @@ impl SetTempAnimationSentence {
 }
 
 impl IntroSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if self.background_color.is_some()
             && self.background_image.is_some()
             && let Some((index, _)) = primary.get_argument("backgroundColor")
@@ -841,7 +841,7 @@ impl IntroSentence {
 }
 
 impl ChooseSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(default_choice) = self.default_choice
             && !(1..=self.choices.len()).contains(&(default_choice as usize))
             && let Some((index, _)) = primary.get_argument("defaultChoice")
@@ -888,7 +888,7 @@ impl GetUserInputSentence {
         }
     }
 
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         // 校验默认值
         if let Some(value) = &self.default_value
             && let Some(error) = self.validate_input(value)

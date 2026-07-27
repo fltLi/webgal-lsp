@@ -42,15 +42,13 @@ impl<'a> PrimarySentence<'a> {
         let content = argument_split.next().unwrap();
 
         // 整理语句类型和主参数
-        let (command, content) =
-            if command.is_none() && !content.is_empty() && argument_split.peek().is_none() {
+        let (command, content) = match command {
+            None if !content.is_empty() && argument_split.peek().is_none() => {
                 (line, None) // 形如 `content ;` / `content `, 会被识别为对话
-            } else {
-                match command {
-                    Some(command) => (command, Some(content.trim())),
-                    None => (content, None),
-                }
-            };
+            }
+            Some(command) => (command, Some(content.trim())),
+            None => (content, None),
+        };
 
         // 收集参数
         let arguments: Vec<_> = argument_split
