@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use derive_more::{Deref, Into};
 use strum::Display;
 use thiserror::Error;
@@ -8,7 +6,7 @@ use thiserror::Error;
 
 /// 模拟执行诊断错误信息 (多场景)
 #[derive(Debug, Clone, Default, Into, Deref)]
-pub struct DiagnosticList(pub(crate) HashMap<String, Vec<Diagnostic>>);
+pub struct DiagnosticList(pub(crate) Vec<(String, Vec<Diagnostic>)>);
 
 /// 模拟执行诊断错误信息
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Error)]
@@ -38,26 +36,30 @@ pub enum DiagnosticKind {
     #[error("语句依赖的{0} `{1}` 未定义")]
     UndefinedSymbol(SymbolKind, String),
 
+    /// WG009
     #[error("内联表达式 `{0}` 执行错误: {1}")]
     ExpressionError(String, String),
 
-    /// WG009
+    /// WG010
     #[error("条件表达式 `{0}` 结果为常量 `{1}`")]
     ConstantCondition(String, String),
 
-    /// WG010
+    /// WG011
+    ///
+    /// # Notes
+    /// 为避免出错中断造成的误报, 仅当无其他类型错误时才提供此诊断.
     #[error("语句从未执行")]
     Unused,
 
-    /// WG011
+    /// WG012
     #[error("与上文重复的无意义执行效果: {0}")]
     RedundantEffect(String),
 
-    /// WG012
+    /// WG013
     #[error("连续执行块以 wait 语句结尾, 被迫打断")]
     WaitAtEndOfChain,
 
-    /// WG013
+    /// WG014
     #[error("模拟执行停止: {0}")]
     Stopped(#[from] StopReason),
 }
@@ -73,6 +75,9 @@ pub enum StopReason {
 
     #[error("用户输入语句缺少静态分析预设值或默认值")]
     MissingUserInputValue,
+
+    #[error("涉及随机数生成，模拟执行不支持该特性")]
+    RandomNumberInterrupt,
 }
 
 /// 符号种类

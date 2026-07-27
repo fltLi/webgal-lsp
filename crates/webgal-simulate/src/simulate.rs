@@ -38,7 +38,8 @@ pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
         }
     }
 
-    // 收集诊断信息并返回
+    // 检查死代码, 收集诊断信息并返回
+    project.check_unused();
     project.into_diagnostics()
 }
 

@@ -66,6 +66,37 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
         }
     }
 
+    /// 诊断死代码
+    ///
+    /// # Returns
+    /// 是否执行死代码诊断且发现死代码的数量.
+    ///
+    /// # Behavior
+    /// * 当操作前已存在 (其他) 诊断时, 为了避免误报, 将不提供死代码诊断.
+    pub fn check_unused(&mut self) -> Option<usize> {
+        // 避免出错中断造成的死代码误报
+        let has_diagnostic = self
+            .scenes
+            .par_iter()
+            .any(|(_, scene)| scene.has_diagnostics());
+        if has_diagnostic {
+            return None;
+        }
+
+        // 检查死代码
+        let total_unused = self
+            .scenes
+            .values_mut()
+            .par_bridge()
+            .map(Scene::check_unused)
+            .sum();
+        Some(total_unused)
+    }
+
+    /// 结束项目使用, 分场景收集为诊断列表
+    ///
+    /// # Notes
+    /// 建议在执行此操作前先调用 [`Self::check_unused`] 生成并插入死代码诊断.
     pub fn into_diagnostics(self) -> DiagnosticList {
         DiagnosticList(
             self.scenes
@@ -89,9 +120,19 @@ impl<'a, P: ProjectView<'a>> From<P> for Project<'a, P> {
 pub struct Scene<'a>(Vec<SentenceInfo<'a>>);
 
 impl<'a> Scene<'a> {
+    fn check_unused(&mut self) -> usize {
+        self.iter_mut()
+            .map(|sentence| sentence.check_unused() as usize)
+            .sum()
+    }
+
+    pub fn has_diagnostics(&self) -> bool {
+        self.iter().any(SentenceInfo::has_diagnostics)
+    }
+
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.0
-            .into_par_iter()
+            .into_iter()
             .enumerate()
             .flat_map(|(line, sentence)| sentence.into_diagnostics(line))
             .collect()
@@ -217,12 +258,20 @@ impl<'a> SentenceInfo<'a> {
         permitted
     }
 
-    pub fn into_diagnostics(mut self, line: usize) -> Vec<Diagnostic> {
-        // 检查死代码
-        if !self.is_visited() {
+    fn check_unused(&mut self) -> bool {
+        if self.is_visited() {
+            false
+        } else {
             self.diagnostics.push(DiagnosticKind::Unused);
+            true
         }
+    }
 
+    pub fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
+    }
+
+    pub fn into_diagnostics(mut self, line: usize) -> Vec<Diagnostic> {
         // 诊断去重
         self.diagnostics.sort();
         self.diagnostics.dedup();
