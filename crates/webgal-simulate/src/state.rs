@@ -9,16 +9,19 @@ use std::{
 use derive_more::{Deref, Into};
 use getset::{Getters, MutGetters};
 use serde_json::Value;
-use webgal_language_core::{dispatch_sentence, resource::Config, sentence::*};
+use webgal_language_core::{resource::Config, sentence::*};
 
 use crate::{
-    DiagnosticKind, ProjectView, SentenceLocation, expression::evaluate_with_context,
+    DiagnosticKind, ProjectView, SentenceLocation,
+    expression::evaluate_with_context,
     scene::Project,
+    state::{effect::*, stage::*},
 };
 
-// TODO: 使用可持久化数据结构维护 [`State`] 的字段, 减少频繁拷贝的开销
+mod effect;
+mod stage;
 
-// -------- state --------
+// TODO: 使用可持久化数据结构维护 [`State`] 的字段, 减少频繁拷贝的开销
 
 /// 模拟执行的核心状态容器
 ///
@@ -35,7 +38,7 @@ pub struct State {
     ///
     /// # Note
     /// 舞台状态增量仅针对舞台状态 (`stage`), 变量修改和场景跳转等操作将不会作为舞台效果加入等待.
-    pending_deltas: Vec<DeltaGroup>,
+    pending_deltas: Vec<EffectList>,
 
     /// 变量表, 键为变量名, 值为 JSON 值
     ///
@@ -113,7 +116,7 @@ impl State {
         project: &Project<'a, P>,
         diagnostics: *mut Vec<DiagnosticKind>,
     ) {
-        let delta = DeltaGroup::from_sentence(sentence, &self.variables, project, diagnostics);
+        let delta = EffectList::from_sentence(sentence, &self.variables, project, diagnostics);
         if !delta.is_empty() {
             self.pending_deltas.push(delta);
         }
@@ -165,321 +168,8 @@ impl State {
     }
 }
 
-/// 舞台及舞台对象的完整状态
-#[derive(Debug, Clone, Default)]
-pub struct Stage {
-    // TODO: 具体舞台对象字段待补充
-}
-
 /// 执行上下文的紧凑指纹, 用于检查点去重
 ///
 /// 哈希指纹生成方式详见 [`State::hash_execution`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Into, Deref)]
 pub struct ExecutionHash(u64);
-
-// -------- delta --------
-
-/// 单条语句产生的舞台变换组
-///
-/// 一条语句可能产生多个原子效果, 这些效果组合在一起构成一个逻辑上的变换单元
-#[derive(Debug, Clone)]
-struct DeltaGroup {
-    effects: Vec<StageEffect>,
-    diagnostics: *mut Vec<DiagnosticKind>,
-}
-
-impl DeltaGroup {
-    fn from_sentence<'a, P: ProjectView<'a>>(
-        sentence: &Sentence,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        diagnostics: *mut Vec<DiagnosticKind>,
-    ) -> Self {
-        let effects = StageEffect::from_sentence(sentence, variables, project);
-        Self {
-            effects,
-            diagnostics,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.effects.is_empty()
-    }
-
-    fn apply_to_stage(self, prev_stage: &Stage, next_stage: &mut Stage) {
-        let diagnostics = unsafe { &mut *self.diagnostics };
-        for effect in self.effects {
-            effect.apply_to_stage(prev_stage, next_stage, diagnostics);
-        }
-    }
-}
-
-/// 对舞台的原子变换操作
-#[derive(Debug, Clone)]
-pub enum StageEffect {
-    // TODO: 具体效果变体待补充
-}
-
-impl StageEffect {
-    fn from_sentence<'a, P: ProjectView<'a>>(
-        sentence: &Sentence,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<Self> {
-        sentence.to_effects(variables, project)
-    }
-
-    /// 将单个舞台变换效果应用到目标状态, 同时返回诊断结果
-    fn apply_to_stage(
-        self,
-        prev_stage: &Stage,
-        next_stage: &mut Stage,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) {
-        match self {}
-    }
-}
-
-trait ToEffects {
-    /// 生成舞台变换效果
-    #[allow(unused_variables)]
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        Default::default()
-    }
-}
-
-impl ToEffects for Sentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        dispatch_sentence!(self.to_effects(variables, project))
-    }
-}
-
-// -------- 常规演出 --------
-
-impl ToEffects for SaySentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for ChangeBackgroundSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for ChangeFigureSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for BgmSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for PlayVideoSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for PlayEffectSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-// -------- 舞台对象控制 --------
-
-impl ToEffects for SetAnimationSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for SetComplexAnimationSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for SetTransformSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for SetTempAnimationSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for SetTransitionSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-// -------- 特殊演出 --------
-
-impl ToEffects for PixiPerformSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for PixiInitSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for IntroSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for MiniAvatarSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for SetTextboxSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-impl ToEffects for FilmModeSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-// -------- 场景与分支 --------
-
-impl ToEffects for CallSceneSentence {}
-
-impl ToEffects for ChangeSceneSentence {}
-
-impl ToEffects for ChooseSentence {}
-
-impl ToEffects for LabelSentence {}
-
-impl ToEffects for JumpLabelSentence {}
-
-// -------- 鉴赏 --------
-
-impl ToEffects for UnlockCgSentence {}
-
-impl ToEffects for UnlockBgmSentence {}
-
-// -------- 游戏控制 --------
-
-impl ToEffects for GetUserInputSentence {}
-
-impl ToEffects for SetVarSentence {}
-
-impl ToEffects for ShowVarsSentence {}
-
-impl ToEffects for WaitSentence {}
-
-impl ToEffects for ApplyStyleSentence {}
-
-impl ToEffects for CallSteamSentence {}
-
-impl ToEffects for EndSentence {
-    fn to_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-    ) -> Vec<StageEffect> {
-        unimplemented!()
-    }
-}
-
-// -------- 空白注释 --------
-
-impl ToEffects for CommentSentence {}
