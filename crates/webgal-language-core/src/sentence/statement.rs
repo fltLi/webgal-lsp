@@ -9,11 +9,7 @@ use serde::Serialize;
 use webgal_sentence_macro::Sentence;
 
 use crate::{
-    element::{
-        AnimationList, Choice, ChoiceSplit, Color, Ease, FigureId, FigureSide, FontSize, Forward,
-        IntroAnimation, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, TokenList,
-        Transform,
-    },
+    element::*,
     sentence::{Error, FromPrimary, PrimarySentence, SentenceExt},
     util::{write_joined, write_joined_with},
 };
@@ -42,7 +38,7 @@ pub struct SaySentence {
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
     #[sentence(content)]
-    pub background: String,
+    pub background: Option<String>,
     // 效果
     pub transform: Option<Transform>,
     pub enter: Option<String>,
@@ -79,7 +75,7 @@ pub struct ChangeBackgroundSentence {
 )]
 pub struct ChangeFigureSentence {
     #[sentence(content)]
-    pub figure: String,
+    pub figure: Option<String>,
     #[sentence(variant = { "left": Left, "right": Right })]
     pub side: FigureSide,
     pub id: Option<String>,
@@ -134,7 +130,7 @@ pub struct ChangeFigureSentence {
 )]
 pub struct BgmSentence {
     #[sentence(content)]
-    pub bgm: String,
+    pub bgm: Option<String>,
     // 效果
     pub volume: Option<u32>,
     pub enter: Option<u32>,
@@ -181,7 +177,7 @@ pub struct PlayVideoSentence {
 )]
 pub struct PlayEffectSentence {
     #[sentence(content)]
-    pub vocal: String,
+    pub vocal: Option<String>,
     pub id: Option<String>,
     // 效果
     pub volume: Option<u32>,
@@ -389,7 +385,7 @@ pub struct IntroSentence {
 )]
 pub struct MiniAvatarSentence {
     #[sentence(content)]
-    pub avatar: String,
+    pub avatar: Option<String>,
     // 控制
     #[sentence(condition)]
     pub when: Option<String>,
@@ -774,7 +770,7 @@ impl ChangeFigureSentence {
         }
 
         // 空立绘
-        if matches!(self.figure.as_str(), "" | "none") {
+        if self.figure.is_none() {
             if self.motion.is_some()
                 && let Some((index, _)) = primary.get_argument("motion")
             {
@@ -1562,6 +1558,36 @@ mod tests {
             }
             _ => panic!("期望 ChooseSentence"),
         }
+    }
+
+    #[test]
+    fn change_bg_content_handling() {
+        let cases = vec![
+            ("changeBg;", None),
+            ("changeBg:;", None),
+            ("changeBg:none;", None),
+            ("changeBg:bg.png;", Some("bg.png".to_string())),
+        ];
+        for (input, expected) in cases {
+            let output = Sentence::from_str(input);
+            assert!(output.errors.is_empty());
+            match output.sentence {
+                Sentence::ChangeBackground(bg) => assert_eq!(bg.background, expected),
+                _ => panic!("expected ChangeBg for {input}"),
+            }
+        }
+    }
+
+    #[test]
+    fn change_bg_display_handling() {
+        let bg_none = ChangeBackgroundSentence::default();
+        assert_eq!(bg_none.to_string(), "changeBg:;");
+
+        let bg_some = ChangeBackgroundSentence {
+            background: Some("bg.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(bg_some.to_string(), "changeBg:bg.png;");
     }
 
     // -------- require --------

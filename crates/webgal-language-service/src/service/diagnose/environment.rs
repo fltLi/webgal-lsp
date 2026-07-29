@@ -70,7 +70,7 @@ fn diagnose_resource<F>(
                 ..
             } = &**sentence;
 
-            if !matches!(background.as_str(), "" | "none")
+            if let Some(background) = background
                 && !project
                     .resource()
                     .background
@@ -165,7 +165,7 @@ fn diagnose_resource<F>(
             )
             .map(&mut diagnose);
 
-            if !matches!(figure.as_str(), "" | "none") {
+            if let Some(figure) = figure {
                 let info = match project
                     .resource()
                     .get_figure(canonicalize(figure).as_ref().unwrap_or(figure))
@@ -234,7 +234,7 @@ fn diagnose_resource<F>(
             }
         }
 
-        Bgm(BgmSentence { bgm, .. }) if !matches!(bgm.as_str(), "" | "none") => {
+        Bgm(BgmSentence { bgm: Some(bgm), .. }) => {
             diagnose_content_resource(primary, bgm, &project.resource().bgm, "音乐")
                 .map(&mut diagnose);
         }
@@ -244,9 +244,9 @@ fn diagnose_resource<F>(
                 .map(&mut diagnose);
         }
 
-        PlayEffect(PlayEffectSentence { vocal, id, .. })
-            if !matches!(vocal.as_str(), "" | "none") && id.is_none() =>
-        {
+        PlayEffect(PlayEffectSentence {
+            vocal: Some(vocal), ..
+        }) => {
             diagnose_content_resource(primary, vocal, &project.resource().bgm, "语音 (音效)")
                 .map(&mut diagnose);
         }
@@ -315,7 +315,10 @@ fn diagnose_resource<F>(
             .map(&mut diagnose);
         }
 
-        MiniAvatar(MiniAvatarSentence { avatar, .. }) => {
+        MiniAvatar(MiniAvatarSentence {
+            avatar: Some(avatar),
+            ..
+        }) => {
             diagnose_content_resource(primary, avatar, &project.resource().figure, "小头像")
                 .map(&mut diagnose);
         }

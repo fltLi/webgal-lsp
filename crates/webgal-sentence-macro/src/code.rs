@@ -138,6 +138,13 @@ fn gen_validate(validate: &Path) -> TokenStream {
 
 fn gen_content_parse(content: &Option<FieldInfo>) -> TokenStream {
     match content {
+        // 有参数 + Option<String> 类型
+        Some(FieldInfo { ty, .. }) if is_option_string_type(ty) => quote! {
+            let content = content
+                .filter(|&content| !matches!(content, "" | "none"))
+                .map(str::to_string);
+        },
+
         // 有参数 + 自定义反序列化
         Some(FieldInfo {
             deserialize_with: Some(deserialize_with),
@@ -409,9 +416,16 @@ pub fn impl_display(info: &SentenceInfo) -> TokenStream {
 fn gen_content_display(content: &FieldInfo) -> TokenStream {
     let FieldInfo {
         ident,
+        ty,
         serialize_with,
         ..
     } = content;
+
+    if is_option_string_type(ty) {
+        return quote! {
+            write!(f, ":{}", self.#ident.as_deref().unwrap_or(""))?;
+        };
+    }
 
     match serialize_with {
         Some(serialize_with) => quote! {
