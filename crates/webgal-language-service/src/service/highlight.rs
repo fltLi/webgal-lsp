@@ -4,7 +4,7 @@ use lsp_types::*;
 use rayon::prelude::*;
 use webgal_language_core::{
     element::TokenSplit,
-    sentence::{Scene, Sentence, SentenceInfo},
+    sentence::{PrimarySentence, Scene, Sentence, SentenceInfo},
     util::{span_of, split_once_escaped},
 };
 
@@ -99,7 +99,22 @@ where
         ..
     } = sentence;
 
-    // 语句类型高亮
+    highlight_command(primary, sentence, &mut push);
+    highlight_content(primary, sentence, &mut push);
+
+    // 参数高亮
+    for &(name, value) in primary.arguments.iter() {
+        highlight_argument(name, value, primary, sentence, &mut push);
+    }
+
+    highlight_comment(content, primary, &mut push);
+}
+
+/// 语句类型高亮
+fn highlight_command<F>(primary: &PrimarySentence, sentence: &Sentence, mut push: F)
+where
+    F: FnMut(PrimaryToken),
+{
     if !sentence.is_say() {
         push(PrimaryToken {
             span: primary.get_span(primary.command),
@@ -115,8 +130,13 @@ where
         // 对话内容
         highlight_say_content(primary.command, &mut push);
     }
+}
 
-    // 主参数高亮
+/// 语句主参数高亮
+fn highlight_content<F>(primary: &PrimarySentence, sentence: &Sentence, mut push: F)
+where
+    F: FnMut(PrimaryToken),
+{
     if let Some(content) = primary.content {
         // `:`
         let pos = primary.command.len();
@@ -139,38 +159,51 @@ where
             _ => {}
         }
     }
+}
 
-    // 参数高亮
-    for (name, value) in primary.arguments.iter() {
-        let span = primary.get_span(name);
-        let ops::Range { start, end } = span;
+/// 语句参数高亮
+fn highlight_argument<F>(
+    name: &str,
+    value: Option<&str>,
+    primary: &PrimarySentence,
+    sentence: &Sentence,
+    mut push: F,
+) where
+    F: FnMut(PrimaryToken),
+{
+    let span = primary.get_span(name);
+    let ops::Range { start, end } = span;
 
-        // `-`
-        push(PrimaryToken::from_position(start - 1, TokenType::Operator));
+    // `-`
+    push(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
-        // 参数名
-        push(PrimaryToken {
-            span,
-            kind: TokenType::Property,
-        });
+    // 参数名
+    push(PrimaryToken {
+        span,
+        kind: TokenType::Parameter,
+    });
 
-        // `=`
-        if value.is_some() {
-            push(PrimaryToken::from_position(end, TokenType::Operator));
-        }
-
-        // 参数值
-        if let Some(value) = value
-            && let Some(kind) = TokenType::from_arguemnt(name, sentence)
-        {
-            push(PrimaryToken {
-                span: primary.get_span(value),
-                kind,
-            });
-        }
+    // `=`
+    if value.is_some() {
+        push(PrimaryToken::from_position(end, TokenType::Operator));
     }
 
-    // 注释高亮
+    // 参数值
+    if let Some(value) = value
+        && let Some(kind) = TokenType::from_arguemnt(name, sentence)
+    {
+        push(PrimaryToken {
+            span: primary.get_span(value),
+            kind,
+        });
+    }
+}
+
+/// 语句注释高亮
+fn highlight_comment<F>(content: &str, primary: &PrimarySentence, mut push: F)
+where
+    F: FnMut(PrimaryToken),
+{
     let comment = content
         .len()
         .checked_sub(primary.comment.len() + 1)
@@ -306,7 +339,9 @@ impl PrimaryToken {
 #[derive(Clone, Copy)]
 enum TokenType {
     Type,
+    Parameter,
     Variable,
+    #[allow(dead_code)]
     Property,
     EnumMember,
     Function,
@@ -416,14 +451,15 @@ impl TokenType {
         match self {
             Self::Type => 0,
             Self::Variable => 1,
-            Self::Property => 2,
-            Self::EnumMember => 3,
-            Self::Function => 4,
-            Self::Comment => 5,
-            Self::String => 6,
-            Self::Number => 7,
-            Self::Regex => 8,
-            Self::Operator => 9,
+            Self::Parameter => 2,
+            Self::Property => 3,
+            Self::EnumMember => 4,
+            Self::Function => 5,
+            Self::Comment => 6,
+            Self::String => 7,
+            Self::Number => 8,
+            Self::Regex => 9,
+            Self::Operator => 10,
         }
     }
 
@@ -431,6 +467,7 @@ impl TokenType {
         const TOKEN_TYPES: &[SemanticTokenType] = &[
             SemanticTokenType::TYPE,
             SemanticTokenType::VARIABLE,
+            SemanticTokenType::PARAMETER,
             SemanticTokenType::PROPERTY,
             SemanticTokenType::ENUM_MEMBER,
             SemanticTokenType::FUNCTION,
@@ -449,6 +486,7 @@ impl From<TokenType> for SemanticTokenType {
         match value {
             TokenType::Type => Self::TYPE,
             TokenType::Variable => Self::VARIABLE,
+            TokenType::Parameter => Self::PARAMETER,
             TokenType::Property => Self::PROPERTY,
             TokenType::EnumMember => Self::ENUM_MEMBER,
             TokenType::Function => Self::FUNCTION,
