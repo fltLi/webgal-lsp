@@ -68,7 +68,7 @@ impl<T> Folder<T> {
 
                 if path_split.peek().is_some() {
                     // 插入目录
-                    let name_view = unsafe { mem::transmute::<&str, &'static str>(name.as_str()) };
+                    let name_view: &'static str = unsafe { mem::transmute(name.as_str()) };
                     let (_, current) = parent.children.push_mut((name, Node::Folder(Self::new())));
                     let current_ptr =
                         unsafe { current.as_folder_mut().unwrap_unchecked() } as *mut _;
@@ -169,7 +169,7 @@ impl<T> Folder<T> {
     pub fn get(&self, path: &str) -> Option<&Node<T>> {
         let (name, path) = split_path_once(path);
         let index = self.binary_search_child(name).ok()?;
-        let child = unsafe { &self.children.get_unchecked(index).1 };
+        let child = &self.children[index].1;
         match path {
             Some(path) => child.as_folder().and_then(|folder| folder.get(path)),
             None => Some(child),
@@ -187,7 +187,7 @@ impl<T> Folder<T> {
     pub fn get_mut(&mut self, path: &str) -> Option<&mut Node<T>> {
         let (name, path) = split_path_once(path);
         let index = self.binary_search_child(name).ok()?;
-        let child = unsafe { &mut self.children.get_unchecked_mut(index).1 };
+        let child = &mut self.children[index].1;
         match path {
             Some(path) => child
                 .as_folder_mut()
@@ -210,7 +210,7 @@ impl<T> Folder<T> {
 
         match self.binary_search_child(name) {
             Ok(index) => {
-                let child = unsafe { &mut self.children.get_unchecked_mut(index).1 };
+                let child = &mut self.children[index].1;
                 match path {
                     Some(path) => {
                         if child.is_item() {
@@ -250,19 +250,16 @@ impl<T> Folder<T> {
         let (name, path) = split_path_once(path);
         let index = self.binary_search_child(name).ok()?;
         match path {
-            Some(path) => unsafe {
-                self.children
-                    .get_unchecked_mut(index)
-                    .1
-                    .as_folder_mut()
-                    .and_then(|folder| folder.remove(path).map(|node| (node, folder.is_empty())))
-                    .map(|(node, empty)| {
-                        if empty {
-                            self.children.remove(index);
-                        }
-                        node
-                    })
-            },
+            Some(path) => self.children[index]
+                .1
+                .as_folder_mut()
+                .and_then(|folder| folder.remove(path).map(|node| (node, folder.is_empty())))
+                .map(|(node, empty)| {
+                    if empty {
+                        self.children.remove(index);
+                    }
+                    node
+                }),
             None => Some(self.children.remove(index).1),
         }
     }
@@ -294,7 +291,7 @@ impl<T> Folder<T> {
 
         match self.binary_search_child(name) {
             Ok(index) => match path {
-                Some(path) => match unsafe { &mut self.children.get_unchecked_mut(index).1 } {
+                Some(path) => match &mut self.children[index].1 {
                     Node::Folder(folder) => folder.entry(path),
                     node => Err((path, node)),
                 },
