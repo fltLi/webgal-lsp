@@ -1,9 +1,12 @@
 //! 状态计算
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
-    mem, result,
+    mem,
+    rc::Rc,
+    result,
 };
 
 use derive_more::{Deref, Into};
@@ -107,14 +110,11 @@ impl State {
     }
 
     /// 从语句构造舞台变换增量并加入待处理队列
-    ///
-    /// # Safety
-    /// 确保诊断列表指针有效, 其将在应用变换时被解引用, 以推送诊断.
-    pub unsafe fn push_sentence_deltas<'a, P: ProjectView<'a>>(
+    pub fn push_sentence_deltas<'a, P: ProjectView<'a>>(
         &mut self,
         sentence: &Sentence,
         project: &Project<'a, P>,
-        diagnostics: *mut Vec<DiagnosticKind>,
+        diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
     ) {
         let delta = EffectList::from_sentence(sentence, &self.variables, project, diagnostics);
         if !delta.is_empty() {

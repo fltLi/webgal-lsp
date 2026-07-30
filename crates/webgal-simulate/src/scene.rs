@@ -1,13 +1,14 @@
 //! 场景访问
 
 use std::{
+    cell::{Cell, RefCell},
     collections::{BTreeSet, HashMap},
     fmt,
+    rc::Rc,
 };
 
 use derive_more::{Deref, DerefMut, From, Into};
-use getset::{CopyGetters, Getters, MutGetters};
-use rayon::prelude::*;
+use getset::{CopyGetters, Getters};
 use webgal_language_core::{
     element::{AnimationList, Forward},
     resource::Config,
@@ -39,14 +40,14 @@ pub trait ProjectView<'a>: Send + Sync {
 }
 
 /// 项目信息 (Simulate)
-#[derive(Debug, Getters, MutGetters)]
+#[derive(Debug, Getters)]
 pub struct Project<'a, P: ProjectView<'a>> {
     #[getset(get = "pub")]
     view: P,
     // 配置和资源
     #[getset(get = "pub")]
     config: &'a Config,
-    #[getset(get = "pub", get_mut = "pub")]
+    #[getset(get = "pub")]
     scenes: HashMap<String, Scene<'a>>,
 }
 
@@ -55,7 +56,6 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
         let config = view.get_config();
         let scenes = view
             .iter_scenes()
-            .par_bridge()
             .map(|(path, sentences)| (path, Scene::from_iter(sentences)))
             .collect();
 
@@ -73,23 +73,15 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
     ///
     /// # Behavior
     /// * 当操作前已存在 (其他) 诊断时, 为了避免误报, 将不提供死代码诊断.
-    pub fn check_unused(&mut self) -> Option<usize> {
+    pub fn check_unused(&self) -> Option<usize> {
         // 避免出错中断造成的死代码误报
-        let has_diagnostic = self
-            .scenes
-            .par_iter()
-            .any(|(_, scene)| scene.has_diagnostics());
+        let has_diagnostic = self.scenes.values().any(Scene::has_diagnostics);
         if has_diagnostic {
             return None;
         }
 
         // 检查死代码
-        let total_unused = self
-            .scenes
-            .values_mut()
-            .par_bridge()
-            .map(Scene::check_unused)
-            .sum();
+        let total_unused = self.scenes.values().map(Scene::check_unused).sum();
         Some(total_unused)
     }
 
@@ -100,7 +92,7 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
     pub fn into_diagnostics(self) -> DiagnosticList {
         DiagnosticList(
             self.scenes
-                .into_par_iter()
+                .into_iter()
                 .map(|(path, scene)| (path, scene.into_diagnostics()))
                 .collect(),
         )
@@ -120,8 +112,8 @@ impl<'a, P: ProjectView<'a>> From<P> for Project<'a, P> {
 pub struct Scene<'a>(Vec<SentenceInfo<'a>>);
 
 impl<'a> Scene<'a> {
-    fn check_unused(&mut self) -> usize {
-        self.iter_mut()
+    fn check_unused(&self) -> usize {
+        self.iter()
             .map(|sentence| sentence.check_unused() as usize)
             .sum()
     }
@@ -145,7 +137,7 @@ impl<'a> FromIterator<&'a Sentence> for Scene<'a> {
 
         // 在场景开头设立检查点
         if let Some(sentence) = sentences.first_mut() {
-            sentence.executions = Some(BTreeSet::new());
+            sentence.executions = Some(RefCell::new(BTreeSet::new()));
         }
 
         Self(sentences)
@@ -177,7 +169,7 @@ impl fmt::Display for SentenceLocation {
 }
 
 /// 语句信息 (Simulate)
-#[derive(Debug, Getters, MutGetters, CopyGetters)]
+#[derive(Debug, Getters, CopyGetters)]
 pub struct SentenceInfo<'a> {
     #[getset(get = "pub")]
     sentence: &'a Sentence,
@@ -187,11 +179,11 @@ pub struct SentenceInfo<'a> {
     #[getset(get = "pub")]
     condition: Option<&'a str>,
     // 诊断结果
-    #[getset(get_mut = "pub")]
-    diagnostics: Vec<DiagnosticKind>,
+    #[getset(get = "pub")]
+    diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
     // 遍历信息
-    visited: bool,
-    executions: Option<BTreeSet<ExecutionHash>>,
+    visited: Cell<bool>,
+    executions: Option<RefCell<BTreeSet<ExecutionHash>>>,
 }
 
 impl<'a> SentenceInfo<'a> {
@@ -206,7 +198,7 @@ impl<'a> SentenceInfo<'a> {
                 sentence,
                 Sentence::Label(_) | Sentence::SetVar(_) | Sentence::GetUserInput(_)
             );
-        let executions = is_checkpoint.then_some(BTreeSet::new());
+        let executions = is_checkpoint.then(|| RefCell::new(BTreeSet::new()));
 
         // 检查条件执行表达式是否为常量
         if let Some(condition) = condition
@@ -222,14 +214,14 @@ impl<'a> SentenceInfo<'a> {
             sentence,
             forward,
             condition,
-            diagnostics,
-            visited: false,
+            diagnostics: Rc::new(RefCell::new(diagnostics)),
+            visited: Cell::new(false),
             executions,
         }
     }
 
     pub fn is_visited(&self) -> bool {
-        self.visited
+        self.visited.get()
     }
 
     /// 尝试注册当前模拟执行上下文状态到检查点
@@ -242,42 +234,49 @@ impl<'a> SentenceInfo<'a> {
     /// * 检查点已达到通过次数上限时, 一律不允许通过.
     /// * 可以尝试注册时, 才哈希状态并尝试加入, 若已存在则不允许通过.
     /// * 不允许通过检查点时, 调用者需自行记录模拟中断信息.
-    pub fn register_execution<F>(&mut self, f: F) -> bool
+    pub fn register_execution<F>(&self, f: F) -> bool
     where
         F: FnOnce() -> ExecutionHash,
     {
-        let permitted = self.executions.as_mut().is_none_or(|executions| {
+        let permitted = self.executions.as_ref().is_none_or(|executions| {
+            let mut executions = executions.borrow_mut();
             executions.len() < MAX_CHECKPOINT_VISITS && executions.insert(f())
         });
 
         // 标记为已访问
         if permitted {
-            self.visited = true;
+            self.visited.set(true);
         }
 
         permitted
     }
 
-    fn check_unused(&mut self) -> bool {
+    fn check_unused(&self) -> bool {
         if self.is_visited() {
             false
         } else {
-            self.diagnostics.push(DiagnosticKind::Unused);
+            self.push_diagnostic(DiagnosticKind::Unused);
             true
         }
     }
 
     pub fn has_diagnostics(&self) -> bool {
-        !self.diagnostics.is_empty()
+        !self.diagnostics.borrow().is_empty()
     }
 
-    pub fn into_diagnostics(mut self, line: usize) -> Vec<Diagnostic> {
+    pub fn push_diagnostic(&self, diagnostic: DiagnosticKind) {
+        self.diagnostics.borrow_mut().push(diagnostic);
+    }
+
+    pub fn into_diagnostics(self, line: usize) -> Vec<Diagnostic> {
+        let mut diagnostics = Rc::try_unwrap(self.diagnostics).unwrap().into_inner();
+
         // 诊断去重
-        self.diagnostics.sort();
-        self.diagnostics.dedup();
+        diagnostics.sort();
+        diagnostics.dedup();
 
         // 附加诊断行号
-        self.diagnostics
+        diagnostics
             .into_iter()
             .map(|detail| Diagnostic { line, detail })
             .collect()

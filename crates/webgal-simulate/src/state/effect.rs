@@ -1,6 +1,6 @@
 //! 舞台状态变换
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use serde_json::Value;
 use webgal_language_core::{dispatch_sentence, sentence::*};
@@ -13,7 +13,7 @@ use crate::{DiagnosticKind, ProjectView, scene::Project, state::stage::Stage};
 #[derive(Debug, Clone)]
 pub struct EffectList {
     effects: Vec<StageEffect>,
-    diagnostics: *mut Vec<DiagnosticKind>,
+    diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
 }
 
 impl EffectList {
@@ -21,7 +21,7 @@ impl EffectList {
         sentence: &Sentence,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        diagnostics: *mut Vec<DiagnosticKind>,
+        diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
     ) -> Self {
         let effects = StageEffect::from_sentence(sentence, variables, project);
         Self {
@@ -35,9 +35,9 @@ impl EffectList {
     }
 
     pub fn apply_to_stage(self, prev_stage: &Stage, next_stage: &mut Stage) {
-        let diagnostics = unsafe { &mut *self.diagnostics };
+        let mut diagnostics = self.diagnostics.borrow_mut();
         for effect in self.effects {
-            effect.apply_to_stage(prev_stage, next_stage, diagnostics);
+            effect.apply_to_stage(prev_stage, next_stage, &mut diagnostics);
         }
     }
 }

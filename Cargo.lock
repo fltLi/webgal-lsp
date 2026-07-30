@@ -2398,7 +2398,6 @@ dependencies = [
  "exprimo",
  "getset",
  "lsp-types",
- "rayon",
  "serde_json",
  "strum",
  "thiserror 2.0.18",

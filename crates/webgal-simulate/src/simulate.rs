@@ -20,8 +20,8 @@ pub const MAX_CHECKPOINT_VISITS: usize = 32;
 /// 模拟执行 WebGAL 项目, 提供诊断信息
 pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
     // 初始化项目和执行器
-    let mut project = Project::new(project_view);
-    let simulator = match unsafe { Simulator::new(&mut project) } {
+    let project = Project::new(project_view);
+    let simulator = match Simulator::new(&project) {
         Some(v) => v,
         None => return DiagnosticList::default(),
     };
@@ -46,28 +46,27 @@ pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
 // -------- simulate --------
 
 #[derive(Debug)]
-struct Simulator<'a, P: ProjectView<'a>> {
+struct Simulator<'a, 'b, P: ProjectView<'a>> {
     // 读取
-    project: *mut Project<'a, P>,
-    scene: *mut Scene<'a>,
-    last_sentence: Option<*mut SentenceInfo<'a>>,
+    project: &'b Project<'a, P>,
+    scene: &'b Scene<'a>,
+    last_sentence: Option<&'b SentenceInfo<'a>>,
     // 状态
     location: SentenceLocation,
     state: Box<State>,
 }
 
-impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
-    unsafe fn new(project: &mut Project<'a, P>) -> Option<Self> {
+impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
+    fn new(project: &'b Project<'a, P>) -> Option<Self> {
         // 定位初始场景
-        let project_ptr = project as *mut _;
         let location = SentenceLocation::default();
-        let scene = project.scenes_mut().get_mut(&location.scene)? as *mut _;
+        let scene = project.scenes().get(&location.scene)?;
 
         // 从项目配置初始化状态
         let state = Box::new(State::from_config(project.config()));
 
         Some(Self {
-            project: project_ptr,
+            project,
             location,
             scene,
             last_sentence: None,
@@ -75,12 +74,9 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
         })
     }
 
-    fn next(mut self) -> StepOutcome<'a, P> {
-        let project = unsafe { &mut *self.project };
-        let scene = unsafe { &mut *self.scene };
-
+    fn next(mut self) -> StepOutcome<'a, 'b, P> {
         // 读取语句 (读完场景时尝试弹出调用栈)
-        let sentence = match scene.get_mut(self.location.line) {
+        let sentence = match self.scene.get(self.location.line) {
             Some(v) => v,
             None => return self.pop_call_stack().into(),
         };
@@ -91,7 +87,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
             self.state
                 .evaluate_expression_as_bool(condition)
                 .unwrap_or_else(|error| {
-                    sentence.diagnostics_mut().push(error);
+                    sentence.push_diagnostic(error);
                     false
                 })
         });
@@ -102,20 +98,16 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
 
         // 尝试注册执行上下文状态到检查点
         if !sentence.register_execution(|| self.state.hash_execution()) {
-            sentence
-                .diagnostics_mut()
-                .push(DiagnosticKind::Stopped(StopReason::Checkpoint));
+            sentence.push_diagnostic(DiagnosticKind::Stopped(StopReason::Checkpoint));
             return StepOutcome::Halt;
         }
 
         // 计算舞台状态增量
-        unsafe {
-            self.state.push_sentence_deltas(
-                sentence.sentence(),
-                project,
-                sentence.diagnostics_mut(),
-            )
-        };
+        self.state.push_sentence_deltas(
+            sentence.sentence(),
+            self.project,
+            sentence.diagnostics().clone(),
+        );
 
         // 若语句不为连续执行, 则应用累积的舞台状态增量
         let delta_applied = if sentence.forward() != Forward::Next {
@@ -133,15 +125,13 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
             Sentence::CallScene(s) => {
                 // 获取跳转目标
                 let next_scene_name = &s.scene;
-                let next_scene = match project.scenes_mut().get_mut(next_scene_name) {
+                let next_scene = match self.project.scenes().get(next_scene_name) {
                     Some(v) => v,
                     None => {
-                        sentence
-                            .diagnostics_mut()
-                            .push(DiagnosticKind::UndefinedSymbol(
-                                SymbolKind::Scene,
-                                next_scene_name.clone(),
-                            ));
+                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
+                            SymbolKind::Scene,
+                            next_scene_name.clone(),
+                        ));
                         return StepOutcome::Halt;
                     }
                 };
@@ -160,15 +150,13 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
             Sentence::ChangeScene(s) => {
                 // 获取跳转目标
                 let next_scene_name = &s.scene;
-                let next_scene = match project.scenes_mut().get_mut(next_scene_name) {
+                let next_scene = match self.project.scenes().get(next_scene_name) {
                     Some(v) => v,
                     None => {
-                        sentence
-                            .diagnostics_mut()
-                            .push(DiagnosticKind::UndefinedSymbol(
-                                SymbolKind::Scene,
-                                next_scene_name.clone(),
-                            ));
+                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
+                            SymbolKind::Scene,
+                            next_scene_name.clone(),
+                        ));
                         return StepOutcome::Halt;
                     }
                 };
@@ -200,7 +188,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
                                 self.state
                                     .evaluate_expression_as_bool(condition)
                                     .unwrap_or_else(|error| {
-                                        sentence.diagnostics_mut().push(error);
+                                        sentence.push_diagnostic(error);
                                         false
                                     })
                             });
@@ -218,27 +206,23 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
                             match self.state.labels().get(target) {
                                 Some(location) => location.clone(),
                                 None => {
-                                    sentence.diagnostics_mut().push(
-                                        DiagnosticKind::UndefinedSymbol(
-                                            SymbolKind::Label,
-                                            target.clone(),
-                                        ),
-                                    );
+                                    sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
+                                        SymbolKind::Label,
+                                        target.clone(),
+                                    ));
                                     return None;
                                 }
                             }
                         };
 
                         // 获取跳转目标
-                        let next_scene = match project.scenes_mut().get_mut(&location.scene) {
+                        let next_scene = match self.project.scenes().get(&location.scene) {
                             Some(v) => v,
                             None => {
-                                sentence
-                                    .diagnostics_mut()
-                                    .push(DiagnosticKind::UndefinedSymbol(
-                                        SymbolKind::Scene,
-                                        location.scene,
-                                    ));
+                                sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
+                                    SymbolKind::Scene,
+                                    location.scene,
+                                ));
                                 return None;
                             }
                         };
@@ -259,16 +243,14 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
                 let location = match self.state.labels().get(&s.label) {
                     Some(location) => location.clone(),
                     None => {
-                        sentence
-                            .diagnostics_mut()
-                            .push(DiagnosticKind::UndefinedSymbol(
-                                SymbolKind::Label,
-                                s.label.clone(),
-                            ));
+                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
+                            SymbolKind::Label,
+                            s.label.clone(),
+                        ));
                         return StepOutcome::Halt;
                     }
                 };
-                let next_scene = project.scenes_mut().get_mut(&location.scene).unwrap();
+                let next_scene = self.project.scenes().get(&location.scene).unwrap();
 
                 // 替换栈顶的场景并执行跳转
                 self.scene = next_scene;
@@ -288,9 +270,9 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
                         ..
                     } => vec![value],
                     _ => {
-                        sentence
-                            .diagnostics_mut()
-                            .push(DiagnosticKind::Stopped(StopReason::MissingUserInputValue));
+                        sentence.push_diagnostic(DiagnosticKind::Stopped(
+                            StopReason::MissingUserInputValue,
+                        ));
                         return StepOutcome::Halt;
                     }
                 };
@@ -317,7 +299,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
                 let value = match self.state.evaluate_expression(expression) {
                     Ok(v) => v,
                     Err(error) => {
-                        sentence.diagnostics_mut().push(error);
+                        sentence.push_diagnostic(error);
                         return StepOutcome::Halt;
                     }
                 };
@@ -331,9 +313,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
             Sentence::Wait(_) => {
                 // 检查连续执行是否被 wait 语句打断
                 if delta_applied {
-                    sentence
-                        .diagnostics_mut()
-                        .push(DiagnosticKind::WaitAtEndOfChain);
+                    sentence.push_diagnostic(DiagnosticKind::WaitAtEndOfChain);
                 }
 
                 self.into()
@@ -348,8 +328,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
         match self.state.call_stack_mut().pop() {
             // 向上跳出
             Some(location) => {
-                let project = unsafe { &mut *self.project };
-                self.scene = project.scenes_mut().get_mut(&location.scene).unwrap();
+                self.scene = self.project.scenes().get(&location.scene).unwrap();
                 self.location = location;
                 Some(self)
             }
@@ -357,10 +336,8 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
             // 正常结束
             None => {
                 if let Some(sentence) = self.last_sentence {
-                    let sentence = unsafe { &mut *sentence };
                     sentence
-                        .diagnostics_mut()
-                        .push(DiagnosticKind::Stopped(StopReason::NormalTermination));
+                        .push_diagnostic(DiagnosticKind::Stopped(StopReason::NormalTermination));
                 }
                 None
             }
@@ -368,7 +345,7 @@ impl<'a, P: ProjectView<'a>> Simulator<'a, P> {
     }
 }
 
-impl<'a, P: ProjectView<'a>> Clone for Simulator<'a, P> {
+impl<'a, 'b, P: ProjectView<'a>> Clone for Simulator<'a, 'b, P> {
     fn clone(&self) -> Self {
         Self {
             project: self.project,
@@ -381,17 +358,17 @@ impl<'a, P: ProjectView<'a>> Clone for Simulator<'a, P> {
 }
 
 #[derive(Debug, Clone, From)]
-enum StepOutcome<'a, P: ProjectView<'a>> {
+enum StepOutcome<'a, 'b, P: ProjectView<'a>> {
     /// 单一路径继续执行
-    Continue(Simulator<'a, P>),
+    Continue(Simulator<'a, 'b, P>),
     /// 分裂为多条路径
-    Branch(Vec<Simulator<'a, P>>),
+    Branch(Vec<Simulator<'a, 'b, P>>),
     /// 路径终止
     Halt,
 }
 
-impl<'a, P: ProjectView<'a>> From<Option<Simulator<'a, P>>> for StepOutcome<'a, P> {
-    fn from(value: Option<Simulator<'a, P>>) -> Self {
+impl<'a, 'b, P: ProjectView<'a>> From<Option<Simulator<'a, 'b, P>>> for StepOutcome<'a, 'b, P> {
+    fn from(value: Option<Simulator<'a, 'b, P>>) -> Self {
         match value {
             Some(simulator) => Self::Continue(simulator),
             None => Self::Halt,
