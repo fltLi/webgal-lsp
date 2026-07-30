@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    mem,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -152,7 +151,8 @@ impl Backend {
                 info!(project = %project_path, "Loading project");
 
                 let mut errors = Vec::new();
-                let project = load_project(project_path, &self.client, &mut errors).await;
+                let project =
+                    load_project(project_path.to_string(), self.client.clone(), &mut errors).await;
 
                 match self.workspace.write().await.insert(project_path, project) {
                     Ok(project) => self.diagnose_project(project_path, project),
@@ -195,11 +195,11 @@ impl Backend {
                 debug!(project = %project_path, path = %resource_path, "Updating resource");
 
                 let project = spawn_blocking({
-                    let fs: &'static Client = unsafe { mem::transmute(&self.client) };
-                    let path: &'static str = unsafe { mem::transmute(path) };
+                    let fs = self.client.clone();
+                    let path = path.to_string();
                     move || {
                         let result = project.write().unwrap().insert(&resource_path, || {
-                            Handle::current().block_on(fs.read_to_string(path))
+                            Handle::current().block_on(fs.read_to_string(&path))
                         });
                         result.map(|_| project)
                     }
@@ -342,9 +342,9 @@ impl LanguageServer for Backend {
 
         // 更新资源
         let project = match spawn_blocking({
-            let path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            let path = resource_path.clone();
             move || {
-                let result = project.write().unwrap().insert(path, || Ok(content));
+                let result = project.write().unwrap().insert(&path, || Ok(content));
                 result.map(|_| project)
             }
         })
@@ -384,9 +384,9 @@ impl LanguageServer for Backend {
 
         // 更新资源
         let project = match spawn_blocking({
-            let path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            let path = resource_path.clone();
             move || {
-                let result = project.write().unwrap().insert(path, || Ok(content));
+                let result = project.write().unwrap().insert(&path, || Ok(content));
                 result.map(|_| project)
             }
         })
@@ -428,8 +428,8 @@ impl LanguageServer for Backend {
             && !result.exists_file()
         {
             if let Err(error) = spawn_blocking({
-                let resource_path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
-                move || project.write().unwrap().remove(resource_path)
+                let resource_path = resource_path.clone();
+                move || project.write().unwrap().remove(&resource_path)
             })
             .await
             .unwrap()
@@ -443,10 +443,10 @@ impl LanguageServer for Backend {
 
         // 重置资源为磁盘内容
         let project = match spawn_blocking({
-            let fs: &'static Client = unsafe { mem::transmute(&self.client) };
-            let resource_path: &'static str = unsafe { mem::transmute(resource_path.as_str()) };
+            let fs = self.client.clone();
+            let resource_path = resource_path.clone();
             move || {
-                let result = project.write().unwrap().insert(resource_path, || {
+                let result = project.write().unwrap().insert(&resource_path, || {
                     Handle::current().block_on(fs.read_to_string(&path))
                 });
                 result.map(|_| project)
@@ -686,7 +686,6 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
     let (sender, mut receiver) = unbounded_channel();
 
     tokio::spawn(async move {
-        let client: &'static Client = unsafe { mem::transmute(&client) };
         let mut pending: HashMap<String, _> = HashMap::new();
         let mut interval = interval(Duration::from_millis(500));
 
@@ -705,8 +704,9 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
                     debug!(count = pending.len(), "Processing diagnostic batch");
                     let tasks: JoinSet<_> = pending
                         .drain()
-                        .map(|(path, project)| async move {
-                            publish_project_diagnostics(&path, project, client).await
+                        .map(|(path, project)| {
+                            let client = client.clone();
+                            publish_project_diagnostics(path, project, client)
                         })
                         .collect();
                     tasks.join_all().await;
@@ -739,9 +739,7 @@ async fn clean_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, cl
 }
 
 /// 生成并推送一个项目的诊断
-async fn publish_project_diagnostics(path: &str, project: Arc<RwLock<Project>>, client: &Client) {
-    let path = path.to_string();
-
+async fn publish_project_diagnostics(path: String, project: Arc<RwLock<Project>>, client: Client) {
     info!(project = %path, "Diagnosing project");
     let scene_folder_path = join(&path, "scene");
 

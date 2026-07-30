@@ -1,5 +1,3 @@
-use std::mem;
-
 use anyhow::anyhow;
 use path_tree::join;
 use tokio::{runtime::Handle, task::spawn_blocking};
@@ -14,16 +12,12 @@ mod workspace;
 
 /// 扫描目录构建项目
 pub async fn load_project<F: FileSystem + Send + Sync + 'static>(
-    root: &str,
-    fs: &F,
+    root: String,
+    fs: F,
     errors: &mut Vec<anyhow::Error>,
 ) -> Project {
-    let fs: &'static F = unsafe { mem::transmute(fs) };
-    let root: &'static str = unsafe { mem::transmute(root) };
-    let absolute_path = move |path: &str| join(root, path);
-
     // 读取配置
-    let config_path = absolute_path("config.txt");
+    let config_path = join(&root, "config.txt");
     let config = match fs.read_to_string(&config_path).await {
         Ok(content) => Config::from_str(&content),
         Err(error) => {
@@ -40,6 +34,8 @@ pub async fn load_project<F: FileSystem + Send + Sync + 'static>(
     };
 
     let (project, mut collected_errors) = spawn_blocking(move || {
+        let absolute_path = |path: &str| join(&root, path);
+
         let mut errors = Vec::new();
         let mut project = Project::new(config);
 
