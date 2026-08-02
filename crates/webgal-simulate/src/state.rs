@@ -39,13 +39,13 @@ pub struct State {
     /// 连续执行 (`-next`) 的语句将其效果累积于此;
     /// 遇到非连续执行语句时, 队列中的增量将被依次应用到 `stage` 并清空.
     ///
-    /// # Note
+    /// # Notes
     /// 舞台状态增量仅针对舞台状态 (`stage`), 变量修改和场景跳转等操作将不会作为舞台效果加入等待.
     pending_deltas: Vec<EffectList>,
 
     /// 变量表, 键为变量名, 值为 JSON 值
     ///
-    /// # Note
+    /// # Notes
     /// 设置变量的效果为立即执行, 这会导致待应用的舞台变换增量中关于其的引用过时.
     /// 为了解决这个问题, 需要在 [`StageEffect`] 构造时就从当前变量表取出需要的值.
     variables: HashMap<String, Value>,

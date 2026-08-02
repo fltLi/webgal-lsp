@@ -319,6 +319,12 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                 self.into()
             }
 
+            // 结束游戏
+            Sentence::End(_) => {
+                sentence.push_diagnostic(DiagnosticKind::Stopped(StopReason::NormalTermination));
+                StepOutcome::Halt
+            }
+
             _ => self.into(),
         }
     }

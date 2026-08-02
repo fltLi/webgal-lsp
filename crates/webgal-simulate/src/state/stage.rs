@@ -7,6 +7,8 @@ use webgal_language_core::element::{AnimationList, FigureSide, Live2dFocus, Tran
 /// 舞台状态
 #[derive(Debug, Clone, Default)]
 pub struct Stage {
+    // 对话
+    pub textbox: Rc<Textbox>,
     // 舞台对象
     pub background: Option<Rc<Background>>,
     pub figures: HashMap<String, Rc<Figure>>,
@@ -15,6 +17,14 @@ pub struct Stage {
     // 舞台效果
     pub transform: Option<Rc<Transform>>,
     pub pixi: Option<Rc<String>>,
+}
+
+/// 对话框
+#[derive(Debug, Clone, Default)]
+pub struct Textbox {
+    pub speaker: String,
+    pub content: Vec<String>, // 处理后纯文本
+    pub show: bool,
 }
 
 /// 舞台背景
@@ -31,7 +41,6 @@ pub struct Background {
 pub struct Figure {
     pub path: String,
     // 效果
-    pub side: FigureSide,
     pub transform: Transform,
     pub exit: Option<AnimationList>,
     pub complex_animation: Vec<String>,
