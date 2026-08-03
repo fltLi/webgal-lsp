@@ -38,6 +38,13 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/terre-adapter/package-lock.json
+
       - name: Set version
         shell: bash
         run: |
@@ -72,6 +79,14 @@ jobs:
           fi
           echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
+      - name: Build adapter
+        shell: bash
+        run: |
+          cd packages/terre-adapter
+          npm install
+          npm run build
+          cd -
+
       - name: Prepare terre-adapter package
         shell: bash
         run: |
@@ -82,7 +97,7 @@ jobs:
           ADAPTER_DIR="webgal-lsp-${{ env.VERSION }}"
           mkdir -p "$ADAPTER_DIR/bin"
 
-          cp packages/terre-adapter/src/start.js "$ADAPTER_DIR/"
+          cp packages/terre-adapter/dist/start.js "$ADAPTER_DIR/"
           cp "target/${{ matrix.target }}/release/$BIN_NAME" "$ADAPTER_DIR/bin/$BIN_NAME"
           if [ "${{ runner.os }}" != "Windows" ]; then
             chmod +x "$ADAPTER_DIR/bin/$BIN_NAME"

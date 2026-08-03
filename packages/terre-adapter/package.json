@@ -1,0 +1,21 @@
+{
+  "name": "webgal-lsp-adapter",
+  "displayName": "WebGAL Language Server Adapter",
+  "description": "Adapter for WebGAL Language Server with custom protocol support",
+  "version": "0.1.0",
+  "private": true,
+  "main": ".dist/start.js",
+  "scripts": {
+    "build": "esbuild src/start.ts --bundle --platform=node --target=node18 --outfile=./dist/start.js --format=cjs",
+    "watch": "esbuild src/start.ts --bundle --platform=node --target=node18 --outfile=./dist/start.js --format=cjs --watch",
+    "clean": "rm -f start.js"
+  },
+  "dependencies": {
+    "vscode-jsonrpc": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.5"
+  }
+}
