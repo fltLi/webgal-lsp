@@ -3,6 +3,7 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,16 +16,17 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: webgal-language-server-linux-x86_64
+            os-label: linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: webgal-language-server-windows-x86_64.exe
+            os-label: windows-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: webgal-language-server-macos-x86_64
+            os-label: macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: webgal-language-server-macos-aarch64
+            os-label: macos-aarch64
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,30 +38,84 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
+      - name: Set version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "VERSION=${{ github.ref_name }}" >> $GITHUB_ENV
+          else
+            echo "VERSION=dev" >> $GITHUB_ENV
+          fi
 
-      - name: Package binary
+      - name: Build Rust binary
+        run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
+
+      - name: Prepare binary-only package
         shell: bash
         run: |
           BIN_NAME="webgal-language-server"
           if [ "${{ runner.os }}" = "Windows" ]; then
             BIN_NAME="webgal-language-server.exe"
           fi
-          SRC="target/${{ matrix.target }}/release/${BIN_NAME}"
+          SRC="target/${{ matrix.target }}/release/$BIN_NAME"
+          DST="./$BIN_NAME"
+          cp "$SRC" "$DST"
 
           if [ "${{ runner.os }}" = "Windows" ]; then
-            ASSET_FILE="${{ matrix.artifact }}.zip"
-            7z a "$ASSET_FILE" "$SRC"
+            chmod +x "$DST" 2>/dev/null || true
+            ARCHIVE="server-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+            7z a "$ARCHIVE" "$DST"
           else
-            ASSET_FILE="${{ matrix.artifact }}.tar.gz"
-            chmod +x "$SRC"
-            tar czf "$ASSET_FILE" -C "$(dirname "$SRC")" "$(basename "$SRC")"
+            chmod +x "$DST"
+            ARCHIVE="server-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
+            tar czf "$ARCHIVE" "$DST"
           fi
-          echo "ASSET_FILE=$ASSET_FILE" >> $GITHUB_ENV
+          echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
-      - name: Upload binary
+      - name: Prepare terre-adapter package
+        shell: bash
+        run: |
+          BIN_NAME="webgal-language-server"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN_NAME="webgal-language-server.exe"
+          fi
+          ADAPTER_DIR="webgal-lsp-${{ env.VERSION }}"
+          mkdir -p "$ADAPTER_DIR/bin"
+
+          cp packages/terre-adapter/src/start.js "$ADAPTER_DIR/"
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "$ADAPTER_DIR/bin/$BIN_NAME"
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x "$ADAPTER_DIR/bin/$BIN_NAME"
+          fi
+
+          ARCHIVE="webgal-lsp-for-terre-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$ARCHIVE" "$ADAPTER_DIR"
+          else
+            zip -r "$ARCHIVE" "$ADAPTER_DIR"
+          fi
+          echo "ADAPTER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET_FILE }}
+          files: |
+            ${{ env.SERVER_ARCHIVE }}
+            ${{ env.ADAPTER_ARCHIVE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binary artifact (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os-label }}-binary
+          path: ${{ env.SERVER_ARCHIVE }}
+
+      - name: Upload adapter artifact (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os-label }}-adapter
+          path: ${{ env.ADAPTER_ARCHIVE }}
