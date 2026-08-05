@@ -38,7 +38,6 @@ impl Completion {
             name,
             kind,
             len,
-            text,
             description,
         } = self;
 
@@ -62,7 +61,7 @@ impl Completion {
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: span,
-                new_text: join_completion_text(text),
+                new_text: name.clone(),
             })),
             ..Default::default()
         }

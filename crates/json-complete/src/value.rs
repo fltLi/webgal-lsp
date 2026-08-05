@@ -33,7 +33,6 @@ pub struct Completion {
     pub name: String,
     pub kind: IdentKind,
     pub len: usize,
-    pub text: Vec<String>,
     pub description: String,
 }
 
@@ -115,27 +114,21 @@ impl Value {
             Ident::Key(input) if let Self::Object(fields) = value => fields
                 .iter()
                 .filter(|Field { key, .. }| key.starts_with(input))
-                .map(
-                    |Field {
-                         key,
-                         value,
-                         description,
-                     }| {
-                        let text = match value {
-                            Self::Object(_) => vec![format!("{key}\": {{"), '}'.to_string()],
-                            Self::Array(_) => vec![format!("{key}\": ["), ']'.to_string()],
-                            Self::String => vec![format!("{key}\": \""), '"'.to_string()],
-                            _ => vec![format!("{key}\": ")],
-                        };
-                        Completion {
-                            name: key.to_string(),
-                            kind: IdentKind::Key,
-                            len: input.len(),
-                            text,
-                            description: description.to_string(),
-                        }
-                    },
-                )
+                .map(|field| {
+                    // TODO: 根据光标后的内容更好地提供下列补全
+                    // let text = match value {
+                    //     Self::Object(_) => format!("{key}\":{{$1},$0"),
+                    //     Self::Array(_) => format!("{key}\":[$1],$0"),
+                    //     Self::String => format!("{key}\":\"$1\"$0"),
+                    //     _ => format!("{key}\":"),
+                    // };
+                    Completion {
+                        name: field.key.to_string(),
+                        kind: IdentKind::Key,
+                        len: input.len(),
+                        description: field.description.to_string(),
+                    }
+                })
                 .collect(),
 
             Ident::Value(input) if matches!(value, Self::Bool) => ["true", "false"]
@@ -145,7 +138,6 @@ impl Value {
                     name: name.to_string(),
                     kind: IdentKind::Bool,
                     len: input.len(),
-                    text: vec![name.to_string()],
                     description: description.to_string(),
                 })
                 .collect(),

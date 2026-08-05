@@ -1,13 +1,24 @@
 {
-  "brackets": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"],
-  ],
   "autoClosingPairs": [
     { "open": "{", "close": "}" },
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
-    // "" 由 json-complete 处理
+    { "open": "\"", "close": "\"", "notIn": ["string"] }
+  ],
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "comments": {
+    "lineComment": {
+      "comment": ";"
+    }
+  },
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""]
   ]
 }

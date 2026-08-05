@@ -23,21 +23,18 @@ fn complete_object_keys() {
             name: "name".to_string(),
             kind: IdentKind::Key,
             len: 0,
-            text: vec!["name\": \"".to_string(), "\"".to_string()],
             description: "".to_string(),
         },
         Completion {
             name: "age".to_string(),
             kind: IdentKind::Key,
             len: 0,
-            text: vec!["age\": ".to_string()],
             description: "".to_string(),
         },
         Completion {
             name: "active".to_string(),
             kind: IdentKind::Key,
             len: 0,
-            text: vec!["active\": ".to_string()],
             description: "".to_string(),
         },
     ];
@@ -57,7 +54,6 @@ fn complete_object_keys_with_prefix() {
         name: "firstName".to_string(),
         kind: IdentKind::Key,
         len: 2,
-        text: vec!["firstName\": \"".to_string(), "\"".to_string()],
         description: "".to_string(),
     }];
     assert_completions_equal(completions, expected);
@@ -75,14 +71,12 @@ fn complete_bool_values() {
             name: "true".to_string(),
             kind: IdentKind::Bool,
             len: 0,
-            text: vec!["true".to_string()],
             description: "".to_string(),
         },
         Completion {
             name: "false".to_string(),
             kind: IdentKind::Bool,
             len: 0,
-            text: vec!["false".to_string()],
             description: "".to_string(),
         },
     ];
@@ -100,7 +94,6 @@ fn complete_bool_values_with_prefix() {
         name: "true".to_string(),
         kind: IdentKind::Bool,
         len: 3,
-        text: vec!["true".to_string()],
         description: "".to_string(),
     }];
     assert_completions_equal(completions, expected);
@@ -121,14 +114,12 @@ fn complete_nested_object_keys() {
             name: "name".to_string(),
             kind: IdentKind::Key,
             len: 0,
-            text: vec!["name\": \"".to_string(), "\"".to_string()],
             description: "".to_string(),
         },
         Completion {
             name: "email".to_string(),
             kind: IdentKind::Key,
             len: 0,
-            text: vec!["email\": \"".to_string(), "\"".to_string()],
             description: "".to_string(),
         },
     ];
