@@ -1,3 +1,6 @@
 {
+    // Rust
     "rust-analyzer.check.command": "clippy",
+    // Python
+    "python.analysis.typeCheckingMode": "strict",
 }
