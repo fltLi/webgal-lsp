@@ -7,6 +7,20 @@ use serde::Serialize;
 
 use crate::util::{span_of, split_once_escaped};
 
+// TODO: 使用访问权限强制保证 PrimarySentence 中引用的真实性
+
+/// 语句内位置标记
+///
+/// 用于标识光标在一条语句的不同组成部分内, 方便补全 / 跳转 / 悬浮文档等功能使用.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SentenceLocation<'a> {
+    Command(&'a str),
+    Content(&'a str),
+    ArgumentName(&'a str),
+    ArgumentValue(&'a str, &'a str),
+    Other,
+}
+
 /// 初级语句
 ///
 /// 该阶段仅做词法级解析, 不验证语句是否合法 / 参数是否完备.
@@ -111,6 +125,53 @@ impl<'a> PrimarySentence<'a> {
     /// * 此函数假设 `command` 与语句原始字符串开头对齐, 且提供的字符串不超过其末尾.
     pub fn get_span(&self, s: &str) -> Range<usize> {
         span_of(self.command, s)
+    }
+
+    /// 根据字符偏移量定位光标所在的语句组成部分
+    ///
+    /// # Behavior
+    /// * 此函数假设语句按照 `command` -> `content` -> `arguments` 的顺序排布内存.
+    ///   对于由 [`Self::from_str`] 构造的语句, 此性质已保证.
+    pub fn locate(&self, position: usize) -> SentenceLocation<'a> {
+        let Self {
+            command,
+            content,
+            arguments,
+            ..
+        } = self;
+
+        if position <= command.len() {
+            return SentenceLocation::Command(&command[..position]);
+        }
+
+        if let Some(content) = content {
+            let Range { start, end } = self.get_span(content);
+            if position <= end {
+                return SentenceLocation::Content(&content[..position.saturating_sub(start)]);
+            }
+        }
+
+        // TODO: 改为二分查找 (这点性能暂时没必要优化)
+        for &(name, value) in arguments.iter() {
+            let Range { start, end } = self.get_span(name);
+            if position < start {
+                return SentenceLocation::Other;
+            } else if position <= end {
+                return SentenceLocation::ArgumentName(&name[..position - start]);
+            }
+
+            if let Some(value) = value {
+                let Range { start, end } = self.get_span(value);
+                if position <= end {
+                    return SentenceLocation::ArgumentValue(
+                        name,
+                        &value[..position.saturating_sub(start)],
+                    );
+                }
+            }
+        }
+
+        SentenceLocation::Other
     }
 }
 
@@ -391,5 +452,133 @@ mod tests {
         assert_eq!(argument, "-unlockname=home");
         assert_eq!(span, 22..38);
         assert_eq!(parsed.to_string(), original);
+    }
+
+    // -------- 结构定位 --------
+
+    #[test]
+    fn locate_in_command() {
+        let s = "changeBg:bg.png -next -unlockname=home;";
+        let parsed = PrimarySentence::from_str(s);
+        assert_eq!(parsed.locate(0), SentenceLocation::Command(""));
+        assert_eq!(parsed.locate(4), SentenceLocation::Command("chan"));
+        let cmd_len = "changeBg".len();
+        assert_eq!(
+            parsed.locate(cmd_len),
+            SentenceLocation::Command("changeBg")
+        );
+    }
+
+    #[test]
+    fn locate_in_content() {
+        let s = "changeBg:bg.png -next -unlockname=home;";
+        let parsed = PrimarySentence::from_str(s);
+        let cmd_len = "changeBg".len();
+        let content_start = cmd_len + 1;
+        assert_eq!(parsed.locate(content_start), SentenceLocation::Content(""));
+        assert_eq!(
+            parsed.locate(content_start + 2),
+            SentenceLocation::Content("bg")
+        );
+        let content_len = "bg.png".len();
+        assert_eq!(
+            parsed.locate(content_start + content_len),
+            SentenceLocation::Content("bg.png")
+        );
+    }
+
+    #[test]
+    fn locate_in_argument_name() {
+        let s = "setVar:target -name=value;";
+        let parsed = PrimarySentence::from_str(s);
+        let (_, _) = parsed.get_argument("name").unwrap();
+        let full_arg = parsed.get_full_argument(0);
+        let span = parsed.get_span(full_arg);
+        let name_start = span.start + 1;
+        assert_eq!(&s[name_start..name_start + 4], "name");
+        assert_eq!(parsed.locate(span.start), SentenceLocation::Other);
+        assert_eq!(
+            parsed.locate(span.start + 1),
+            SentenceLocation::ArgumentName("")
+        );
+        assert_eq!(
+            parsed.locate(name_start + 2),
+            SentenceLocation::ArgumentName("na")
+        );
+        assert_eq!(
+            parsed.locate(name_start + 4),
+            SentenceLocation::ArgumentName("name")
+        );
+    }
+
+    #[test]
+    fn locate_in_argument_value() {
+        let s = "setVar:target -name=value;";
+        let parsed = PrimarySentence::from_str(s);
+        let full_arg = parsed.get_full_argument(0);
+        let span = parsed.get_span(full_arg);
+        let value_start = span.start + "-name=".len();
+        assert_eq!(
+            parsed.locate(value_start),
+            SentenceLocation::ArgumentValue("name", "")
+        );
+        assert_eq!(
+            parsed.locate(value_start + 1),
+            SentenceLocation::ArgumentValue("name", "v")
+        );
+        assert_eq!(
+            parsed.locate(value_start + 5),
+            SentenceLocation::ArgumentValue("name", "value")
+        );
+    }
+
+    #[test]
+    fn locate_argument_without_value() {
+        let s = "cmd: -flag;";
+        let parsed = PrimarySentence::from_str(s);
+        let full_arg = parsed.get_full_argument(0);
+        let span = parsed.get_span(full_arg);
+        let name_start = span.start + 1;
+        assert_eq!(
+            parsed.locate(name_start + 2),
+            SentenceLocation::ArgumentName("fl")
+        );
+        assert_eq!(
+            parsed.locate(name_start + 4),
+            SentenceLocation::ArgumentName("flag")
+        );
+        assert_eq!(parsed.locate(name_start + 5), SentenceLocation::Other);
+    }
+
+    #[test]
+    fn locate_between_arguments_returns_other() {
+        let s = "cmd: -a= -b=2;";
+        let parsed = PrimarySentence::from_str(s);
+        let first_full = parsed.get_full_argument(0);
+        let second_full = parsed.get_full_argument(1);
+        let gap_start = parsed.get_span(first_full).end;
+        let gap_end = parsed.get_span(second_full).start;
+        assert!(gap_start < gap_end);
+        assert_eq!(
+            parsed.locate(gap_start),
+            SentenceLocation::ArgumentValue("a", "")
+        );
+        assert_eq!(parsed.locate(gap_end), SentenceLocation::Other);
+    }
+
+    #[test]
+    fn locate_in_comment_area_returns_other() {
+        let s = "cmd:content; comment here";
+        let parsed = PrimarySentence::from_str(s);
+        let semicolon_pos = s.find(';').unwrap();
+        assert_eq!(parsed.locate(semicolon_pos + 3), SentenceLocation::Other);
+    }
+
+    #[test]
+    fn locate_empty_sentence() {
+        let s = ";";
+        let parsed = PrimarySentence::from_str(s);
+        assert_eq!(parsed.locate(0), SentenceLocation::Command(""));
+        assert_eq!(parsed.locate(1), SentenceLocation::Other);
     }
 }
