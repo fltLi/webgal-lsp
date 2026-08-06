@@ -16,8 +16,8 @@ use crate::util::{span_of, split_once_escaped};
 pub enum SentenceLocation<'a> {
     Command(&'a str),
     Content(&'a str),
-    ArgumentName(&'a str),
-    ArgumentValue(&'a str, &'a str),
+    ArgumentName(usize, &'a str),
+    ArgumentValue(usize, &'a str, &'a str),
     Other,
 }
 
@@ -152,18 +152,19 @@ impl<'a> PrimarySentence<'a> {
         }
 
         // TODO: 改为二分查找 (这点性能暂时没必要优化)
-        for &(name, value) in arguments.iter() {
+        for (i, &(name, value)) in arguments.iter().enumerate() {
             let Range { start, end } = self.get_span(name);
             if position < start {
                 return SentenceLocation::Other;
             } else if position <= end {
-                return SentenceLocation::ArgumentName(&name[..position - start]);
+                return SentenceLocation::ArgumentName(i, &name[..position - start]);
             }
 
             if let Some(value) = value {
                 let Range { start, end } = self.get_span(value);
                 if position <= end {
                     return SentenceLocation::ArgumentValue(
+                        i,
                         name,
                         &value[..position.saturating_sub(start)],
                     );
@@ -499,15 +500,15 @@ mod tests {
         assert_eq!(parsed.locate(span.start), SentenceLocation::Other);
         assert_eq!(
             parsed.locate(span.start + 1),
-            SentenceLocation::ArgumentName("")
+            SentenceLocation::ArgumentName(0, "")
         );
         assert_eq!(
             parsed.locate(name_start + 2),
-            SentenceLocation::ArgumentName("na")
+            SentenceLocation::ArgumentName(0, "na")
         );
         assert_eq!(
             parsed.locate(name_start + 4),
-            SentenceLocation::ArgumentName("name")
+            SentenceLocation::ArgumentName(0, "name")
         );
     }
 
@@ -520,15 +521,15 @@ mod tests {
         let value_start = span.start + "-name=".len();
         assert_eq!(
             parsed.locate(value_start),
-            SentenceLocation::ArgumentValue("name", "")
+            SentenceLocation::ArgumentValue(0, "name", "")
         );
         assert_eq!(
             parsed.locate(value_start + 1),
-            SentenceLocation::ArgumentValue("name", "v")
+            SentenceLocation::ArgumentValue(0, "name", "v")
         );
         assert_eq!(
             parsed.locate(value_start + 5),
-            SentenceLocation::ArgumentValue("name", "value")
+            SentenceLocation::ArgumentValue(0, "name", "value")
         );
     }
 
@@ -541,11 +542,11 @@ mod tests {
         let name_start = span.start + 1;
         assert_eq!(
             parsed.locate(name_start + 2),
-            SentenceLocation::ArgumentName("fl")
+            SentenceLocation::ArgumentName(0, "fl")
         );
         assert_eq!(
             parsed.locate(name_start + 4),
-            SentenceLocation::ArgumentName("flag")
+            SentenceLocation::ArgumentName(0, "flag")
         );
         assert_eq!(parsed.locate(name_start + 5), SentenceLocation::Other);
     }
@@ -561,7 +562,7 @@ mod tests {
         assert!(gap_start < gap_end);
         assert_eq!(
             parsed.locate(gap_start),
-            SentenceLocation::ArgumentValue("a", "")
+            SentenceLocation::ArgumentValue(0, "a", "")
         );
         assert_eq!(parsed.locate(gap_end), SentenceLocation::Other);
     }

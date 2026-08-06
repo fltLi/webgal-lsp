@@ -40,10 +40,10 @@ pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<Com
     let completions = match primary.locate(position.character as usize) {
         SentenceLocation::Command(input) => complete_command(input, position, project),
         SentenceLocation::Content(input) => sentence.complete_content(input, position, project),
-        SentenceLocation::ArgumentName(input) => {
+        SentenceLocation::ArgumentName(_, input) => {
             sentence.complete_argument_name(input, position, project)
         }
-        SentenceLocation::ArgumentValue(name, input) => {
+        SentenceLocation::ArgumentValue(_, name, input) => {
             sentence.complete_argument_value(name, input, position, project)
         }
         SentenceLocation::Other => Vec::default(),
