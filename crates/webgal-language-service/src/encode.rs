@@ -88,6 +88,12 @@ pub fn diagnostic_utf8_to_utf16(scene: &Scene, diagnostic: Diagnostic) -> Diagno
     }
 }
 
+pub fn document_utf8_to_utf16(scene: &Scene, document: &mut Hover) {
+    if let Some(ref mut range) = document.range {
+        *range = range_utf8_to_utf16(scene, *range);
+    }
+}
+
 pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
     let mut current_line = 0;
     let mut current_byte_pos = 0; // 当前行内的字节偏移

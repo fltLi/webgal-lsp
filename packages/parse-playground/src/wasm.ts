@@ -10,10 +10,11 @@ export interface WasmModule {
     getLastParseTime: () => number | null;
 
     // 语言服务
-    highlight: () => Uint32Array;
-    highlightTokenTypes: () => string[];
-    complete: (line: number, character: number) => unknown[];
     diagnose: () => unknown[];
+    document: (line: number, character: number) => unknown | null;
+    highlightTokenTypes: () => string[];
+    highlight: () => Uint32Array;
+    complete: (line: number, character: number) => unknown[];
     format: () => unknown[];
 }
 
@@ -22,6 +23,7 @@ let wasmPromise: Promise<WasmModule> | null = null;
 export function loadWasm(): Promise<WasmModule> {
     if (wasmPromise === null) {
         wasmPromise = init().then(() => ({
+            // 场景管理
             updateScene: (text: string) => {
                 if (currentScene) {
                     currentScene.free();
@@ -36,18 +38,24 @@ export function loadWasm(): Promise<WasmModule> {
                 return currentScene.sentences();
             },
             getLastParseTime: () => lastParseTime,
+
+            // 语言服务
+            diagnose: () => {
+                if (!currentScene) return [];
+                return currentScene.diagnose();
+            },
+            document: (line: number, character: number) => {
+                if (!currentScene) return null;
+                return currentScene.document(line, character) ?? null;
+            },
+            highlightTokenTypes: () => Scene.highlight_token_types(),
             highlight: () => {
                 if (!currentScene) return new Uint32Array();
                 return currentScene.highlight();
             },
-            highlightTokenTypes: () => Scene.highlight_token_types(),
             complete: (line: number, character: number) => {
                 if (!currentScene) return [];
                 return currentScene.complete(line, character);
-            },
-            diagnose: () => {
-                if (!currentScene) return [];
-                return currentScene.diagnose();
             },
             format: () => {
                 if (!currentScene) return [];

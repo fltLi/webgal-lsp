@@ -1,7 +1,5 @@
-use std::ops;
-
 use lsp_types::*;
-use webgal_language_core::sentence::{PrimarySentence, Scene, SentenceInfo};
+use webgal_language_core::sentence::{Scene, SentenceInfo, SentenceLocation};
 
 use crate::{
     project::Project,
@@ -39,28 +37,18 @@ pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<Com
     };
 
     // 转发补全
-    match Location::locate(primary, position) {
-        Location::Command(input) => complete_command(input, position, project)
-            .into_iter()
-            .map(From::from)
-            .collect(),
-        Location::Content(input) => sentence
-            .complete_content(input, position, project)
-            .into_iter()
-            .map(From::from)
-            .collect(),
-        Location::ArgumentName(input) => sentence
-            .complete_argument_name(input, position, project)
-            .into_iter()
-            .map(From::from)
-            .collect(),
-        Location::ArgumentValue(name, input) => sentence
-            .complete_argument_value(name, input, position, project)
-            .into_iter()
-            .map(From::from)
-            .collect(),
-        Location::Other => Vec::default(),
-    }
+    let completions = match primary.locate(position.character as usize) {
+        SentenceLocation::Command(input) => complete_command(input, position, project),
+        SentenceLocation::Content(input) => sentence.complete_content(input, position, project),
+        SentenceLocation::ArgumentName(_, input) => {
+            sentence.complete_argument_name(input, position, project)
+        }
+        SentenceLocation::ArgumentValue(_, name, input) => {
+            sentence.complete_argument_value(name, input, position, project)
+        }
+        SentenceLocation::Other => Vec::default(),
+    };
+    completions.into_iter().map(From::from).collect()
 }
 
 struct PrimaryCompletion {
@@ -139,57 +127,6 @@ impl From<CompletionItem> for PrimaryCompletion {
             span,
             insert_text,
         }
-    }
-}
-
-enum Location<'a> {
-    Command(&'a str),
-    Content(&'a str),
-    ArgumentName(&'a str),
-    ArgumentValue(&'a str, &'a str),
-    Other,
-}
-
-impl<'a> Location<'a> {
-    fn locate(primary: &PrimarySentence<'a>, position: Position) -> Self {
-        let PrimarySentence {
-            command,
-            content,
-            arguments,
-            ..
-        } = primary;
-
-        let index = position.character as usize;
-
-        if index <= command.len() {
-            return Self::Command(&command[..index]);
-        }
-
-        if let Some(content) = content {
-            let ops::Range { start, end } = primary.get_span(content);
-            if index <= end {
-                return Self::Content(&content[..index.saturating_sub(start)]);
-            }
-        }
-
-        // TODO: 改为二分查找 (这点性能暂时没必要优化)
-        for &(name, value) in arguments {
-            let ops::Range { start, end } = primary.get_span(name);
-            if index < start {
-                return Self::Other;
-            } else if index <= end {
-                return Self::ArgumentName(&name[..index - start]);
-            }
-
-            if let Some(value) = value {
-                let ops::Range { start, end } = primary.get_span(value);
-                if index <= end {
-                    return Self::ArgumentValue(name, &value[..index.saturating_sub(start)]);
-                }
-            }
-        }
-
-        Self::Other
     }
 }
 

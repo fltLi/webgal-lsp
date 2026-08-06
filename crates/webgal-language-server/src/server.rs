@@ -264,6 +264,7 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
+            hover_provider: Some(document_capability()),
             semantic_tokens_provider: Some(highlight_capability()),
             completion_provider: Some(complete_capability()),
             document_formatting_provider: Some(format_capability()),
@@ -502,6 +503,59 @@ impl LanguageServer for Backend {
                 server.workspace.write().await.remove_all_under(&root);
             }
         });
+    }
+
+    // -------- service --------
+
+    async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
+        let path = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Documenting requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let documentation = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Documenting skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Scene not found for documenting");
+                    return None;
+                }
+            };
+
+            // 生成悬浮文档
+            info!(project = %project_path, %path, "Documenting content");
+            let position = position_utf16_to_utf8(scene, params.text_document_position_params.position);
+            let mut documentation = document(scene, position)?;
+            document_utf8_to_utf16(scene, &mut documentation);
+            Some(documentation)
+        })
+        .await
+        .unwrap();
+
+        Ok(documentation)
     }
 
     async fn semantic_tokens_full(

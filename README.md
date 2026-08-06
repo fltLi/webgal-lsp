@@ -10,6 +10,7 @@ WebGAL 语言基础设施。
 - **自动补全**：语句、参数、资源路径、标识符等智能提示 -> [详细说明](./docs/complete.md)
 - **代码诊断**：语法错误、资源缺失等实时检查 -> [详细说明](./docs/diagnose.md)
 - **语义高亮**：语句类型、参数、注释等色彩渲染
+- **悬浮文档**：悬停查看语句、参数的详细说明 -> [详细说明](#documentation-license)
 
 #### 功能展示
 
@@ -83,4 +84,5 @@ cargo run -p webgal-language-server -- --log-level debug --log-format plain
 
 ## :page_facing_up: 许可证
 
-Code: MPL-2.0, 2026, fltLi
+- **Code**: MPL-2.0, 2026, fltLi
+- <a id="documentation-license">**Built-in documentation**</a>: MPL-2.0, derived from [OpenWebGAL/WebGAL_Doc](https://github.com/OpenWebGAL/WebGAL_Doc), located at `crates/webgal-language-service/data/document.json`
