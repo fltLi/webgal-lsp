@@ -48,6 +48,8 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
                 aliases: ['WebGAL', 'WebGAL Script'],
                 mimetypes: ['application/webgalscript'],
             });
+
+            // 设置语言配置
             monaco.languages.setLanguageConfiguration(languageId, {
                 comments: { lineComment: ';' },
                 brackets: [
@@ -59,6 +61,13 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
                     { open: '{', close: '}' },
                     { open: '[', close: ']' },
                     { open: '(', close: ')' },
+                    { open: '"', close: '"', notIn: ['string'] },
+                ],
+                surroundingPairs: [
+                    { open: '{', close: '}' },
+                    { open: '[', close: ']' },
+                    { open: '(', close: ')' },
+                    { open: '"', close: '"' },
                 ],
             });
         }
@@ -81,6 +90,40 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
                 }
             },
             releaseDocumentSemanticTokens: () => { /* no-op */ },
+        });
+
+        // 悬浮文档
+        monaco.languages.registerHoverProvider(languageId, {
+            provideHover: (_model, position) => {
+                if (!wasm) return null;
+                try {
+                    const result = wasm.document(position.lineNumber - 1, position.column - 1);
+                    if (!result) return null;
+
+                    const contents: monaco.IMarkdownString[] = [];
+                    const contentsObj = (result as any).contents;
+                    if (contentsObj?.kind === 'markdown') {
+                        const markdown = { value: contentsObj.value };
+                        contents.push(markdown);
+                    }
+
+                    const range = (result as any).range;
+                    let monacoRange: monaco.IRange | undefined;
+                    if (range) {
+                        monacoRange = {
+                            startLineNumber: range.start.line + 1,
+                            startColumn: range.start.character + 1,
+                            endLineNumber: range.end.line + 1,
+                            endColumn: range.end.character + 1,
+                        };
+                    }
+
+                    return { contents, range: monacoRange };
+                } catch (e) {
+                    console.error('Hover error:', e);
+                    return null;
+                }
+            },
         });
     };
 

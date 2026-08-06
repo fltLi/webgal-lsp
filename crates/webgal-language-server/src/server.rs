@@ -548,11 +548,9 @@ impl LanguageServer for Backend {
             // 生成悬浮文档
             info!(project = %project_path, %path, "Documenting content");
             let position = position_utf16_to_utf8(scene, params.text_document_position_params.position);
-            let mut document = document(scene, position);
-            if let Some(ref mut document) = document {
-                document_utf8_to_utf16(scene, document);
-            }
-            document
+            let mut document = document(scene, position)?;
+            document_utf8_to_utf16(scene, &mut document);
+            Some(document)
         })
         .await
         .unwrap();
