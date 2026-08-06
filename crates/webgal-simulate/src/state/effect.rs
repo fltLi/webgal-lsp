@@ -5,11 +5,15 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc, result};
 use serde_json::Value;
 use webgal_language_core::{
     dispatch_sentence,
-    element::{AnimationList, Live2dFocus, TokenSplit, Transform},
+    element::{AnimationList, ObjectId, TokenSplit, Transform},
     sentence::*,
 };
 
-use crate::{DiagnosticKind, ProjectView, SymbolKind, scene::Project, state::stage::Stage};
+use crate::{
+    DiagnosticKind, ProjectView, SymbolKind,
+    scene::Project,
+    state::{effect::StageEffect::SetDialogueSpeaker, stage::Stage},
+};
 
 /// 单条语句产生的舞台变换组
 ///
@@ -51,34 +55,25 @@ impl EffectList {
 #[derive(Debug, Clone)]
 enum StageEffect {
     // 对话
-    SetTextboxSpeaker(String),
-    SetTextboxContent(Vec<String>),
-    AddTextboxContent(Vec<String>),
+    SetDialogueSpeaker(String),
+    SetDialogueContent(Vec<String>),
+    AddDialogueContent(Vec<String>),
+    SetDialogueFigure(String),
     SetTextboxVisibility(bool),
 
     // 背景
     SetBackground(String),
     RemoveBackground,
     SetBackgroundTransform(Box<Transform>),
-    SetBackgroundAnimation(AnimationList),
-    SetBackgroundExitAnimation(AnimationList),
-    SetBackgroundComplexAnimation(String),
+    SetBackgroundExitAnimation(String),
 
     // 立绘
     SetFigure(String, String),
     RemoveFigure(String),
     SetFigureTransform(String, Box<Transform>),
-    SetFigureAnimation(String, AnimationList),
-    SetFigureExitAnimation(String, AnimationList),
-    SetFigureComplexAnimation(String, String),
+    SetFigureExitAnimation(String, String),
     SetFigureMotion(String, String),
     SetFigureExpression(String, String),
-    SetFigureFocus(String, Live2dFocus),
-    SetFigureMouthOpen(String, String),
-    SetFigureMouthHalfOpen(String, String),
-    SetFigureMouthClose(String, String),
-    SetFigureEyesOpen(String, String),
-    SetFigureEyesClose(String, String),
 
     // 背景音乐
     SetBgm(String),
@@ -92,7 +87,6 @@ enum StageEffect {
 
     // 舞台效果
     SetStageTransform(Box<Transform>),
-    SetStageAnimation(AnimationList),
     SetStagePixiEffect(String),
     RemoveStagePixiEffect,
 }
@@ -162,16 +156,20 @@ impl ToEffects for Sentence {
 
 // -------- 常规演出 --------
 
+// TODO: 检查变换操作未计入的字段的变量插值
+
 impl ToEffects for SaySentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
         if let Some(speaker) = &self.speaker {
-            effects.push(StageEffect::SetTextboxSpeaker(speaker.clone()));
+            effects.push(SetDialogueSpeaker(
+                interpolate_or_record(speaker, variables, diagnostics).to_string(),
+            ));
         }
 
         let content = self
@@ -179,14 +177,20 @@ impl ToEffects for SaySentence {
             .iter()
             .map(|text| {
                 TokenSplit::new(text)
-                    .map(|token| interpolate(token.text, variables))
-                    .collect::<result::Result<String, _>>()
+                    .map(|token| interpolate_or_record(token.text, variables, diagnostics))
+                    .collect()
             })
             .collect();
-        match content {
-            Ok(content) if self.concat => effects.push(StageEffect::AddTextboxContent(content)),
-            Ok(content) => effects.push(StageEffect::SetTextboxContent(content)),
-            Err(error) => diagnostics.push(error),
+        if self.concat {
+            effects.push(StageEffect::AddDialogueContent(content));
+        } else {
+            effects.push(StageEffect::SetDialogueContent(content));
+        }
+
+        if let Some(figure) = &self.figure {
+            effects.push(StageEffect::SetDialogueFigure(
+                interpolate_or_record(figure.get_id(), variables, diagnostics).to_string(),
+            ));
         }
     }
 }
@@ -195,11 +199,29 @@ impl ToEffects for ChangeBackgroundSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        if let Some(path) = &self.background {
+            effects.push(StageEffect::SetBackground(
+                interpolate_or_record(path, variables, diagnostics).to_string(),
+            ))
+        } else {
+            effects.push(StageEffect::RemoveBackground);
+            return;
+        }
+
+        if let Some(transform) = &self.transform {
+            effects.push(StageEffect::SetBackgroundTransform(Box::new(
+                transform.clone(),
+            )));
+        }
+        if let Some(exit) = &self.exit {
+            effects.push(StageEffect::SetBackgroundExitAnimation(
+                interpolate_or_record(exit, variables, diagnostics).to_string(),
+            ));
+        }
     }
 }
 
@@ -207,11 +229,48 @@ impl ToEffects for ChangeFigureSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id_raw = self.get_id();
+        let id = interpolate_or_record(&id_raw, variables, diagnostics);
+
+        if let Some(path) = &self.figure {
+            effects.push(StageEffect::SetFigure(
+                id.to_string(),
+                interpolate_or_record(path, variables, diagnostics).to_string(),
+            ));
+        } else {
+            effects.push(StageEffect::RemoveFigure(id.to_string()));
+            return;
+        }
+
+        if let Some(transform) = &self.transform {
+            effects.push(StageEffect::SetFigureTransform(
+                id.to_string(),
+                Box::new(transform.clone()),
+            ));
+        }
+        if let Some(exit) = &self.exit {
+            effects.push(StageEffect::SetFigureExitAnimation(
+                id.to_string(),
+                interpolate_or_record(exit, variables, diagnostics).to_string(),
+            ));
+        }
+
+        if let Some(motion) = &self.motion {
+            effects.push(StageEffect::SetFigureMotion(
+                id.to_string(),
+                interpolate_or_record(motion, variables, diagnostics).to_string(),
+            ));
+        }
+        if let Some(expression) = &self.expression {
+            effects.push(StageEffect::SetFigureExpression(
+                id.to_string(),
+                interpolate_or_record(expression, variables, diagnostics).to_string(),
+            ));
+        }
     }
 }
 
@@ -219,11 +278,17 @@ impl ToEffects for BgmSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        if let Some(path) = &self.bgm {
+            effects.push(StageEffect::SetBgm(
+                interpolate_or_record(path, variables, diagnostics).to_string(),
+            ));
+        } else {
+            effects.push(StageEffect::RemoveBgm);
+        }
     }
 }
 
@@ -231,11 +296,11 @@ impl ToEffects for PlayVideoSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
+        _project: &Project<'a, P>,
+        _effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        interpolate_or_record(&self.video, variables, diagnostics);
     }
 }
 
@@ -243,11 +308,28 @@ impl ToEffects for PlayEffectSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id = self
+            .id
+            .as_ref()
+            .map(|id| interpolate_or_record(id, variables, diagnostics));
+        let path = self
+            .vocal
+            .as_ref()
+            .map(|path| interpolate_or_record(path, variables, diagnostics));
+
+        match (id, path) {
+            (Some(id), Some(path)) => effects.push(StageEffect::SetLoopingSound(
+                id.to_string(),
+                path.to_string(),
+            )),
+            (Some(id), None) => effects.push(StageEffect::RemoveLoopingSound(id.to_string())),
+            (None, Some(_path)) => {}
+            (None, None) => effects.push(StageEffect::RemoveAllLoopingSound),
+        }
     }
 }
 
@@ -261,31 +343,41 @@ impl ToEffects for SetAnimationSentence {
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id = match &self.target {
+            Some(v) => v,
+            None => return,
+        };
+
+        let transform = match project.view().get_animation(&self.animation) {
+            Some(animations) => Box::new(merge_animations(animations, self.write_default)),
+            None => return,
+        };
+
+        effects.push(make_transform_effect(transform, id, variables, diagnostics));
     }
 }
 
-impl ToEffects for SetComplexAnimationSentence {
-    fn extend_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) {
-        unimplemented!()
-    }
-}
+impl ToEffects for SetComplexAnimationSentence {}
 
 impl ToEffects for SetTransformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id = match &self.target {
+            Some(v) => v,
+            None => return,
+        };
+
+        let mut transform = Box::new(self.transform.clone());
+        if self.write_default {
+            transform.merge(&Transform::default_values());
+        }
+
+        effects.push(make_transform_effect(transform, id, variables, diagnostics));
     }
 }
 
@@ -293,11 +385,18 @@ impl ToEffects for SetTempAnimationSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id = match &self.target {
+            Some(v) => v,
+            None => return,
+        };
+
+        let transform = Box::new(merge_animations(&self.animation, self.write_default));
+
+        effects.push(make_transform_effect(transform, id, variables, diagnostics));
     }
 }
 
@@ -305,11 +404,28 @@ impl ToEffects for SetTransitionSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        let id = match &self.target {
+            Some(v) => v,
+            None => return,
+        };
+
+        if let Some(exit) = &self.exit {
+            let exit = interpolate_or_record(exit, variables, diagnostics);
+            match id {
+                ObjectId::Stage => {}
+                ObjectId::Background => {
+                    effects.push(StageEffect::SetBackgroundExitAnimation(exit.to_string()))
+                }
+                ObjectId::Figure(id) => effects.push(StageEffect::SetFigureExitAnimation(
+                    interpolate_or_record(id, variables, diagnostics).to_string(),
+                    exit.to_string(),
+                )),
+            }
+        }
     }
 }
 
@@ -319,23 +435,25 @@ impl ToEffects for PixiPerformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        effects.push(StageEffect::SetStagePixiEffect(
+            interpolate_or_record(&self.effect, variables, diagnostics).to_string(),
+        ));
     }
 }
 
 impl ToEffects for PixiInitSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _variables: &HashMap<String, Value>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        _diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        effects.push(StageEffect::RemoveStagePixiEffect);
     }
 }
 
@@ -343,49 +461,31 @@ impl ToEffects for IntroSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
+        _project: &Project<'a, P>,
+        _effects: &mut Vec<StageEffect>,
         diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        for text in &self.content {
+            interpolate_or_record(text, variables, diagnostics);
+        }
     }
 }
 
-impl ToEffects for MiniAvatarSentence {
-    fn extend_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) {
-        unimplemented!()
-    }
-}
+impl ToEffects for MiniAvatarSentence {}
 
 impl ToEffects for SetTextboxSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
+        _variables: &HashMap<String, Value>,
+        _project: &Project<'a, P>,
         effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        _diagnostics: &mut Vec<DiagnosticKind>,
     ) {
-        unimplemented!()
+        effects.push(StageEffect::SetTextboxVisibility(self.show));
     }
 }
 
-impl ToEffects for FilmModeSentence {
-    fn extend_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) {
-        unimplemented!()
-    }
-}
+impl ToEffects for FilmModeSentence {}
 
 // -------- 场景与分支 --------
 
@@ -470,4 +570,48 @@ fn interpolate<'a>(
 
     result.push_str(&input[start..]);
     Ok(Cow::Owned(result))
+}
+
+/// 字符串变量插值
+///
+/// # Behavior
+/// * 插值策略详见 [`interpolate`].
+/// * 插值失败时, 将记录诊断并返回原始值的引用.
+fn interpolate_or_record<'a>(
+    input: &'a str,
+    variables: &HashMap<String, Value>,
+    diagnostics: &mut Vec<DiagnosticKind>,
+) -> Cow<'a, str> {
+    interpolate(input, variables).unwrap_or_else(|error| {
+        diagnostics.push(error);
+        Cow::Borrowed(input)
+    })
+}
+
+fn make_transform_effect(
+    transform: Box<Transform>,
+    id: &ObjectId,
+    variables: &HashMap<String, Value>,
+    diagnostics: &mut Vec<DiagnosticKind>,
+) -> StageEffect {
+    match id {
+        ObjectId::Stage => StageEffect::SetStageTransform(transform),
+        ObjectId::Background => StageEffect::SetBackgroundTransform(transform),
+        ObjectId::Figure(id) => StageEffect::SetFigureTransform(
+            interpolate_or_record(id, variables, diagnostics).to_string(),
+            transform,
+        ),
+    }
+}
+
+fn merge_animations(animations: &AnimationList, write_default: bool) -> Transform {
+    if write_default {
+        let mut transform = Transform::default_values();
+        for animation in animations.iter() {
+            transform.merge(&animation.transform);
+        }
+        transform
+    } else {
+        animations.merge_all().transform
+    }
 }

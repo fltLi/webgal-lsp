@@ -117,6 +117,15 @@ pub struct ChangeFigureSentence {
     pub when: Option<String>,
 }
 
+impl ChangeFigureSentence {
+    pub fn get_id(&self) -> FigureId {
+        match &self.id {
+            Some(id) => FigureId::Id(id.to_string()),
+            None => self.side.into(),
+        }
+    }
+}
+
 /// 背景音乐语句
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]

@@ -1,8 +1,8 @@
 //! 演出效果类型
 
-use std::{fmt, str::FromStr};
+use std::{fmt, ops::Deref, str::FromStr};
 
-use derive_more::{Deref, DerefMut, From, Into};
+use derive_more::{Deref, DerefMut, From, Into, TryInto};
 use json_complete::{ToJsonSchema, Value, json};
 use serde::{Deserialize, Serialize};
 use serde_with::{BoolFromInt, serde_as, skip_serializing_none};
@@ -16,7 +16,7 @@ use crate::{
 // -------- 对象 --------
 
 /// 对象引用, 包括舞台 + 背景 + 立绘
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From, TryInto)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum ObjectId {
     Stage,
@@ -34,6 +34,14 @@ impl ObjectId {
             Self::Background => "bg-main",
             Self::Figure(figure) => figure.get_id(),
         }
+    }
+}
+
+impl Deref for ObjectId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_id()
     }
 }
 
@@ -78,9 +86,10 @@ impl FigureSide {
 }
 
 /// 立绘引用
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From, TryInto)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum FigureId {
+    #[from(skip)]
     Id(String),
     Side(FigureSide),
 }
@@ -105,6 +114,14 @@ impl FigureId {
     }
 }
 
+impl Deref for FigureId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_id()
+    }
+}
+
 impl<S: AsRef<str>> From<S> for FigureId {
     fn from(value: S) -> Self {
         match value.as_ref() {
@@ -113,6 +130,12 @@ impl<S: AsRef<str>> From<S> for FigureId {
             "fig-right" => Self::Side(FigureSide::Right),
             id => Self::Id(id.to_string()),
         }
+    }
+}
+
+impl fmt::Display for FigureId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.get_id())
     }
 }
 
