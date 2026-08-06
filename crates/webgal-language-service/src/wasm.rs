@@ -39,9 +39,9 @@ impl Scene {
     /// 悬浮文档
     pub fn document(&self, line: u32, character: u32) -> Option<JsValue> {
         let position = position_utf16_to_utf8(&self.scene, Position { line, character });
-        let mut hover = document(&self.scene, position)?;
-        document_utf8_to_utf16(&self.scene, &mut hover);
-        Some(serialize(&hover))
+        let mut documentation = document(&self.scene, position)?;
+        document_utf8_to_utf16(&self.scene, &mut documentation);
+        Some(serialize(&documentation))
     }
 
     pub fn highlight_token_types() -> Vec<String> {

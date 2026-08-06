@@ -17,7 +17,7 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
     } = scene.sentences().get(position.line as usize)?;
 
     // 查询文档
-    let document = match primary.locate(position.character as usize) {
+    let documentation = match primary.locate(position.character as usize) {
         SentenceLocation::Command(_) => document_command(primary.command),
         SentenceLocation::Content(_) => document_content(primary.command),
         SentenceLocation::ArgumentName(index, _) => {
@@ -29,7 +29,7 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
         }
         SentenceLocation::Other => None,
     };
-    document.map(|document| Hover {
+    documentation.map(|document| Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: document.to_string(),

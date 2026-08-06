@@ -527,7 +527,7 @@ impl LanguageServer for Backend {
             }
         };
 
-        let document = spawn_blocking(move || {
+        let documentation = spawn_blocking(move || {
             // 校验路径
             let (kind, path) = ResourceKind::from_path(&resource_path);
             if kind != ResourceKind::Scene {
@@ -548,14 +548,14 @@ impl LanguageServer for Backend {
             // 生成悬浮文档
             info!(project = %project_path, %path, "Documenting content");
             let position = position_utf16_to_utf8(scene, params.text_document_position_params.position);
-            let mut document = document(scene, position)?;
-            document_utf8_to_utf16(scene, &mut document);
-            Some(document)
+            let mut documentation = document(scene, position)?;
+            document_utf8_to_utf16(scene, &mut documentation);
+            Some(documentation)
         })
         .await
         .unwrap();
 
-        Ok(document)
+        Ok(documentation)
     }
 
     async fn semantic_tokens_full(
