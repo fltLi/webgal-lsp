@@ -9,6 +9,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["simulate-diagnose"]
+simulate-diagnose = ["webgal-language-service/simulate-diagnose"] # 基于模拟执行的代码诊断
+
 [dependencies]
 path-tree.workspace = true
 

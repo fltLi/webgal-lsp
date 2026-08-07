@@ -30,6 +30,9 @@ pub enum ErrorKind {
 
     #[error(transparent)]
     Figure(#[from] FigureError),
+
+    #[error("动画文件解析失败: {0}")]
+    AnimationParse(#[source] serde_json::Error),
 }
 
 /// 项目管理的路径错误类型

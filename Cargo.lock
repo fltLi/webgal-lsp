@@ -2376,6 +2376,7 @@ dependencies = [
  "thiserror 2.0.18",
  "wasm-bindgen",
  "webgal-language-core",
+ "webgal-simulate",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use derive_more::{Deref, Into};
+use derive_more::{Deref, Into, IntoIterator};
 #[cfg(feature = "lsp")]
 use lsp_types::{Diagnostic as LspDiagnostic, *};
 use strum::Display;
@@ -7,7 +7,7 @@ use thiserror::Error;
 use webgal_language_core::sentence::PrimarySentence;
 
 /// 模拟执行诊断错误信息 (多场景)
-#[derive(Debug, Clone, Default, Into, Deref)]
+#[derive(Debug, Clone, Default, Into, IntoIterator, Deref)]
 pub struct DiagnosticList(pub(crate) Vec<(String, Vec<Diagnostic>)>);
 
 /// 模拟执行诊断错误信息

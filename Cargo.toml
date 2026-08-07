@@ -30,6 +30,7 @@ derive_more = { version = "2.1", features = [
     "from",
     "into",
     "try_into",
+    "into_iterator",
     "deref",
     "deref_mut",
 ] }

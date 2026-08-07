@@ -24,7 +24,7 @@ use crate::{
 
 /// WebGAL 项目简单只读视图
 pub trait ProjectView<'a>: Send + Sync {
-    type Scene: Iterator<Item = &'a Sentence> + Send;
+    type Scene: IntoIterator<Item = &'a Sentence> + Send;
 
     /// 读取配置
     fn get_config(&self) -> &'a Config;
@@ -90,6 +90,9 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
     ///
     /// # Notes
     /// 建议在执行此操作前先调用 [`Self::check_unused`] 生成并插入死代码诊断.
+    ///
+    /// # Behavior
+    /// * 对于没有诊断的场景, 仍返回一个空诊断数组占位.
     pub fn into_diagnostics(self) -> DiagnosticList {
         DiagnosticList(
             self.scenes

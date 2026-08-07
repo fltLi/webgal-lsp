@@ -2,7 +2,7 @@
 
 use std::{fmt, ops::Deref, str::FromStr};
 
-use derive_more::{Deref, DerefMut, From, Into, TryInto};
+use derive_more::{Deref, DerefMut, From, Into, IntoIterator, TryInto};
 use json_complete::{ToJsonSchema, Value, json};
 use serde::{Deserialize, Serialize};
 use serde_with::{BoolFromInt, serde_as, skip_serializing_none};
@@ -848,6 +848,7 @@ impl From<Animation> for Transform {
     PartialOrd,
     From,
     Into,
+    IntoIterator,
     Deref,
     DerefMut,
     Serialize,

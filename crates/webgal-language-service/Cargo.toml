@@ -9,6 +9,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+simulate-diagnose = ["dep:webgal-simulate"] # 基于模拟执行的代码诊断
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -18,6 +22,7 @@ path-tree.workspace = true
 json-complete = { workspace = true, features = ["lsp"] }
 
 webgal-language-core.workspace = true
+webgal-simulate = { workspace = true, features = ["lsp"], optional = true }
 
 anyhow.workspace = true
 thiserror.workspace = true

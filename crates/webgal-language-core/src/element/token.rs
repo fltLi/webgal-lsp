@@ -5,7 +5,7 @@ use std::{
     iter, mem, slice,
 };
 
-use derive_more::{Deref, DerefMut, From, Into};
+use derive_more::{Deref, DerefMut, From, Into, IntoIterator};
 
 use crate::util::write_joined_with;
 
@@ -196,7 +196,9 @@ impl fmt::Display for Token<'_> {
 }
 
 /// 连续带扩展文本
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, From, Into, Deref, DerefMut)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, From, Into, IntoIterator, Deref, DerefMut,
+)]
 pub struct TokenList<'a>(Vec<Token<'a>>);
 
 impl<'a> TokenList<'a> {
