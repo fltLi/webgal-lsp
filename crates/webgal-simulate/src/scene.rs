@@ -42,6 +42,7 @@ pub trait ProjectView<'a>: Send + Sync {
 /// 项目信息 (Simulate)
 #[derive(Debug, Getters)]
 pub struct Project<'a, P: ProjectView<'a>> {
+    #[allow(dead_code)]
     #[getset(get = "pub")]
     view: P,
     // 配置和资源

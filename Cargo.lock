@@ -2397,6 +2397,7 @@ dependencies = [
  "derive_more",
  "exprimo",
  "getset",
+ "itertools 0.14.0",
  "lsp-types",
  "serde_json",
  "strum",

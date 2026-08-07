@@ -56,12 +56,20 @@ pub enum DiagnosticKind {
     RedundantEffect(String),
 
     /// WG013
+    #[error("覆盖当前连续执行块中已有效果: {0}")]
+    OverriddenEffect(String),
+
+    /// WG014
     #[error("连续执行块以 wait 语句结尾, 被迫打断")]
     WaitAtEndOfChain,
 
-    /// WG014
+    /// WG015
     #[error("模拟执行停止: {0}")]
     Stopped(#[from] StopReason),
+
+    /// WG016
+    #[error("对话内容过长: 预估行数 {0} 行, 超过最大 3 行")]
+    DialogueTooLong(usize),
 }
 
 /// 模拟执行停止的具体原因
@@ -89,8 +97,12 @@ pub enum SymbolKind {
     Label,
     #[strum(to_string = "场景")]
     Scene,
-    #[strum(to_string = "舞台对象")]
-    StageObject,
+    #[strum(to_string = "背景")]
+    Background,
+    #[strum(to_string = "立绘")]
+    Figure,
+    #[strum(to_string = "效果音")]
+    Sound,
 }
 
 impl DiagnosticKind {
@@ -102,8 +114,10 @@ impl DiagnosticKind {
             Self::ConstantCondition(..) => "WG010",
             Self::Unused => "WG011",
             Self::RedundantEffect(_) => "WG012",
-            Self::WaitAtEndOfChain => "WG013",
-            Self::Stopped(_) => "WG014",
+            Self::OverriddenEffect(_) => "WG013",
+            Self::WaitAtEndOfChain => "WG014",
+            Self::Stopped(_) => "WG015",
+            Self::DialogueTooLong(_) => "WG016",
         }
     }
 
@@ -115,8 +129,10 @@ impl DiagnosticKind {
             Self::ConstantCondition(..) => DiagnosticLevel::Warning,
             Self::Unused => DiagnosticLevel::Warning,
             Self::RedundantEffect(_) => DiagnosticLevel::Warning,
+            Self::OverriddenEffect(_) => DiagnosticLevel::Warning,
             Self::WaitAtEndOfChain => DiagnosticLevel::Warning,
             Self::Stopped(_) => DiagnosticLevel::Hint,
+            Self::DialogueTooLong(_) => DiagnosticLevel::Warning,
         }
     }
 }
