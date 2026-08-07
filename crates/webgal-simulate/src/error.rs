@@ -4,7 +4,7 @@ use lsp_types::{Diagnostic as LspDiagnostic, *};
 use strum::Display;
 use thiserror::Error;
 #[cfg(feature = "lsp")]
-use webgal_language_core::sentence::Scene;
+use webgal_language_core::sentence::PrimarySentence;
 
 /// 模拟执行诊断错误信息 (多场景)
 #[derive(Debug, Clone, Default, Into, Deref)]
@@ -32,10 +32,13 @@ impl Diagnostic {
 
     /// 转换为 LSP 诊断信息
     ///
-    /// # Panics
-    /// * 当传入的场景中诊断所在行索引越界时 panic.
+    /// # Arguments
+    /// * `f` - 传入行号, 获得原始语句借用.
     #[cfg(feature = "lsp")]
-    pub fn to_lsp_diagnostic(&self, scene: &Scene) -> LspDiagnostic {
+    pub fn to_lsp_diagnostic<'a, 'b: 'a, F>(&self, f: F) -> LspDiagnostic
+    where
+        F: FnOnce(usize) -> &'a PrimarySentence<'b>,
+    {
         let span = Range {
             start: Position {
                 line: self.line as u32,
@@ -43,7 +46,7 @@ impl Diagnostic {
             },
             end: Position {
                 line: self.line as u32,
-                character: scene.sentences()[self.line].content.len() as u32,
+                character: f(self.line).len() as u32,
             },
         };
 

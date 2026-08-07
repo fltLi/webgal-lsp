@@ -66,6 +66,29 @@ impl<'a> PrimarySentence<'a> {
         }
     }
 
+    // 是否为空白或注释语句
+    pub fn is_empty(&self) -> bool {
+        self.command.is_empty()
+            && self.content.is_none()
+            && self.arguments.is_empty()
+            && self.comment.is_empty()
+    }
+
+    /// 获取原始语句长度
+    ///
+    /// # Panics
+    /// * 当语句不满足[内存排布有效性](#Behavior)时 panic.
+    ///
+    /// # Behavior
+    /// * 此函数假设语句按照 `command` -> `comment` 的顺序排布内存.
+    ///   对于由 [`Self::from_str`] 构造的语句, 此性质已保证.
+    pub fn len(&self) -> usize {
+        let start = self.command.as_ptr() as usize;
+        let end = self.comment.as_ptr() as usize + self.comment.len();
+        end.checked_sub(start)
+            .expect("语句类型开头应在注释结尾的内存位置之前")
+    }
+
     /// 依据名称遍历查找参数
     pub fn get_argument(&self, name: &str) -> Option<(usize, Option<&'a str>)> {
         self.arguments
