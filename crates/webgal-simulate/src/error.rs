@@ -1,8 +1,10 @@
 use derive_more::{Deref, Into};
+#[cfg(feature = "lsp")]
+use lsp_types::{Diagnostic as LspDiagnostic, *};
 use strum::Display;
 use thiserror::Error;
-
-// TODO: 实现 `feature = "lsp"` 下诊断到 lsp-types 的类型转换
+#[cfg(feature = "lsp")]
+use webgal_language_core::sentence::Scene;
 
 /// 模拟执行诊断错误信息 (多场景)
 #[derive(Debug, Clone, Default, Into, Deref)]
@@ -26,6 +28,32 @@ impl Diagnostic {
     /// 诊断错误级别
     pub fn level(&self) -> DiagnosticLevel {
         self.detail.level()
+    }
+
+    /// 转换为 LSP 诊断信息
+    ///
+    /// # Panics
+    /// * 当传入的场景中诊断所在行索引越界时 panic.
+    #[cfg(feature = "lsp")]
+    pub fn to_lsp_diagnostic(&self, scene: &Scene) -> LspDiagnostic {
+        let span = Range {
+            start: Position {
+                line: self.line as u32,
+                character: 0,
+            },
+            end: Position {
+                line: self.line as u32,
+                character: scene.sentences()[self.line].content.len() as u32,
+            },
+        };
+
+        LspDiagnostic {
+            range: span,
+            severity: Some(self.level().into()),
+            code: Some(NumberOrString::String(self.code().to_string())),
+            message: self.detail.to_string(),
+            ..Default::default()
+        }
     }
 }
 
@@ -140,8 +168,20 @@ impl DiagnosticKind {
 /// 模拟执行诊断错误级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiagnosticLevel {
+    Hint,
     Info,
     Warning,
     Error,
-    Hint,
+}
+
+#[cfg(feature = "lsp")]
+impl From<DiagnosticLevel> for DiagnosticSeverity {
+    fn from(value: DiagnosticLevel) -> Self {
+        match value {
+            DiagnosticLevel::Error => Self::ERROR,
+            DiagnosticLevel::Warning => Self::WARNING,
+            DiagnosticLevel::Info => Self::INFORMATION,
+            DiagnosticLevel::Hint => Self::HINT,
+        }
+    }
 }
