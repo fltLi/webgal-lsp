@@ -18,8 +18,9 @@ mod syntax;
 /// 为项目提供诊断
 ///
 /// # Behavior
-/// * 存在 ERROR, WARNING, INFORMATION 三种级别, 对每个场景, 仅当不存在前两者时才推送 INFO 级别的诊断.
+/// * 存在 ERROR, WARNING, INFO 三种级别, 对每个场景, 仅当不存在前两者时才推送 INFO 级别的诊断.
 /// * 对于没有问题的场景, 会给出一个空诊断列表而不是过滤掉.
+#[cfg(not(feature = "simulate-diagnose"))]
 pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnostic>)> {
     project
         .resource()
@@ -31,6 +32,81 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
             let diagnostics = diagnose_scene(scene, Some(project));
             Some((path, scene, diagnostics))
         })
+        .collect()
+}
+
+/// 为项目提供诊断
+///
+/// # Behavior
+/// * 存在 ERROR, WARNING, INFO 三种级别, 对每个场景, 仅当不存在前两者时才推送 INFO 级别的常规诊断.
+/// * 对于没有问题的场景, 会给出一个空诊断列表而不是过滤掉.
+/// * 常规诊断与模拟执行诊断并发进行, 在不支持并发的环境下会自动回退到阻塞执行.
+#[cfg(feature = "simulate-diagnose")]
+pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnostic>)> {
+    use webgal_simulate::simulate;
+
+    let (common_diagnostics, simulate_diagnostics) = rayon::join(
+        // 常规诊断
+        || {
+            let mut diagnostics: Vec<_> = project
+                .resource()
+                .scene
+                .iter_recursively()
+                .par_bridge()
+                .filter_map(|(path, scene)| {
+                    let scene = scene.as_item()?;
+                    let diagnostics = diagnose_scene(scene, Some(project));
+                    Some((path, scene, diagnostics))
+                })
+                .collect();
+            diagnostics.par_sort_unstable_by(|(a, ..), (b, ..)| a.cmp(b));
+            diagnostics
+        },
+        // 模拟执行
+        || {
+            let mut diagnostics: Vec<_> = simulate(project)
+                .into_iter()
+                .par_bridge()
+                .map(|(path, diagnostics)| {
+                    let diagnostics = diagnostics
+                        .into_iter()
+                        .map(|diagnostic| {
+                            diagnostic.to_lsp_diagnostic(|index| {
+                                &project
+                                    .resource()
+                                    .scene
+                                    .get(&path)
+                                    .unwrap()
+                                    .as_item()
+                                    .unwrap()
+                                    .sentences()[index]
+                                    .primary
+                            })
+                        })
+                        .collect();
+                    (path, diagnostics)
+                })
+                .collect();
+            diagnostics.par_sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+            diagnostics
+        },
+    );
+
+    // 合并诊断
+    debug_assert_eq!(common_diagnostics.len(), simulate_diagnostics.len());
+    common_diagnostics
+        .into_iter()
+        .zip(simulate_diagnostics)
+        .map(
+            |(
+                (path, scene, mut common_diagnostics),
+                (path_in_simulate, mut simulate_diagnostics),
+            )| {
+                debug_assert_eq!(path, path_in_simulate);
+                common_diagnostics.append(&mut simulate_diagnostics);
+                (path, scene, common_diagnostics)
+            },
+        )
         .collect()
 }
 
@@ -55,7 +131,7 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
     let has_error_or_warning = diagnostics
         .iter()
         .flat_map(|(_, diagnostics)| diagnostics)
-        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Information);
+        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Info);
 
     // 正式推送诊断
     diagnostics
@@ -66,7 +142,7 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
                 .filter_map(|diagnostic| {
                     // 含高于 info 级别诊断时, 过滤 info 级别诊断
                     let reserve =
-                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Information;
+                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Info;
                     reserve.then(|| diagnostic.into_diagnostic(line))
                 })
                 .collect::<Vec<_>>()
@@ -146,7 +222,7 @@ impl PrimaryDiagnostic {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DiagnosticLevel {
-    Information,
+    Info,
     Warning,
     Error,
 }
@@ -156,7 +232,7 @@ impl From<DiagnosticLevel> for DiagnosticSeverity {
         match value {
             DiagnosticLevel::Error => Self::ERROR,
             DiagnosticLevel::Warning => Self::WARNING,
-            DiagnosticLevel::Information => Self::INFORMATION,
+            DiagnosticLevel::Info => Self::INFORMATION,
         }
     }
 }

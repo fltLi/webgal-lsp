@@ -27,8 +27,10 @@ pub trait SentenceExt {
     /// 执行时序
     fn forward(&self) -> Forward;
 
-    // /// 触发条件
-    // fn condition(&self) -> Option<&str>;
+    /// 条件执行
+    fn condition(&self) -> Option<&str> {
+        None
+    }
 
     // /// 关联资源
     // ///
@@ -135,6 +137,10 @@ impl SentenceExt for Sentence {
 
     fn forward(&self) -> Forward {
         crate::dispatch_sentence!(self.forward())
+    }
+
+    fn condition(&self) -> Option<&str> {
+        crate::dispatch_sentence!(self.condition())
     }
 }
 

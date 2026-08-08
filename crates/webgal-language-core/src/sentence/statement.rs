@@ -1,15 +1,15 @@
-use std::fmt::{self, Write};
+use std::{
+    borrow::Cow,
+    fmt::{self, Write},
+};
 
+use regex::Regex;
 #[cfg(feature = "serde")]
 use serde::Serialize;
 use webgal_sentence_macro::Sentence;
 
 use crate::{
-    element::{
-        AnimationList, Choice, ChoiceSplit, Color, Ease, FigureId, FigureSide, FontSize, Forward,
-        IntroAnimation, Live2dBlink, Live2dBounds, Live2dFocus, ObjectId, Sustain, TokenList,
-        Transform,
-    },
+    element::*,
     sentence::{Error, FromPrimary, PrimarySentence, SentenceExt},
     util::{write_joined, write_joined_with},
 };
@@ -38,7 +38,7 @@ pub struct SaySentence {
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
     #[sentence(content)]
-    pub background: String,
+    pub background: Option<String>,
     // 效果
     pub transform: Option<Transform>,
     pub enter: Option<String>,
@@ -57,6 +57,7 @@ pub struct ChangeBackgroundSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -74,7 +75,7 @@ pub struct ChangeBackgroundSentence {
 )]
 pub struct ChangeFigureSentence {
     #[sentence(content)]
-    pub figure: String,
+    pub figure: Option<String>,
     #[sentence(variant = { "left": Left, "right": Right })]
     pub side: FigureSide,
     pub id: Option<String>,
@@ -112,7 +113,17 @@ pub struct ChangeFigureSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
+}
+
+impl ChangeFigureSentence {
+    pub fn get_id(&self) -> FigureId {
+        match &self.id {
+            Some(id) => FigureId::Id(id.to_string()),
+            None => self.side.into(),
+        }
+    }
 }
 
 /// 背景音乐语句
@@ -128,7 +139,7 @@ pub struct ChangeFigureSentence {
 )]
 pub struct BgmSentence {
     #[sentence(content)]
-    pub bgm: String,
+    pub bgm: Option<String>,
     // 效果
     pub volume: Option<u32>,
     pub enter: Option<u32>,
@@ -137,6 +148,7 @@ pub struct BgmSentence {
     #[sentence(require = ["unlockname"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -157,6 +169,7 @@ pub struct PlayVideoSentence {
     // 控制
     #[sentence(rename = "skipOff")]
     pub skip_off: bool,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -173,11 +186,12 @@ pub struct PlayVideoSentence {
 )]
 pub struct PlayEffectSentence {
     #[sentence(content)]
-    pub vocal: String,
+    pub vocal: Option<String>,
     pub id: Option<String>,
     // 效果
     pub volume: Option<u32>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -199,6 +213,7 @@ pub struct SetAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -217,6 +232,7 @@ pub struct SetComplexAnimationSentence {
     pub duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -239,6 +255,7 @@ pub struct SetTransformSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -258,6 +275,7 @@ pub struct SetTempAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -277,6 +295,7 @@ pub struct SetTransitionSentence {
     pub enter: Option<String>,
     pub exit: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -297,6 +316,7 @@ pub struct PixiPerformSentence {
     #[sentence(content)]
     pub effect: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -313,6 +333,7 @@ pub struct PixiPerformSentence {
 )]
 pub struct PixiInitSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -356,6 +377,7 @@ pub struct IntroSentence {
     pub hold: bool,
     #[sentence(rename = "userForward")]
     pub user_forward: bool,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -372,8 +394,9 @@ pub struct IntroSentence {
 )]
 pub struct MiniAvatarSentence {
     #[sentence(content)]
-    pub avatar: String,
+    pub avatar: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -392,6 +415,7 @@ pub struct SetTextboxSentence {
     #[sentence(content, serialize_with = display_show, deserialize_with = parse_show)]
     pub show: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -410,6 +434,7 @@ pub struct FilmModeSentence {
     #[sentence(content, serialize_with = display_enable, deserialize_with = parse_enable)]
     pub enable: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -430,6 +455,7 @@ pub struct CallSceneSentence {
     #[sentence(content)]
     pub scene: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -448,6 +474,7 @@ pub struct ChangeSceneSentence {
     #[sentence(content)]
     pub scene: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -469,6 +496,7 @@ pub struct ChooseSentence {
     // 控制
     #[sentence(rename = "defaultChoice")]
     pub default_choice: Option<u8>,
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -487,6 +515,7 @@ pub struct LabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -505,6 +534,7 @@ pub struct JumpLabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -529,6 +559,7 @@ pub struct UnlockCgSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -551,6 +582,7 @@ pub struct UnlockBgmSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -561,6 +593,7 @@ pub struct UnlockBgmSentence {
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "getUserInput",
+    validate = Self::validate,
     forward = Continue,
     obsolete = {
         "next": "控制的演出时序无意义",
@@ -585,7 +618,15 @@ pub struct GetUserInputSentence {
     #[sentence(rename = "ruleButtonText", require = ["rule"])]
     pub rule_button_text: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
+    #[sentence(
+        rename = "lintValues",
+        default,
+        serialize_with = display_lint_values,
+        deserialize_with = parse_lint_values,
+    )]
+    pub lint_values: Vec<String>,
 }
 
 /// 设置变量语句
@@ -600,10 +641,15 @@ pub struct GetUserInputSentence {
     }
 )]
 pub struct SetVarSentence {
-    #[sentence(content)]
-    pub expression: String,
+    #[sentence(
+        content,
+        serialize_with = display_set_variable,
+        deserialize_with = parse_set_variable,
+    )]
+    pub expression: (String, String),
     pub global: bool,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -620,6 +666,7 @@ pub struct SetVarSentence {
 )]
 pub struct ShowVarsSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -638,6 +685,7 @@ pub struct WaitSentence {
     #[sentence(content)]
     pub duration: u32,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -660,6 +708,7 @@ pub struct ApplyStyleSentence {
     )]
     pub applications: Vec<(String, String)>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -678,6 +727,7 @@ pub struct CallSteamSentence {
     #[sentence(rename = "achivementId")]
     pub achivement_id: Option<String>,
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -694,6 +744,7 @@ pub struct CallSteamSentence {
 )]
 pub struct EndSentence {
     // 控制
+    #[sentence(condition)]
     pub when: Option<String>,
 }
 
@@ -708,7 +759,7 @@ pub struct CommentSentence {} // 单元结构体暂时不可用
 // -------- 校验 --------
 
 impl ChangeBackgroundSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(transform) = &self.transform
             && let Err(error) = transform.validate()
             && let Some((index, _)) = primary.get_argument("transform")
@@ -719,7 +770,7 @@ impl ChangeBackgroundSentence {
 }
 
 impl ChangeFigureSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(transform) = &self.transform
             && let Err(error) = transform.validate()
             && let Some((index, _)) = primary.get_argument("transform")
@@ -728,7 +779,7 @@ impl ChangeFigureSentence {
         }
 
         // 空立绘
-        if matches!(self.figure.as_str(), "" | "none") {
+        if self.figure.is_none() {
             if self.motion.is_some()
                 && let Some((index, _)) = primary.get_argument("motion")
             {
@@ -765,7 +816,7 @@ impl ChangeFigureSentence {
 }
 
 impl SetTransformSentence {
-    pub fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Err(error) = self.transform.validate() {
             errors.push(Error::ContentType(error));
         }
@@ -773,7 +824,7 @@ impl SetTransformSentence {
 }
 
 impl SetTempAnimationSentence {
-    pub fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, _primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Err(error) = self.animation.validate() {
             errors.push(Error::ContentType(error));
         }
@@ -781,7 +832,7 @@ impl SetTempAnimationSentence {
 }
 
 impl IntroSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if self.background_color.is_some()
             && self.background_image.is_some()
             && let Some((index, _)) = primary.get_argument("backgroundColor")
@@ -795,7 +846,7 @@ impl IntroSentence {
 }
 
 impl ChooseSentence {
-    pub fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
         if let Some(default_choice) = self.default_choice
             && !(1..=self.choices.len()).contains(&(default_choice as usize))
             && let Some((index, _)) = primary.get_argument("defaultChoice")
@@ -807,6 +858,63 @@ impl ChooseSentence {
                     self.choices.len()
                 ),
             ));
+        }
+    }
+}
+
+impl GetUserInputSentence {
+    /// 校验用户输入是否正确
+    pub fn validate_input(&self, input: &str) -> Option<anyhow::Error> {
+        let rule = self.rule.as_ref()?; // 没有 rule 则跳过
+        let rule_flag = self.rule_flag.as_deref().unwrap_or("");
+
+        // 将 JavaScript 风格的正则标志转换为 Rust 内联标志
+        let flags: String = ['i', 'm', 's']
+            .iter()
+            .filter(|flag| rule_flag.contains(**flag))
+            .collect();
+
+        let pattern = if flags.is_empty() {
+            Cow::Borrowed(rule)
+        } else {
+            Cow::Owned(format!("(?{flags}){rule}"))
+        };
+
+        // 编译正则, 若失败则返回错误
+        let regex = match Regex::new(&pattern) {
+            Ok(v) => v,
+            Err(error) => return Some(anyhow::anyhow!("无效的正则表达式: {error}")),
+        };
+
+        if regex.is_match(input) {
+            None
+        } else {
+            Some(anyhow::anyhow!("输入值 `{input}` 不符合规则 `{rule}`"))
+        }
+    }
+
+    fn validate(&self, primary: &PrimarySentence, errors: &mut Vec<Error>) {
+        // 校验默认值
+        if let Some(value) = &self.default_value
+            && let Some(error) = self.validate_input(value)
+            && let Some((index, _)) = primary.get_argument("defaultValue")
+        {
+            errors.push(Error::ArgumentType(
+                index,
+                anyhow::anyhow!("默认值未通过校验: {error}"),
+            ));
+        }
+
+        // 校验静态分析代入值
+        for (i, value) in self.lint_values.iter().enumerate() {
+            if let Some(error) = self.validate_input(value)
+                && let Some((index, _)) = primary.get_argument("lintValues")
+            {
+                errors.push(Error::ArgumentType(
+                    index,
+                    anyhow::anyhow!("第 {} 个静态分析代入值未通过校验: {error}", i + 1),
+                ));
+            }
         }
     }
 }
@@ -836,6 +944,10 @@ impl SentenceExt for SaySentence {
         } else {
             Forward::Wait
         }
+    }
+
+    fn condition(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 }
 
@@ -1086,6 +1198,36 @@ fn parse_choices(choices: &str) -> (Vec<Choice>, Option<anyhow::Error>) {
 
 fn display_choices(choices: &[Choice], f: &mut fmt::Formatter) -> fmt::Result {
     write_joined(f, choices.iter(), "|")
+}
+
+fn parse_lint_values(values: &str) -> (Vec<String>, Option<anyhow::Error>) {
+    match serde_json::from_str(values) {
+        Ok(values) => (values, None),
+        Err(error) => (Vec::default(), Some(error.into())),
+    }
+}
+
+fn display_lint_values(values: &[String], f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{values:?}")
+}
+
+fn parse_set_variable(expression: &str) -> ((String, String), Option<anyhow::Error>) {
+    match expression.split_once('=') {
+        Some((variable, expression)) => ((variable.to_string(), expression.to_string()), None),
+        None => (
+            Default::default(),
+            Some(anyhow::anyhow!(
+                "变量设置语句应为 `variable=expression` 的格式"
+            )),
+        ),
+    }
+}
+
+fn display_set_variable(
+    (variable, expression): &(String, String),
+    f: &mut fmt::Formatter,
+) -> fmt::Result {
+    write!(f, "{variable}={expression}")
 }
 
 fn parse_style_applications(applications: &str) -> (Vec<(String, String)>, Option<anyhow::Error>) {
@@ -1427,6 +1569,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn change_bg_content_handling() {
+        let cases = vec![
+            ("changeBg;", None),
+            ("changeBg:;", None),
+            ("changeBg:none;", None),
+            ("changeBg:bg.png;", Some("bg.png".to_string())),
+        ];
+        for (input, expected) in cases {
+            let output = Sentence::from_str(input);
+            assert!(output.errors.is_empty());
+            match output.sentence {
+                Sentence::ChangeBackground(bg) => assert_eq!(bg.background, expected),
+                _ => panic!("expected ChangeBg for {input}"),
+            }
+        }
+    }
+
+    #[test]
+    fn change_bg_display_handling() {
+        let bg_none = ChangeBackgroundSentence::default();
+        assert_eq!(bg_none.to_string(), "changeBg:;");
+
+        let bg_some = ChangeBackgroundSentence {
+            background: Some("bg.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(bg_some.to_string(), "changeBg:bg.png;");
+    }
+
     // -------- require --------
 
     #[test]
@@ -1535,6 +1707,28 @@ mod tests {
                 .errors
                 .iter()
                 .any(|e| matches!(e, Error::ArgumentObsolete(_, _)))
+        );
+    }
+
+    #[test]
+    fn get_user_input_validate_default_value_ok() {
+        // 匹配规则 (带大小写不敏感标志)
+        let s = "getUserInput:name -defaultValue=Tom -rule=^tom$ -ruleFlag=i;";
+        let output = Sentence::from_str(s);
+        assert!(output.errors.is_empty(), "应有错误: {:?}", output.errors);
+    }
+
+    #[test]
+    fn get_user_input_validate_default_value_err() {
+        // 不匹配规则 (数字规则, 字母输入)
+        let s = "getUserInput:age -defaultValue=12a -rule=^\\d+$;";
+        let output = Sentence::from_str(s);
+        assert!(!output.errors.is_empty());
+        assert!(
+            output
+                .errors
+                .iter()
+                .any(|e| matches!(e, Error::ArgumentType(_, _)))
         );
     }
 }

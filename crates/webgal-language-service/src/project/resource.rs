@@ -4,6 +4,7 @@ use std::result;
 
 use path_tree::{Folder, Node};
 use webgal_language_core::{
+    element::AnimationList,
     resource::{FigureInfo, FigureKind, Live2dModel, WmdlModel},
     sentence::Scene,
 };
@@ -16,7 +17,8 @@ pub struct Resource {
     // 场景
     pub scene: Folder<Scene>,
     // 动画
-    pub animation: Folder<()>,
+    // TODO: 将动画查找逻辑改为查询 animationTable.json
+    pub animation: Folder<AnimationList>,
     // 立绘和图像
     pub background: Folder<()>,
     pub figure: Folder<FigureInfo>,
@@ -81,5 +83,24 @@ impl Resource {
     /// 在动画目录 (非递归) 查找 `{animation}.json` 是否存在.
     pub fn contains_animation(&self, animation: &str) -> bool {
         self.animation.contains(&format!("{animation}.json"))
+    }
+
+    /// 获取动画
+    ///
+    /// 在动画目录 (非递归) 查找 `{animation}.json` 是否存在.
+    pub fn get_animation(&self, animation: &str) -> Option<&AnimationList> {
+        self.animation.get(&format!("{animation}.json"))?.as_item()
+    }
+
+    /// 插入 / 修改动画文件
+    pub fn insert_animation<F>(&mut self, path: &str, f: F) -> result::Result<(), ErrorKind>
+    where
+        F: FnOnce() -> anyhow::Result<String>,
+    {
+        let entry = try_entry_of(path, &mut self.animation)?;
+        let content = f().map_err(ErrorKind::Content)?;
+        let animation = serde_json::from_str(&content).map_err(ErrorKind::AnimationParse)?;
+        entry.insert_entry(Node::Item(animation));
+        Ok(())
     }
 }

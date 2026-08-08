@@ -239,6 +239,6 @@ where
 pub fn span_of(haystack: &str, needle: &str) -> Range<usize> {
     let start = (needle.as_ptr() as usize)
         .checked_sub(haystack.as_ptr() as usize)
-        .expect("字串需要在母串的内存内");
+        .expect("子串需要在母串的内存内");
     start..start + needle.len()
 }

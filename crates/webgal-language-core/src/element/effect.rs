@@ -1,8 +1,8 @@
 //! 演出效果类型
 
-use std::{fmt, str::FromStr};
+use std::{fmt, ops::Deref, str::FromStr};
 
-use derive_more::{Deref, DerefMut, From, Into};
+use derive_more::{Deref, DerefMut, From, Into, IntoIterator, TryInto};
 use json_complete::{ToJsonSchema, Value, json};
 use serde::{Deserialize, Serialize};
 use serde_with::{BoolFromInt, serde_as, skip_serializing_none};
@@ -16,7 +16,7 @@ use crate::{
 // -------- 对象 --------
 
 /// 对象引用, 包括舞台 + 背景 + 立绘
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From, TryInto)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum ObjectId {
     Stage,
@@ -34,6 +34,14 @@ impl ObjectId {
             Self::Background => "bg-main",
             Self::Figure(figure) => figure.get_id(),
         }
+    }
+}
+
+impl Deref for ObjectId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_id()
     }
 }
 
@@ -78,9 +86,10 @@ impl FigureSide {
 }
 
 /// 立绘引用
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, From, TryInto)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum FigureId {
+    #[from(skip)]
     Id(String),
     Side(FigureSide),
 }
@@ -105,6 +114,14 @@ impl FigureId {
     }
 }
 
+impl Deref for FigureId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_id()
+    }
+}
+
 impl<S: AsRef<str>> From<S> for FigureId {
     fn from(value: S) -> Self {
         match value.as_ref() {
@@ -113,6 +130,12 @@ impl<S: AsRef<str>> From<S> for FigureId {
             "fig-right" => Self::Side(FigureSide::Right),
             id => Self::Id(id.to_string()),
         }
+    }
+}
+
+impl fmt::Display for FigureId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.get_id())
     }
 }
 
@@ -209,7 +232,7 @@ impl Color {
         let Self {
             red, green, blue, ..
         } = self;
-        write!(f, "rgb({red},{green},{blue})")
+        write!(f, "rgb({red}, {green}, {blue})")
     }
 
     pub fn fmt_css_rgba<W: fmt::Write>(&self, f: &mut W) -> fmt::Result {
@@ -219,7 +242,7 @@ impl Color {
             blue,
             alpha,
         } = self;
-        write!(f, "rgba({red},{green},{blue},{alpha})")
+        write!(f, "rgba({red}, {green}, {blue}, {alpha})")
     }
 }
 
@@ -242,7 +265,7 @@ impl FromStr for Color {
             .or_else(|| Self::from_str_rgb(s))
             .or_else(|| Self::from_str_rgba(s))
             .ok_or(concat!(
-                "`Color` 应为 `#RRGGBB` / `rgb(R,G,B)` / `rgba(R,G,B,A)` 的格式, ",
+                "`Color` 应为 `#RRGGBB` / `rgb(R, G, B)` / `rgba(R, G, B, A)` 的格式, ",
                 "颜色在 [0..256) 间, 透明度在 [0,1] 间"
             ))
     }
@@ -276,7 +299,7 @@ impl FromStr for Live2dBounds {
                 south,
             })
         })()
-        .ok_or("`Live2dBounds` 应为 `i32,i32,i32,i32` 的格式")
+        .ok_or("`Live2dBounds` 应为 `i32, i32, i32, i32` 的格式")
     }
 }
 
@@ -288,7 +311,7 @@ impl fmt::Display for Live2dBounds {
             east,
             south,
         } = self;
-        write!(f, "{west},{north},{east},{south}")
+        write!(f, "{west}, {north}, {east}, {south}")
     }
 }
 
@@ -404,6 +427,30 @@ pub enum IntroAnimation {
 
 // -------- 动画 --------
 
+macro_rules! merge_option {
+    // 默认: 替换模式
+    ($target:expr, $source:expr) => {
+        merge_option!($target, $source, mode = replace);
+    };
+
+    // 合并模式
+    ($target:expr, $source:expr, mode = merge) => {
+        if let Some(source) = $source {
+            match $target {
+                Some(ref mut target) => target.merge(&source),
+                None => $target = Some(source.clone()),
+            }
+        }
+    };
+
+    // 替换模式
+    ($target:expr, $source:expr, mode = replace) => {
+        if let Some(source) = $source {
+            $target = Some(source.clone());
+        }
+    };
+}
+
 /// 变换效果
 #[serde_as]
 #[skip_serializing_none]
@@ -458,6 +505,41 @@ impl_from_str_for_serde_json!(Transform);
 impl_display_for_serde_json!(Transform);
 
 impl Transform {
+    pub fn default_values() -> Self {
+        Self {
+            position: Some(Position::default_values()),
+            rotation: Some(0.),
+            scale: Some(Scale::default_values()),
+            alpha: Some(1.),
+            blur: Some(0),
+            brightness: Some(1.),
+            contrast: Some(1.),
+            saturation: Some(1.),
+            gamma: Some(1.),
+            color_red: Some(255),
+            color_green: Some(255),
+            color_blue: Some(255),
+            bloom: Some(0.),
+            bloom_brightness: Some(1.),
+            bloom_blur: Some(0),
+            bloom_threshold: Some(0.),
+            bevel: Some(0.),
+            bevel_thickness: Some(0),
+            bevel_rotation: Some(0.),
+            bevel_red: Some(255),
+            bevel_green: Some(255),
+            bevel_blue: Some(255),
+            old_film: Some(false),
+            dot_film: Some(false),
+            rgb_film: Some(false),
+            glitch_film: Some(false),
+            godray_film: Some(false),
+            reflection_film: Some(false),
+            shockwave: Some(0.),
+            radius_alpha: Some(0.),
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         try_validate(|errors| {
             if let Some(scale) = &self.scale
@@ -521,6 +603,55 @@ impl Transform {
             }
         })
     }
+
+    /// 将另一个变换效果覆盖合并到自身
+    pub fn merge(&mut self, other: &Self) {
+        // 基础变换
+        merge_option!(self.position, other.position, mode = merge);
+        merge_option!(self.rotation, other.rotation);
+        merge_option!(self.scale, other.scale, mode = merge);
+        // 基础效果
+        merge_option!(self.alpha, other.alpha);
+        merge_option!(self.blur, other.blur);
+        // 颜色调整滤镜
+        merge_option!(self.brightness, other.brightness);
+        merge_option!(self.contrast, other.contrast);
+        merge_option!(self.saturation, other.saturation);
+        merge_option!(self.gamma, other.gamma);
+        merge_option!(self.color_red, other.color_red);
+        merge_option!(self.color_green, other.color_green);
+        merge_option!(self.color_blue, other.color_blue);
+        // 泛光滤镜
+        merge_option!(self.bloom, other.bloom);
+        merge_option!(self.bloom_brightness, other.bloom_brightness);
+        merge_option!(self.bloom_blur, other.bloom_blur);
+        merge_option!(self.bloom_threshold, other.bloom_threshold);
+        // 倒角滤镜
+        merge_option!(self.bevel, other.bevel);
+        merge_option!(self.bevel_thickness, other.bevel_thickness);
+        merge_option!(self.bevel_rotation, other.bevel_rotation);
+        merge_option!(self.bevel_red, other.bevel_red);
+        merge_option!(self.bevel_green, other.bevel_green);
+        merge_option!(self.bevel_blue, other.bevel_blue);
+        // 其他滤镜
+        merge_option!(self.old_film, other.old_film);
+        merge_option!(self.dot_film, other.dot_film);
+        merge_option!(self.rgb_film, other.rgb_film);
+        merge_option!(self.glitch_film, other.glitch_film);
+        merge_option!(self.godray_film, other.godray_film);
+        merge_option!(self.reflection_film, other.reflection_film);
+        merge_option!(self.shockwave, other.shockwave);
+        merge_option!(self.radius_alpha, other.radius_alpha);
+    }
+
+    /// 从迭代器按顺序合并多个变换效果
+    pub fn merge_all<'a, I: IntoIterator<Item = &'a Self>>(iter: I) -> Self {
+        let mut transform = Self::default();
+        for other in iter {
+            transform.merge(other);
+        }
+        transform
+    }
 }
 
 impl ToJsonSchema for Transform {
@@ -579,6 +710,20 @@ pub struct Position {
 impl_from_str_for_serde_json!(Position);
 impl_display_for_serde_json!(Position);
 
+impl Position {
+    pub fn default_values() -> Self {
+        Self {
+            x: Some(0),
+            y: Some(0),
+        }
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        merge_option!(self.x, other.x);
+        merge_option!(self.y, other.y);
+    }
+}
+
 impl ToJsonSchema for Position {
     fn schema() -> Value {
         json! {{
@@ -597,6 +742,13 @@ pub struct Scale {
 }
 
 impl Scale {
+    pub fn default_values() -> Self {
+        Self {
+            x: Some(1.),
+            y: Some(1.),
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         try_validate(|errors| {
             if let Some(x) = self.x
@@ -610,6 +762,11 @@ impl Scale {
                 errors.push(anyhow::anyhow!("`y` 参数出界, 其范围是 [0, +inf)"));
             }
         })
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        merge_option!(self.x, other.x);
+        merge_option!(self.y, other.y);
     }
 }
 
@@ -643,6 +800,27 @@ impl Animation {
     pub fn validate(&self) -> anyhow::Result<()> {
         self.transform.validate()
     }
+
+    /// 将另一个动画片段覆盖合并到自身
+    ///
+    /// # Behavior
+    /// * 持续时间直接求和.
+    /// * 缓动效果正常合并 (取最后非空项).
+    /// * 变换效果调用 [`Transform::merge`] 合并.
+    pub fn merge(&mut self, other: &Self) {
+        self.duration += other.duration;
+        merge_option!(self.ease, other.ease);
+        self.transform.merge(&other.transform);
+    }
+
+    /// 从迭代器按顺序合并多个动画片段
+    pub fn merge_all<'a, I: IntoIterator<Item = &'a Self>>(iter: I) -> Self {
+        let mut animation = Self::default();
+        for other in iter {
+            animation.merge(other);
+        }
+        animation
+    }
 }
 
 impl ToJsonSchema for Animation {
@@ -655,6 +833,12 @@ impl ToJsonSchema for Animation {
     }
 }
 
+impl From<Animation> for Transform {
+    fn from(value: Animation) -> Self {
+        value.transform
+    }
+}
+
 /// 多段动画
 #[derive(
     Debug,
@@ -664,6 +848,7 @@ impl ToJsonSchema for Animation {
     PartialOrd,
     From,
     Into,
+    IntoIterator,
     Deref,
     DerefMut,
     Serialize,
@@ -684,6 +869,10 @@ impl AnimationList {
                     .map(|error| anyhow::anyhow!("第 {i} 个动画: {error}"))
             }));
         })
+    }
+
+    pub fn merge_all(&self) -> Animation {
+        Animation::merge_all(self.iter())
     }
 }
 
@@ -738,7 +927,7 @@ mod tests {
 
     #[test]
     fn color_roundtrip_rgb() {
-        let original = "rgb(12,34,56)";
+        let original = "rgb(12, 34, 56)";
         let color = Color::from_str(original).unwrap();
         let mut output = String::new();
         color.fmt_css_rgb(&mut output).unwrap();
@@ -747,7 +936,7 @@ mod tests {
 
     #[test]
     fn color_roundtrip_rgba() {
-        let original = "rgba(10,20,30,0.75)";
+        let original = "rgba(10, 20, 30, 0.75)";
         let color = Color::from_str(original).unwrap();
         let mut output = String::new();
         color.fmt_css_rgba(&mut output).unwrap();
@@ -756,7 +945,7 @@ mod tests {
 
     #[test]
     fn live2d_bounds_roundtrip() {
-        let original = "10,-20,30,-40";
+        let original = "10, -20, 30, -40";
         let bounds = Live2dBounds::from_str(original).unwrap();
         let output = bounds.to_string();
         assert_eq!(output, original);
@@ -844,6 +1033,141 @@ mod tests {
         assert!(msg.contains("bevel"), "缺少 bevel 错误");
         assert!(msg.contains("bloom_threshold"), "缺少 bloom_threshold 错误");
         assert!(msg.contains("radius_alpha"), "缺少 radius_alpha 错误");
+    }
+
+    #[test]
+    fn test_transform_merge() {
+        // 1. 目标有值, 源有部分字段 (含 Scale 的合并模式)
+        let mut target = Transform {
+            alpha: Some(0.5),
+            rotation: Some(0.1),
+            scale: Some(Scale {
+                x: Some(1.0),
+                y: Some(2.0),
+            }),
+            ..Default::default()
+        };
+        let source = Transform {
+            alpha: Some(0.8),
+            rotation: None, // 不覆盖目标
+            scale: Some(Scale {
+                x: Some(3.0),
+                y: None,
+            }),
+            ..Default::default()
+        };
+        target.merge(&source);
+
+        assert_eq!(target.alpha, Some(0.8));
+        assert_eq!(target.rotation, Some(0.1)); // 保留原值
+        let s = target.scale.unwrap();
+        assert_eq!(s.x, Some(3.0));
+        assert_eq!(s.y, Some(2.0)); // 保留目标原有的 y
+
+        // 2. 目标为空, 源为 Some -> 克隆整个字段
+        let mut target2 = Transform::default();
+        target2.merge(&source);
+        assert_eq!(target2.alpha, Some(0.8));
+        let s2 = target2.scale.unwrap();
+        assert_eq!(s2.x, Some(3.0));
+        assert_eq!(s2.y, None); // 源 y 为 None
+
+        // 3. 源全 None -> 目标不变
+        let mut target3 = Transform {
+            alpha: Some(0.5),
+            ..Default::default()
+        };
+        target3.merge(&Transform::default());
+        assert_eq!(target3.alpha, Some(0.5));
+    }
+
+    #[test]
+    fn test_transform_merge_all() {
+        let t1 = Transform {
+            alpha: Some(0.2),
+            position: Some(Position {
+                x: Some(10),
+                y: Some(20),
+            }),
+            ..Default::default()
+        };
+        let t2 = Transform {
+            alpha: Some(0.5),
+            position: Some(Position {
+                x: Some(30),
+                y: None,
+            }),
+            scale: Some(Scale {
+                x: Some(1.5),
+                y: Some(1.0),
+            }),
+            ..Default::default()
+        };
+        let t3 = Transform {
+            rotation: Some(0.3),
+            scale: Some(Scale {
+                x: None,
+                y: Some(2.0),
+            }),
+            ..Default::default()
+        };
+
+        let merged = Transform::merge_all([&t1, &t2, &t3]);
+
+        // 验证合并结果
+        assert_eq!(merged.alpha, Some(0.5)); // t2 覆盖
+        assert_eq!(merged.rotation, Some(0.3)); // t3
+        let pos = merged.position.unwrap();
+        assert_eq!(pos.x, Some(30)); // t2 覆盖
+        assert_eq!(pos.y, Some(20)); // t1 保留
+        let s = merged.scale.unwrap();
+        assert_eq!(s.x, Some(1.5)); // t2
+        assert_eq!(s.y, Some(2.0)); // t3 覆盖
+    }
+
+    #[test]
+    fn test_animation_merge_all() {
+        let a1 = Animation {
+            duration: 100,
+            ease: Some(Ease::Linear),
+            transform: Transform {
+                alpha: Some(0.5),
+                ..Default::default()
+            },
+        };
+        let a2 = Animation {
+            duration: 200,
+            ease: Some(Ease::EaseInOut),
+            transform: Transform {
+                position: Some(Position {
+                    x: Some(10),
+                    y: Some(20),
+                }),
+                ..Default::default()
+            },
+        };
+        let a3 = Animation {
+            duration: 150,
+            ease: None,
+            transform: Transform {
+                scale: Some(Scale {
+                    x: Some(1.5),
+                    y: None,
+                }),
+                ..Default::default()
+            },
+        };
+        let merged = Animation::merge_all([&a1, &a2, &a3]);
+
+        assert_eq!(merged.duration, 450); // 100 + 200 + 150
+        assert_eq!(merged.ease, Some(Ease::EaseInOut)); // 最后一个非 None
+        assert_eq!(merged.transform.alpha, Some(0.5));
+        let pos = merged.transform.position.unwrap();
+        assert_eq!(pos.x, Some(10));
+        assert_eq!(pos.y, Some(20));
+        let s = merged.transform.scale.unwrap();
+        assert_eq!(s.x, Some(1.5));
+        assert_eq!(s.y, None);
     }
 
     #[test]

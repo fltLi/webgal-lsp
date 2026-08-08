@@ -6,14 +6,14 @@ changeFigure:ext/爱音复古棕色风衣/037_school_winter-2023.model.json -rig
 ; -------- start.txt --------
 ; 自动播放速度: 18
 wait:5000;
-intro:永生者长崎素世和穿越者千早爱音|原作: LOFTER @断红尘 -fontSize=medium -fontColor=rgba(255,255,255,1) -backgroundColor=rgba(0,0,0,1) -delayTime=1600 -hold;
+intro:永生者长崎素世和穿越者千早爱音|原作: LOFTER @断红尘 -fontSize=medium -fontColor=rgba(255, 255, 255, 1) -backgroundColor=rgba(0, 0, 0, 1) -delayTime=1600 -hold;
 wait:600;
 callScene:1.txt;
 wait:1600;
 callScene:2.txt;
 wait:2000;
 callScene:3.txt;
-intro:END -fontSize=medium -fontColor=rgba(255,255,255,1) -backgroundColor=rgba(0,0,0,1) -delayTime=3000 -hold;
+intro:END -fontSize=medium -fontColor=rgba(255, 255, 255, 1) -backgroundColor=rgba(0, 0, 0, 1) -delayTime=3000 -hold;
 ; -------- 1.txt --------
 bgm:ext/夢の歩みを見上げて.flac;
 :千早爱音死了。;
@@ -146,7 +146,7 @@ changeBg:ext/剧院.png -transform={"brightness":0.9,"saturation":0.9,"gamma":0.
 changeBg:ext/蒙娜丽莎.png -transform={"position":{"y":-490},"brightness":0.6,"saturation":0.9,"gamma":0.8,"colorRed":255,"colorGreen":255,"colorBlue":255,"bloom":0.7,"bloomBrightness":1.0,"bloomBlur":10,"bevel":1.0,"bevelThickness":18,"bevelRotation":30.0,"bevelRed":255,"bevelGreen":255,"bevelBlue":255} -next;
 :法国达芬奇的蒙娜丽莎……;
 wait:200;
-changeBg:none;
+changeBg:;
 changeBg:ext/市集.png -transform={"brightness":0.7,"bloom":0.5,"bloomBlur":3,"bevel":1.0,"bevelThickness":18,"bevelRotation":30.0,"bevelRed":255,"bevelGreen":204,"bevelBlue":148} -next;
 changeFigure:anon/live_event_297_sr/model.json -left -id=anon -motion=anon/nf04 -transform={"brightness":0.68,"contrast":1.0,"saturation":0.8,"gamma":0.7,"colorRed":255,"colorGreen":255,"colorBlue":255,"bloom":0.5,"bloomBrightness":0.96,"bloomBlur":10,"bevel":0.5,"bevelThickness":18,"bevelRotation":30.0,"bevelRed":196,"bevelGreen":185,"bevelBlue":185} -next;
 changeFigure:soyo/live_event_297_ur/model.json -right -id=soyo -motion=soyo/nnf03 -transform={"brightness":0.68,"contrast":1.0,"saturation":0.8,"gamma":0.7,"colorRed":255,"colorGreen":255,"colorBlue":255,"bloom":0.5,"bloomBrightness":0.96,"bloomBlur":10,"bevel":0.5,"bevelThickness":18,"bevelRotation":30.0,"bevelRed":196,"bevelGreen":185,"bevelBlue":185} -next;
@@ -168,7 +168,7 @@ changeFigure:soyo/live_event_297_ur/model.json -id=soyo -motion=soyo/serious01 -
 wait:100;
 changeFigure:soyo/live_event_297_ur/model.json -id=soyo -motion=soyo/serious04 -next;
 :等待她的出现，在这场时间的旅行上，自己不再孤独。;
-bgm:none;
+bgm:;
 wait:500;
 changeFigure: -id=soyo -next;
 :;

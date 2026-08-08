@@ -89,7 +89,7 @@ pub fn diagnose_format(sentence: &SentenceInfo) -> Option<PrimaryDiagnostic> {
     expected.ne(sentence.content).then(|| PrimaryDiagnostic {
         span: 0..sentence.content.len(),
         code: "WG001",
-        level: DiagnosticLevel::Information,
+        level: DiagnosticLevel::Info,
         message: format!("语句格式不规范，应为：`{expected}`"),
     })
 }

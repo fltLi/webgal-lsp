@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, fmt};
 
-use derive_more::{Deref, DerefMut, From, Into};
+use derive_more::{Deref, DerefMut, From, Into, IntoIterator};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// 配置条目, 可表示配置 / 注释 / 空行
@@ -56,7 +56,19 @@ impl fmt::Display for ConfigItem {
 
 /// 配置列表
 #[derive(
-    Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Deref, DerefMut,
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    From,
+    Into,
+    IntoIterator,
+    Deref,
+    DerefMut,
 )]
 pub struct Config(Vec<ConfigItem>);
 

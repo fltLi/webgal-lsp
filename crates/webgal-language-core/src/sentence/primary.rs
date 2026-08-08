@@ -43,7 +43,7 @@ impl<'a> PrimarySentence<'a> {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(line: &'a str) -> Self {
         // 分离注释
-        let (line, comment) = split_once_escaped(line, ';').unwrap_or((line, ""));
+        let (line, comment) = split_once_escaped(line, ';').unwrap_or((line, &line[line.len()..]));
 
         // 提取语句头 (后续判定为语句类型或主参数)
         let (command, line) = match line.split_once(':') {
@@ -56,15 +56,13 @@ impl<'a> PrimarySentence<'a> {
         let content = argument_split.next().unwrap();
 
         // 整理语句类型和主参数
-        let (command, content) =
-            if command.is_none() && !content.is_empty() && argument_split.peek().is_none() {
+        let (command, content) = match command {
+            None if !content.is_empty() && argument_split.peek().is_none() => {
                 (line, None) // 形如 `content ;` / `content `, 会被识别为对话
-            } else {
-                match command {
-                    Some(command) => (command, Some(content.trim())),
-                    None => (content, None),
-                }
-            };
+            }
+            Some(command) => (command, Some(content.trim())),
+            None => (content, None),
+        };
 
         // 收集参数
         let arguments: Vec<_> = argument_split
@@ -80,6 +78,29 @@ impl<'a> PrimarySentence<'a> {
             arguments,
             comment,
         }
+    }
+
+    // 是否为空白或注释语句
+    pub fn is_empty(&self) -> bool {
+        self.command.is_empty()
+            && self.content.is_none()
+            && self.arguments.is_empty()
+            && self.comment.is_empty()
+    }
+
+    /// 获取原始语句长度
+    ///
+    /// # Panics
+    /// * 当语句不满足[内存排布有效性](#Behavior)时 panic.
+    ///
+    /// # Behavior
+    /// * 此函数假设语句按照 `command` -> `comment` 的顺序排布内存.
+    ///   对于由 [`Self::from_str`] 构造的语句, 此性质已保证.
+    pub fn len(&self) -> usize {
+        let start = self.command.as_ptr() as usize;
+        let end = self.comment.as_ptr() as usize + self.comment.len();
+        end.checked_sub(start)
+            .expect("语句类型开头应在注释结尾的内存位置之前")
     }
 
     /// 依据名称遍历查找参数

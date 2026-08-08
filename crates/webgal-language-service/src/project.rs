@@ -1,11 +1,20 @@
 use std::result;
+#[cfg(feature = "simulate-diagnose")]
+use std::{iter::Map, slice::Iter};
 
 use getset::Getters;
 use path_tree::{Entry, Folder, Node, canonicalize};
+#[cfg(feature = "simulate-diagnose")]
+use webgal_language_core::{
+    element::AnimationList,
+    sentence::{Sentence, SentenceInfo},
+};
 use webgal_language_core::{
     resource::{Config, ResourceInfo, ResourceKind},
     sentence::Scene,
 };
+#[cfg(feature = "simulate-diagnose")]
+use webgal_simulate::ProjectView;
 
 pub use error::*;
 pub use ident::*;
@@ -90,7 +99,11 @@ impl Project {
             }
 
             ResourceKind::Animation => {
-                try_insert(path, (), &mut self.resource.animation).map_err(make_error)?;
+                if path != "animationTable.json" {
+                    self.resource
+                        .insert_animation(path, f)
+                        .map_err(make_error)?;
+                }
             }
 
             ResourceKind::Background => {
@@ -147,7 +160,9 @@ impl Project {
             }
 
             ResourceKind::Animation => {
-                try_remove(path, &mut self.resource.animation).map_err(make_error)?;
+                if path != "animationTable.json" {
+                    try_remove(path, &mut self.resource.animation).map_err(make_error)?;
+                }
             }
 
             ResourceKind::Background => {
@@ -174,6 +189,46 @@ impl Project {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "simulate-diagnose")]
+impl<'a> ProjectView<'a> for &'a Project {
+    type Scene = Map<Iter<'a, SentenceInfo<'a>>, fn(&'a SentenceInfo<'a>) -> &'a Sentence>;
+
+    fn get_config(&self) -> &'a Config {
+        self.config()
+    }
+
+    fn get_scene(&self, path: &str) -> Option<Self::Scene> {
+        Some(
+            self.resource()
+                .scene
+                .get(path)?
+                .as_item()?
+                .sentences()
+                .iter()
+                .map(|sentence| &sentence.sentence),
+        )
+    }
+
+    fn iter_scenes(&self) -> impl Iterator<Item = (String, Self::Scene)> + Send {
+        self.resource().scene.iter_recursively().filter_map(
+            |(path, scene)| -> Option<(_, Self::Scene)> {
+                Some((
+                    path,
+                    scene
+                        .as_item()?
+                        .sentences()
+                        .iter()
+                        .map(|sentence| &sentence.sentence),
+                ))
+            },
+        )
+    }
+
+    fn get_animation(&self, name: &str) -> Option<&'a AnimationList> {
+        self.resource().get_animation(name)
     }
 }
 
