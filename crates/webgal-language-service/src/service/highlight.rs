@@ -1,5 +1,6 @@
 use std::ops;
 
+use json_language_service::TokenType as JsonTokenType;
 use lsp_types::*;
 use rayon::prelude::*;
 use webgal_language_core::{
@@ -7,6 +8,8 @@ use webgal_language_core::{
     sentence::{PrimarySentence, Scene, Sentence, SentenceInfo},
     util::{span_of, split_once_escaped},
 };
+
+// TODO: 变量插值高亮
 
 pub fn highlight_capability() -> SemanticTokensServerCapabilities {
     SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
@@ -88,7 +91,7 @@ pub fn highlight(scene: &Scene) -> Vec<SemanticToken> {
 }
 
 /// 生成一条语句的高亮
-fn highlight_sentence<F>(sentence: &SentenceInfo, mut push: F)
+fn highlight_sentence<F>(sentence: &SentenceInfo, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
@@ -99,60 +102,63 @@ where
         ..
     } = sentence;
 
-    highlight_command(primary, sentence, &mut push);
-    highlight_content(primary, sentence, &mut push);
+    highlight_command(primary, sentence, &mut f);
+    highlight_content(primary, sentence, &mut f);
 
     // 参数高亮
     for &(name, value) in primary.arguments.iter() {
-        highlight_argument(name, value, primary, sentence, &mut push);
+        highlight_argument(name, value, primary, sentence, &mut f);
     }
 
-    highlight_comment(content, primary, &mut push);
+    highlight_comment(content, primary, &mut f);
 }
 
 /// 语句类型高亮
-fn highlight_command<F>(primary: &PrimarySentence, sentence: &Sentence, mut push: F)
+fn highlight_command<F>(primary: &PrimarySentence, sentence: &Sentence, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
     if !sentence.is_say() {
-        push(PrimaryToken {
+        f(PrimaryToken {
             span: primary.get_span(primary.command),
             kind: TokenType::Function,
         });
     } else if primary.content.is_some() {
         // 对话者
-        push(PrimaryToken {
+        f(PrimaryToken {
             span: primary.get_span(primary.command),
             kind: TokenType::Type,
         });
     } else {
         // 对话内容
-        highlight_say_content(primary.command, &mut push);
+        highlight_say_content(primary.command, &mut f);
     }
 }
 
 /// 语句主参数高亮
-fn highlight_content<F>(primary: &PrimarySentence, sentence: &Sentence, mut push: F)
+fn highlight_content<F>(primary: &PrimarySentence, sentence: &Sentence, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
     if let Some(content) = primary.content {
         // `:`
         let pos = primary.command.len();
-        push(PrimaryToken::from_position(pos, TokenType::Operator));
+        f(PrimaryToken::from_position(pos, TokenType::Operator));
 
         let shifted_push = |mut token: PrimaryToken| {
             token.span.start += pos + 1;
             token.span.end += pos + 1;
-            push(token)
+            f(token)
         };
 
         // 参数值
         match sentence {
             Sentence::Say(_) => highlight_say_content(content, shifted_push),
             Sentence::Choose(_) => highlight_choose_content(content, shifted_push),
-            _ if let Some(kind) = TokenType::from_content(sentence) => push(PrimaryToken {
+            Sentence::SetTransform(_) | Sentence::SetTempAnimation(_) => {
+                highlight_json(content, shifted_push)
+            }
+            _ if let Some(kind) = TokenType::from_content(sentence) => f(PrimaryToken {
                 span: primary.get_span(content),
                 kind,
             }),
@@ -167,7 +173,7 @@ fn highlight_argument<F>(
     value: Option<&str>,
     primary: &PrimarySentence,
     sentence: &Sentence,
-    mut push: F,
+    mut f: F,
 ) where
     F: FnMut(PrimaryToken),
 {
@@ -175,32 +181,39 @@ fn highlight_argument<F>(
     let ops::Range { start, end } = span;
 
     // `-`
-    push(PrimaryToken::from_position(start - 1, TokenType::Operator));
+    f(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
     // 参数名
-    push(PrimaryToken {
+    f(PrimaryToken {
         span,
         kind: TokenType::Parameter,
     });
 
     // `=`
     if value.is_some() {
-        push(PrimaryToken::from_position(end, TokenType::Operator));
+        f(PrimaryToken::from_position(end, TokenType::Operator));
     }
 
     // 参数值
-    if let Some(value) = value
-        && let Some(kind) = TokenType::from_arguemnt(name, sentence)
-    {
-        push(PrimaryToken {
-            span: primary.get_span(value),
-            kind,
-        });
+    if let Some(value) = value {
+        if matches!(name, "transform" | "bounds" | "blink" | "focus") {
+            let start = primary.get_span(value).start;
+            highlight_json(value, |mut token| {
+                token.span.start += start;
+                token.span.end += start;
+                f(token)
+            });
+        } else if let Some(kind) = TokenType::from_argument(name, sentence) {
+            f(PrimaryToken {
+                span: primary.get_span(value),
+                kind,
+            });
+        }
     }
 }
 
 /// 语句注释高亮
-fn highlight_comment<F>(content: &str, primary: &PrimarySentence, mut push: F)
+fn highlight_comment<F>(content: &str, primary: &PrimarySentence, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
@@ -211,21 +224,21 @@ where
         .filter(|comment| comment.starts_with(';'))
         .unwrap_or(primary.comment);
     if !comment.is_empty() {
-        push(PrimaryToken {
+        f(PrimaryToken {
             span: primary.get_span(comment),
             kind: TokenType::Comment,
         });
     }
 }
 
-fn highlight_say_content<F>(content: &str, mut push: F)
+fn highlight_say_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
     for token in content.split('|').flat_map(TokenSplit::new) {
         // 文本
         if !token.text.is_empty() {
-            push(PrimaryToken {
+            f(PrimaryToken {
                 span: span_of(content, token.text),
                 kind: TokenType::String,
             });
@@ -233,7 +246,7 @@ where
 
         // 注音和样式
         if let Some(style) = token.get_full_style() {
-            push(PrimaryToken {
+            f(PrimaryToken {
                 span: span_of(content, style),
                 kind: TokenType::Regex,
             })
@@ -241,7 +254,7 @@ where
     }
 }
 
-fn highlight_choose_content<F>(content: &str, mut push: F)
+fn highlight_choose_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
@@ -253,13 +266,13 @@ where
                 let end = span.end;
 
                 // 条件表达式
-                push(PrimaryToken {
+                f(PrimaryToken {
                     span,
                     kind: TokenType::Regex,
                 });
 
                 // `->`
-                push(PrimaryToken {
+                f(PrimaryToken {
                     span: end..end + 2,
                     kind: TokenType::Operator,
                 });
@@ -276,7 +289,7 @@ where
 
         if !prompt.is_empty() {
             // 显示文本
-            push(PrimaryToken {
+            f(PrimaryToken {
                 span: span_of(content, prompt),
                 kind: TokenType::String,
             });
@@ -287,10 +300,10 @@ where
             let start = span.start;
 
             // `:`
-            push(PrimaryToken::from_position(start - 1, TokenType::Operator));
+            f(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
             // 场景 / 标签
-            push(PrimaryToken {
+            f(PrimaryToken {
                 span,
                 kind: TokenType::Regex,
             });
@@ -298,7 +311,7 @@ where
 
         if with_trailing_delimiter {
             // `|`
-            push(PrimaryToken::from_position(
+            f(PrimaryToken::from_position(
                 span_of(content, choice).end,
                 TokenType::Operator,
             ));
@@ -320,6 +333,18 @@ where
             }
         }
     }
+}
+
+fn highlight_json<F>(s: &str, mut f: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    json_language_service::highlight(s, |span, kind| {
+        f(PrimaryToken {
+            span,
+            kind: kind.into(),
+        })
+    });
 }
 
 struct PrimaryToken {
@@ -345,6 +370,7 @@ enum TokenType {
     Property,
     EnumMember,
     Function,
+    Keyword,
     Comment,
     String,
     Number,
@@ -406,7 +432,7 @@ impl TokenType {
         }
     }
 
-    fn from_arguemnt(name: &str, sentence: &Sentence) -> Option<Self> {
+    fn from_argument(name: &str, sentence: &Sentence) -> Option<Self> {
         match name {
             // 标识符
             "speaker" => Some(Self::Type),
@@ -419,10 +445,10 @@ impl TokenType {
             "exit" | "ease" | "animation" => Some(Self::EnumMember),
             "enter" if !matches!(sentence, Sentence::Bgm(_)) => Some(Self::EnumMember),
 
-            // 文本 / JSON / ...
+            // 文本 / ...
             "title" | "buttonText" | "ruleText" | "ruleButtonText" => Some(Self::String),
-            "transform" => Some(Self::String),
-            "bounds" | "blink" | "focus" => Some(Self::String),
+            // "transform" => Some(Self::String), // 已由调用者接管
+            // "bounds" | "blink" | "focus" => Some(Self::String), // 已由调用者接管
             "fontColor" | "backgroundColor" => Some(Self::String),
 
             // 时间 / 序号 / ...
@@ -455,11 +481,12 @@ impl TokenType {
             Self::Property => 3,
             Self::EnumMember => 4,
             Self::Function => 5,
-            Self::Comment => 6,
-            Self::String => 7,
-            Self::Number => 8,
-            Self::Regex => 9,
-            Self::Operator => 10,
+            Self::Keyword => 6,
+            Self::Comment => 7,
+            Self::String => 8,
+            Self::Number => 9,
+            Self::Regex => 10,
+            Self::Operator => 11,
         }
     }
 
@@ -471,6 +498,7 @@ impl TokenType {
             SemanticTokenType::PROPERTY,
             SemanticTokenType::ENUM_MEMBER,
             SemanticTokenType::FUNCTION,
+            SemanticTokenType::KEYWORD,
             SemanticTokenType::COMMENT,
             SemanticTokenType::STRING,
             SemanticTokenType::NUMBER,
@@ -490,11 +518,22 @@ impl From<TokenType> for SemanticTokenType {
             TokenType::Property => Self::PROPERTY,
             TokenType::EnumMember => Self::ENUM_MEMBER,
             TokenType::Function => Self::FUNCTION,
+            TokenType::Keyword => Self::KEYWORD,
             TokenType::Comment => Self::COMMENT,
             TokenType::String => Self::STRING,
             TokenType::Number => Self::NUMBER,
             TokenType::Regex => Self::REGEXP,
             TokenType::Operator => Self::OPERATOR,
+        }
+    }
+}
+
+impl From<JsonTokenType> for TokenType {
+    fn from(value: JsonTokenType) -> Self {
+        match value {
+            JsonTokenType::Keyword => Self::Keyword,
+            JsonTokenType::String => Self::String,
+            JsonTokenType::Number => Self::Number,
         }
     }
 }
