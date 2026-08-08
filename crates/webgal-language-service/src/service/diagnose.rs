@@ -70,17 +70,21 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
                 .map(|(path, diagnostics)| {
                     let diagnostics = diagnostics
                         .into_iter()
-                        .map(|diagnostic| {
-                            diagnostic.to_lsp_diagnostic(|index| {
-                                &project
-                                    .resource()
-                                    .scene
-                                    .get(&path)
-                                    .unwrap()
-                                    .as_item()
-                                    .unwrap()
-                                    .sentences()[index]
-                                    .primary
+                        .filter_map(|diagnostic| {
+                            let sentence = &project
+                                .resource()
+                                .scene
+                                .get(&path)
+                                .unwrap()
+                                .as_item()
+                                .unwrap()
+                                .sentences()[diagnostic.line];
+
+                            (!sentence.contains_nolint(diagnostic.code())).then(|| {
+                                diagnostic.to_lsp_diagnostic(|index| {
+                                    debug_assert_eq!(index, diagnostic.line);
+                                    &sentence.primary
+                                })
                             })
                         })
                         .collect();
