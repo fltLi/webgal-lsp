@@ -147,9 +147,11 @@ impl StageEffect {
             Self::SetDialogueContent(content) => {
                 if let Some(textbox) = Rc::get_mut(&mut next_stage.textbox) {
                     if content == textbox.content {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
-                            "设置对话内容为 `{content}`",
-                        )));
+                        if !content.is_empty() {
+                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                                "设置对话内容为 `{content}`",
+                            )));
+                        }
                     } else if content == prev_stage.textbox.content {
                         diagnostics.push(DiagnosticKind::RedundantEffect(format!(
                             "设置对话内容为 `{content}` (原来是 `{}`, 但现在还原到了进入连续执行块前的状态)",
@@ -178,9 +180,11 @@ impl StageEffect {
 
                 if let Some(textbox) = Rc::get_mut(&mut next_stage.textbox) {
                     if content == textbox.content {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
-                            "追加对话内容为 `{content}`",
-                        )));
+                        if !content.is_empty() {
+                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                                "追加对话内容为 `{content}`",
+                            )));
+                        }
                     } else if content == prev_stage.textbox.content {
                         diagnostics.push(DiagnosticKind::RedundantEffect(format!(
                             "追加对话内容为 `{content}` (原来是 `{}`, 但现在还原到了进入连续执行块前的状态)",
@@ -343,9 +347,11 @@ impl StageEffect {
             Self::SetFigure(id, path) => match next_stage.figures.entry(id.clone()) {
                 Entry::Occupied(mut o) => {
                     if path == o.get().path {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
-                            "设置立绘 `{id}` 为 `{path}`",
-                        )));
+                        if Rc::get_mut(o.get_mut()).is_some() {
+                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                                "设置立绘 `{id}` 为 `{path}`",
+                            )));
+                        }
                     } else if let Some(figure) = prev_stage.figures.get(&id)
                         && path == figure.path
                     {
