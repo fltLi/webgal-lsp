@@ -27,10 +27,10 @@ impl TokenType {
     pub fn from_str(s: &str) -> Self {
         if s.starts_with('"') {
             Self::String
-        } else if s == "true" || s == "false" {
-            Self::Number
-        } else {
+        } else if matches!(s, "true" | "false") {
             Self::Keyword
+        } else {
+            Self::Number
         }
     }
 }
