@@ -1,6 +1,6 @@
 [package]
 name = "path-tree"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 readme.workspace = true
 description = "基于二分查找的分段虚拟路径路径树"
