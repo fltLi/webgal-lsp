@@ -17,6 +17,7 @@ pub struct Resource {
     // 场景
     pub scene: Folder<Scene>,
     // 动画
+    // TODO: 将动画查找逻辑改为查询 animationTable.json
     pub animation: Folder<AnimationList>,
     // 立绘和图像
     pub background: Folder<()>,

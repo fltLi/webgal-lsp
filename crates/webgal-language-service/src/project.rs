@@ -99,9 +99,11 @@ impl Project {
             }
 
             ResourceKind::Animation => {
-                self.resource
-                    .insert_animation(path, f)
-                    .map_err(make_error)?;
+                if path != "animationTable.json" {
+                    self.resource
+                        .insert_animation(path, f)
+                        .map_err(make_error)?;
+                }
             }
 
             ResourceKind::Background => {
@@ -158,7 +160,9 @@ impl Project {
             }
 
             ResourceKind::Animation => {
-                try_remove(path, &mut self.resource.animation).map_err(make_error)?;
+                if path != "animationTable.json" {
+                    try_remove(path, &mut self.resource.animation).map_err(make_error)?;
+                }
             }
 
             ResourceKind::Background => {
