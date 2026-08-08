@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use getset::WithSetters;
 use path_tree::{Node, join, name_of, parent_of};
 use rayon::prelude::*;
 use strum::{Display, EnumString};
@@ -16,7 +17,7 @@ use tokio::{
         mpsc::{UnboundedSender, unbounded_channel},
     },
     task::{JoinSet, spawn, spawn_blocking},
-    time::interval,
+    time::{interval, timeout as with_timeout},
 };
 use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
 use tracing::{debug, error, info, warn};
@@ -26,6 +27,51 @@ use webgal_language_service::{encode::*, service::*};
 use crate::project::{DirEntry, FileSystem, GetProjectResult, Project, Workspace, load_project};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// WebGAL 语言服务器后端构建配置
+///
+/// 默认配置 [`Self::default`] 开启全部语言服务能力.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, WithSetters)]
+pub struct BackendBuilder {
+    // 服务基本能力配置
+    #[getset(set_with = "pub")]
+    diagnose_capability: bool,
+    #[getset(set_with = "pub")]
+    hover_capability: bool,
+    #[getset(set_with = "pub")]
+    highlight_capability: bool,
+    #[getset(set_with = "pub")]
+    complete_capability: bool,
+    #[getset(set_with = "pub")]
+    format_capability: bool,
+
+    // 高级配置
+    #[getset(set_with = "pub")]
+    diagnostic_delay: Duration, // 诊断批处理延时 (默认 500ms)
+    #[getset(set_with = "pub")]
+    diagnostic_timeout: Duration, // 每个项目的诊断生成的超时时间 (默认 10s)
+}
+
+impl BackendBuilder {
+    /// 依据配置创建 WebGAL 语言服务后端实例
+    pub fn build(self, client: Client) -> Backend {
+        Backend::with_options(client, self)
+    }
+}
+
+impl Default for BackendBuilder {
+    fn default() -> Self {
+        Self {
+            diagnose_capability: true,
+            hover_capability: true,
+            highlight_capability: true,
+            complete_capability: true,
+            format_capability: true,
+            diagnostic_delay: Duration::from_millis(500),
+            diagnostic_timeout: Duration::from_secs(10),
+        }
+    }
+}
 
 /// WebGAL 语言服务器后端
 ///
@@ -69,9 +115,10 @@ pub struct Backend {
     client: Client,
     workspace: Arc<AsyncRwLock<Workspace>>,
     open_ducuments: Arc<AsyncRwLock<HashSet<String>>>, // 编辑器活动文档
-    diagnose: UnboundedSender<(String, Arc<RwLock<Project>>)>, // 诊断服务通道
-    /// 初始化参数
+    diagnose_sender: Option<UnboundedSender<(String, Arc<RwLock<Project>>)>>, // 诊断服务通道
+    /// 配置
     init_state: Arc<AsyncMutex<InitializationState>>,
+    options: BackendBuilder,
 }
 
 #[derive(Debug, Default)]
@@ -80,16 +127,31 @@ struct InitializationState {
 }
 
 impl Backend {
+    /// 创建 WebGAL 语言服务后端实例
+    ///
+    /// # Notes
+    /// 调用此函数创建的后端将采用默认配置, 若要配置能力请改用 [`BackendBuilder::build`].
     pub fn new(client: Client) -> Self {
+        Self::with_options(client, Default::default())
+    }
+
+    fn with_options(client: Client, options: BackendBuilder) -> Self {
         let workspace = Arc::new(AsyncRwLock::new(Workspace::new()));
-        let diagnose = start_diagnostic_service(client.clone());
+        let diagnose_sender = options.diagnose_capability.then(|| {
+            start_diagnostic_service(
+                client.clone(),
+                options.diagnostic_delay,
+                options.diagnostic_timeout,
+            )
+        });
 
         Self {
             client,
             workspace,
             open_ducuments: Default::default(),
-            diagnose,
+            diagnose_sender,
             init_state: Default::default(),
+            options,
         }
     }
 
@@ -240,7 +302,13 @@ impl Backend {
     }
 
     fn diagnose_project(&self, path: &str, project: Arc<RwLock<Project>>) {
-        if let Err(error) = self.diagnose.send((path.to_string(), project)) {
+        if self.options.diagnose_capability
+            && let Err(error) = self
+                .diagnose_sender
+                .as_ref()
+                .unwrap()
+                .send((path.to_string(), project))
+        {
             warn!(project = %path, %error, "Failed to send diagnostic request");
         }
     }
@@ -264,10 +332,10 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
-            hover_provider: Some(document_capability()),
-            semantic_tokens_provider: Some(highlight_capability()),
-            completion_provider: Some(complete_capability()),
-            document_formatting_provider: Some(format_capability()),
+            hover_provider: self.options.hover_capability.then(document_capability),
+            semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
+            completion_provider: self.options.complete_capability.then(complete_capability),
+            document_formatting_provider: self.options.format_capability.then(format_capability),
             workspace: Some(WorkspaceServerCapabilities {
                 workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                     supported: Some(true),
@@ -508,6 +576,11 @@ impl LanguageServer for Backend {
     // -------- service --------
 
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
+        if !self.options.hover_capability {
+            warn!("Hover capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
         let path = params
             .text_document_position_params
             .text_document
@@ -562,6 +635,11 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> jsonrpc::Result<Option<SemanticTokensResult>> {
+        if !self.options.highlight_capability {
+            warn!("Highlighting capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
         let path = params.text_document.uri.to_string();
 
         // 查找项目
@@ -616,6 +694,11 @@ impl LanguageServer for Backend {
         &self,
         params: CompletionParams,
     ) -> jsonrpc::Result<Option<CompletionResponse>> {
+        if !self.options.complete_capability {
+            warn!("Completion capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
         let path = params.text_document_position.text_document.uri.to_string();
 
         // 查找项目
@@ -666,6 +749,11 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentFormattingParams,
     ) -> jsonrpc::Result<Option<Vec<TextEdit>>> {
+        if !self.options.format_capability {
+            warn!("Formatting capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
         let path = params.text_document.uri.to_string();
 
         // 查找项目
@@ -736,12 +824,16 @@ impl TryFrom<FileChangeType> for FileChangeKind {
 ///
 /// 通过管道发送推送任务 (项目完整路径 + 项目).
 /// 任务自动去重, 每隔 500ms 集中处理一次, 避免大量更新阻塞程序.
-fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLock<Project>>)> {
+fn start_diagnostic_service(
+    client: Client,
+    delay: Duration,
+    timeout: Duration,
+) -> UnboundedSender<(String, Arc<RwLock<Project>>)> {
     let (sender, mut receiver) = unbounded_channel();
 
     tokio::spawn(async move {
         let mut pending: HashMap<String, _> = HashMap::new();
-        let mut interval = interval(Duration::from_millis(500));
+        let mut interval = interval(delay);
 
         loop {
             select! {
@@ -760,7 +852,14 @@ fn start_diagnostic_service(client: Client) -> UnboundedSender<(String, Arc<RwLo
                         .drain()
                         .map(|(path, project)| {
                             let client = client.clone();
-                            publish_project_diagnostics(path, project, client)
+                            async move {
+                                if with_timeout(
+                                    timeout,
+                                    publish_project_diagnostics(path.clone(), project, client),
+                                ).await.is_err() {
+                                    warn!(project = %path, "Diagnostic generation timed out");
+                                }
+                            }
                         })
                         .collect();
                     tasks.join_all().await;

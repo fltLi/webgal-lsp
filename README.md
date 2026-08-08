@@ -50,16 +50,17 @@ cargo build -p webgal-language-server
   ```
   服务器将监听 `ws://127.0.0.1:8765`，接受一个 WebSocket 连接。
 
-#### 日志控制
+#### 服务器配置
 
-语言服务器日志输出到 `stderr`，可通过以下命令行参数控制：
+日志输出到 `stderr`，所有参数均为可选：
 
-- `--log-level <LEVEL>`：日志级别（`error`, `warn`, `info`, `debug`, `trace`），默认为 `error`。
-- `--log-format <FORMAT>`：输出格式（`plain`, `text`, `json`），默认为 `plain`。
+- **日志**：`--log-level <LEVEL>`（`error`/`warn`/`info`/`debug`/`trace`，默认 `error`），`--log-format <FORMAT>`（`plain`/`text`/`json`，默认 `plain`）
+- **功能开关**：`--disable-{diagnose,hover,highlight,complete,format}` 可分别禁用对应能力（默认全部开启）
+- **诊断调优**：`--diagnostic-delay <MS>`（批处理延迟，默认 500ms），`--diagnostic-timeout <MS>`（生成超时，默认 10000ms）
 
 示例：
 ```bash
-cargo run -p webgal-language-server -- --log-level debug --log-format plain
+cargo run -p webgal-language-server -- --log-level debug --disable-hover --disable-complete --diagnostic-delay 300
 ```
 
 ---

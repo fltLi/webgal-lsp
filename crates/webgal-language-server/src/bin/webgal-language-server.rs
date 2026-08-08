@@ -11,8 +11,21 @@
 //! 支持两种通信模式:
 //! * **stdio** (默认) - 通过标准输入输出与客户端通信, 适用于 VS Code 等桌面环境.
 //! * **WebSocket** (`--port <PORT>`) - 监听指定端口, 通过 WebSocket 与浏览器前端通信.
+//!
+//! ## 服务能力配置
+//! 以下参数用于调整语言服务提供的具体功能及性能参数:
+//! * `--disable-diagnose` - 禁用代码诊断 (默认启用).
+//! * `--disable-hover` - 禁用悬停提示 (默认启用).
+//! * `--disable-highlight` - 禁用语义高亮 (默认启用).
+//! * `--disable-complete` - 禁用自动补全 (默认启用).
+//! * `--disable-format` - 禁用文档格式化 (默认启用).
+//! * `--diagnostic-delay <MS>` - 诊断批处理延迟 (毫秒), 默认 500ms.
+//! * `--diagnostic-timeout <MS>` - 单个项目诊断生成超时 (毫秒), 默认 10000ms (10s).
 
-use std::io::{IsTerminal, stderr};
+use std::{
+    io::{IsTerminal, stderr},
+    time::Duration,
+};
 
 use anyhow::{Error, Result};
 use clap::{Parser, ValueEnum};
@@ -27,7 +40,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tower_lsp::{ClientSocket, LspService, Server};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use webgal_language_server::server::Backend;
+use webgal_language_server::server::{Backend, BackendBuilder};
 
 /// 日志级别
 #[derive(
@@ -62,17 +75,31 @@ pub enum LogFormat {
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// 日志级别 (`error`, `warn`, `info`, `debug`, `trace`)
+    // 日志配置
     #[arg(long, value_enum, default_value_t = LogLevel::default())]
     log_level: LogLevel,
-
-    /// 日志输出格式 (`plain`, `text`, `json`)
     #[arg(long, value_enum, default_value_t = LogFormat::default())]
     log_format: LogFormat,
 
-    /// 使用 WebSocket 模式, 并指定监听端口 (例如 `--port 8765`)
+    // 通信模式
     #[arg(long, value_name = "PORT")]
     port: Option<u16>,
+
+    // 后端能力配置
+    #[arg(long)]
+    disable_diagnose: bool,
+    #[arg(long)]
+    disable_hover: bool,
+    #[arg(long)]
+    disable_highlight: bool,
+    #[arg(long)]
+    disable_complete: bool,
+    #[arg(long)]
+    disable_format: bool,
+    #[arg(long, default_value_t = 500)]
+    diagnostic_delay: u64,
+    #[arg(long, default_value_t = 10000)]
+    diagnostic_timeout: u64,
 }
 
 #[tokio::main]
@@ -82,8 +109,18 @@ async fn main() -> Result<()> {
     // 初始化日志
     init_logging(args.log_level, args.log_format);
 
-    // 创建 LSP 服务和客户端套接字 (延迟到传输层准备就绪)
-    let (service, socket) = LspService::new(Backend::new);
+    // 构建后端配置
+    let builder = BackendBuilder::default()
+        .with_diagnose_capability(!args.disable_diagnose)
+        .with_hover_capability(!args.disable_hover)
+        .with_highlight_capability(!args.disable_highlight)
+        .with_complete_capability(!args.disable_complete)
+        .with_format_capability(!args.disable_format)
+        .with_diagnostic_delay(Duration::from_millis(args.diagnostic_delay))
+        .with_diagnostic_timeout(Duration::from_millis(args.diagnostic_timeout));
+
+    // 创建 LSP 服务和客户端套接字
+    let (service, socket) = LspService::new(move |client| builder.build(client));
 
     match args.port {
         Some(port) => {
