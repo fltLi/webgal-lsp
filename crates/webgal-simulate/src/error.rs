@@ -103,6 +103,12 @@ pub enum DiagnosticKind {
     DialogueTooLong(usize),
 }
 
+impl DiagnosticKind {
+    pub(crate) fn prevents_unused_check(&self) -> bool {
+        matches!(self, Self::Stopped(reason) if reason.prevents_unused_check())
+    }
+}
+
 /// 模拟执行停止的具体原因
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Error)]
 pub enum StopReason {
@@ -117,6 +123,12 @@ pub enum StopReason {
 
     #[error("涉及随机数生成，模拟执行不支持该特性")]
     RandomNumberInterrupt,
+}
+
+impl StopReason {
+    pub(crate) fn prevents_unused_check(&self) -> bool {
+        !matches!(self, StopReason::NormalTermination)
+    }
 }
 
 /// 符号种类

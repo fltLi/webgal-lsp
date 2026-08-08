@@ -73,11 +73,11 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
     /// 是否执行死代码诊断且发现死代码的数量.
     ///
     /// # Behavior
-    /// * 当操作前已存在 (其他) 诊断时, 为了避免误报, 将不提供死代码诊断.
+    /// * 当操作前已存在非正常退出的诊断时, 为了避免误报, 将不提供死代码诊断.
     pub fn check_unused(&self) -> Option<usize> {
         // 避免出错中断造成的死代码误报
-        let has_diagnostic = self.scenes.values().any(Scene::has_diagnostics);
-        if has_diagnostic {
+        let suppressed = self.scenes.values().any(Scene::prevents_unused_check);
+        if suppressed {
             return None;
         }
 
@@ -122,8 +122,8 @@ impl<'a> Scene<'a> {
             .sum()
     }
 
-    pub fn has_diagnostics(&self) -> bool {
-        self.iter().any(SentenceInfo::has_diagnostics)
+    pub fn prevents_unused_check(&self) -> bool {
+        self.iter().any(SentenceInfo::prevents_unused_check)
     }
 
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
@@ -256,16 +256,18 @@ impl<'a> SentenceInfo<'a> {
     }
 
     fn check_unused(&self) -> bool {
-        if self.is_visited() {
-            false
-        } else {
+        let is_unused = !self.is_visited() && !matches!(self.sentence, Sentence::Comment(_));
+        if is_unused {
             self.push_diagnostic(DiagnosticKind::Unused);
-            true
         }
+        is_unused
     }
 
-    pub fn has_diagnostics(&self) -> bool {
-        !self.diagnostics.borrow().is_empty()
+    pub fn prevents_unused_check(&self) -> bool {
+        self.diagnostics
+            .borrow()
+            .iter()
+            .any(DiagnosticKind::prevents_unused_check)
     }
 
     pub fn push_diagnostic(&self, diagnostic: DiagnosticKind) {
