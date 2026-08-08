@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 use count::HashCounter;
-use json_complete::{ToJsonSchema, Value};
+use json_language_service::{Schema, ToJsonSchema};
 use lsp_types::*;
 use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
@@ -312,23 +312,23 @@ fn complete_ease_enum(input: &str, position: Position) -> Vec<PrimaryCompletion>
     )
 }
 
-fn live2d_blink_json_schema() -> &'static Value {
-    static SCHEMA: Lazy<Value> = Lazy::new(Live2dBlink::schema);
+fn live2d_blink_json_schema() -> &'static Schema {
+    static SCHEMA: Lazy<Schema> = Lazy::new(Live2dBlink::schema);
     &SCHEMA
 }
 
-fn live2d_focus_json_schema() -> &'static Value {
-    static SCHEMA: Lazy<Value> = Lazy::new(Live2dFocus::schema);
+fn live2d_focus_json_schema() -> &'static Schema {
+    static SCHEMA: Lazy<Schema> = Lazy::new(Live2dFocus::schema);
     &SCHEMA
 }
 
-fn transform_json_schema() -> &'static Value {
-    static SCHEMA: Lazy<Value> = Lazy::new(Transform::schema);
+fn transform_json_schema() -> &'static Schema {
+    static SCHEMA: Lazy<Schema> = Lazy::new(Transform::schema);
     &SCHEMA
 }
 
-fn animation_list_json_schema() -> &'static Value {
-    static SCHEMA: Lazy<Value> = Lazy::new(AnimationList::schema);
+fn animation_list_json_schema() -> &'static Schema {
+    static SCHEMA: Lazy<Schema> = Lazy::new(AnimationList::schema);
     &SCHEMA
 }
 

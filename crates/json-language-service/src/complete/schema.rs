@@ -2,15 +2,15 @@ use crate::{Ident, Location, Node};
 
 /// JSON 结构信息
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Value {
-    Object(Vec<Field>),
-    Array(Box<Value>),
+pub enum Schema {
+    Object(Vec<SchemaField>),
+    Array(Box<Schema>),
     String,
     Number,
     Bool,
 }
 
-impl Default for Value {
+impl Default for Schema {
     fn default() -> Self {
         Self::Object(Vec::default())
     }
@@ -18,9 +18,9 @@ impl Default for Value {
 
 /// JSON 具名字段信息
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Field {
+pub struct SchemaField {
     pub key: String,
-    pub value: Value,
+    pub value: Schema,
     /// 补全时给出的描述信息
     pub description: String,
 }
@@ -44,7 +44,7 @@ pub enum IdentKind {
     Bool,
 }
 
-impl Field {
+impl SchemaField {
     pub fn as_view<'a>(&'a self) -> FieldView<'a> {
         let Self {
             key,
@@ -63,12 +63,12 @@ impl Field {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FieldView<'a> {
     pub key: &'a str,
-    pub value: &'a Value,
+    pub value: &'a Schema,
     pub description: &'a str,
 }
 
 impl<'a> FieldView<'a> {
-    pub fn with_value(value: &'a Value) -> Self {
+    pub fn with_value(value: &'a Schema) -> Self {
         Self {
             key: "",
             value,
@@ -77,7 +77,7 @@ impl<'a> FieldView<'a> {
     }
 }
 
-impl From<FieldView<'_>> for Field {
+impl From<FieldView<'_>> for SchemaField {
     fn from(value: FieldView) -> Self {
         let FieldView {
             key,
@@ -92,7 +92,7 @@ impl From<FieldView<'_>> for Field {
     }
 }
 
-impl Value {
+impl Schema {
     /// 宽松解析 JSON 字符串并提供补全
     ///
     /// 简单封装 [`Self::complete_by_location`] 和 [`Location::locate`] 实现.
@@ -113,7 +113,7 @@ impl Value {
         match *ident {
             Ident::Key(input) if let Self::Object(fields) = value => fields
                 .iter()
-                .filter(|Field { key, .. }| key.starts_with(input))
+                .filter(|SchemaField { key, .. }| key.starts_with(input))
                 .map(|field| {
                     // TODO: 根据光标后的内容更好地提供下列补全
                     // let text = match value {
@@ -168,9 +168,9 @@ impl Value {
 
 /// 支持获取 JSON 格式的类型
 pub trait ToJsonSchema {
-    fn schema() -> Value;
+    fn schema() -> Schema;
 
-    fn to_schema(&self) -> Value {
+    fn to_schema(&self) -> Schema {
         Self::schema()
     }
 }
@@ -183,15 +183,15 @@ pub trait ToJsonSchema {
 ///
 /// # Examples
 /// ```
-/// # use json_complete::{Field, Value, json};
+/// # use json_language_service::{Schema, SchemaField, json_schema};
 ///
 /// // 用于表达式演示的变量和函数
-/// let dynamic = json!({ "foo": string });
-/// fn computed() -> Value {
-///     json!({ "bar": number })
+/// let dynamic = json_schema!({ "foo": string });
+/// fn computed() -> Schema {
+///     json_schema!({ "bar": number })
 /// }
 ///
-/// let schema = json! {{
+/// let schema = json_schema! {{
 ///     "name": string "用户名",
 ///     "age":  number,
 ///     "tags": [string] "标签列表",
@@ -206,55 +206,55 @@ pub trait ToJsonSchema {
 ///
 /// assert_eq!(
 ///     schema,
-///     Value::Object(vec![
-///         Field {
+///     Schema::Object(vec![
+///         SchemaField {
 ///             key: "name".to_string(),
-///             value: Value::String,
+///             value: Schema::String,
 ///             description: "用户名".to_string(),
 ///         },
-///         Field {
+///         SchemaField {
 ///             key: "age".to_string(),
-///             value: Value::Number,
+///             value: Schema::Number,
 ///             description: "".to_string(),
 ///         },
-///         Field {
+///         SchemaField {
 ///             key: "tags".to_string(),
-///             value: Value::Array(Box::new(Value::String)),
+///             value: Schema::Array(Box::new(Schema::String)),
 ///             description: "标签列表".to_string(),
 ///         },
-///         Field {
+///         SchemaField {
 ///             key: "address".to_string(),
-///             value: Value::Object(vec![
-///                 Field {
+///             value: Schema::Object(vec![
+///                 SchemaField {
 ///                     key: "city".to_string(),
-///                     value: Value::String,
+///                     value: Schema::String,
 ///                     description: "城市".to_string(),
 ///                 },
-///                 Field {
+///                 SchemaField {
 ///                     key: "zip".to_string(),
-///                     value: Value::Number,
+///                     value: Schema::Number,
 ///                     description: "".to_string(),
 ///                 },
 ///             ]),
 ///             description: "".to_string(),
 ///         },
-///         Field {
+///         SchemaField {
 ///             key: "field".to_string(),
-///             value: Value::Object(vec![
-///                 Field {
+///             value: Schema::Object(vec![
+///                 SchemaField {
 ///                     key: "foo".to_string(),
-///                     value: Value::String,
+///                     value: Schema::String,
 ///                     description: "".to_string(),
 ///                 }
 ///             ]),
 ///             description: "".to_string(),
 ///         },
-///         Field {
+///         SchemaField {
 ///             key: "from_call".to_string(),
-///             value: Value::Object(vec![
-///                 Field {
+///             value: Schema::Object(vec![
+///                 SchemaField {
 ///                     key: "bar".to_string(),
-///                     value: Value::Number,
+///                     value: Schema::Number,
 ///                     description: "".to_string(),
 ///                 }
 ///             ]),
@@ -264,22 +264,22 @@ pub trait ToJsonSchema {
 /// );
 /// ```
 #[macro_export]
-macro_rules! json {
+macro_rules! json_schema {
     // 表达式
     ( ( $expr:expr ) ) => { $expr };
     // 基本类型
     (string) => {
-        $crate::Value::String
+        $crate::Schema::String
     };
     (number) => {
-        $crate::Value::Number
+        $crate::Schema::Number
     };
     (bool) => {
-        $crate::Value::Bool
+        $crate::Schema::Bool
     };
     // 数组: [ type ], 支持可选描述
     ([ $($inner:tt)+ ] $($desc:literal)?) => {
-        $crate::Value::Array(Box::new($crate::json!($($inner)+)))
+        $crate::Schema::Array(Box::new($crate::json_schema!($($inner)+)))
     };
     // 对象: { "key": value "desc", ... }
     // 递归规则: 匹配以逗号分隔的键值对, 每对中值后可跟一个可选的字符串描述.
@@ -292,17 +292,17 @@ macro_rules! json {
                 $(d = $desc.to_string();)?
                 d
             };
-            fields.push($crate::Field {
+            fields.push($crate::SchemaField {
                 key: $key.to_string(),
-                value: $crate::json!($value),
+                value: $crate::json_schema!($value),
                 description,
             });
         )*
-        $crate::Value::Object(fields)
+        $crate::Schema::Object(fields)
     }};
 }
 
-impl Value {
+impl Schema {
     /// 继承 JSON 结构信息
     ///
     /// 仅支持 [`Self::Object`] 之间的继承.

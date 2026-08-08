@@ -991,7 +991,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "json-complete"
+name = "json-language-service"
 version = "0.1.0"
 dependencies = [
  "lsp-types",
@@ -2320,7 +2320,7 @@ dependencies = [
  "anyhow",
  "criterion",
  "derive_more",
- "json-complete",
+ "json-language-service",
  "ouroboros",
  "path-tree",
  "rand 0.10.2",
@@ -2365,7 +2365,7 @@ dependencies = [
  "anyhow",
  "count",
  "getset",
- "json-complete",
+ "json-language-service",
  "lsp-types",
  "once_cell",
  "path-tree",

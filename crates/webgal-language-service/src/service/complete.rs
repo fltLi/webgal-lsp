@@ -98,7 +98,7 @@ impl From<PrimaryCompletion> for CompletionItem {
     }
 }
 
-// 兼容 json-complete 返回的 CompletionItem, 请不要在其他地方执行!
+// 兼容 json-language-service 返回的 CompletionItem, 请不要在其他地方执行!
 impl From<CompletionItem> for PrimaryCompletion {
     fn from(value: CompletionItem) -> Self {
         let CompletionItem {

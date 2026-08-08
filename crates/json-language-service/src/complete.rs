@@ -1,9 +1,7 @@
 #[cfg(feature = "lsp")]
 pub use convert::*;
-pub use locate::*;
-pub use value::*;
+pub use schema::*;
 
 #[cfg(feature = "lsp")]
 mod convert;
-mod locate;
-mod value;
+mod schema;

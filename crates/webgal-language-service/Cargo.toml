@@ -19,7 +19,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 count = { workspace = true, features = ["hash"] }
 path-tree.workspace = true
-json-complete = { workspace = true, features = ["lsp"] }
+json-language-service = { workspace = true, features = ["lsp"] }
 
 webgal-language-core.workspace = true
 webgal-simulate = { workspace = true, features = ["lsp"], optional = true }

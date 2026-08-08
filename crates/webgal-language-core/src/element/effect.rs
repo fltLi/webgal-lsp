@@ -3,7 +3,7 @@
 use std::{fmt, ops::Deref, str::FromStr};
 
 use derive_more::{Deref, DerefMut, From, Into, IntoIterator, TryInto};
-use json_complete::{ToJsonSchema, Value, json};
+use json_language_service::{Schema, ToJsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use serde_with::{BoolFromInt, serde_as, skip_serializing_none};
 use strum::{Display, EnumString};
@@ -334,8 +334,8 @@ impl_from_str_for_serde_json!(Live2dBlink);
 impl_display_for_serde_json!(Live2dBlink);
 
 impl ToJsonSchema for Live2dBlink {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             "blinkInterval":       number "眨眼间隔 (ms)",
             "blinkIntervalRandom": number "眨眼间隔随机值 (ms)",
             "closingDuration":     number "闭眼持续时间 (ms)",
@@ -360,8 +360,8 @@ impl_from_str_for_serde_json!(Live2dFocus);
 impl_display_for_serde_json!(Live2dFocus);
 
 impl ToJsonSchema for Live2dFocus {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             "x":       number "注视点 x 轴坐标",
             "y":       number "注视点 y 轴坐标",
             "instant": bool   "立即注视",
@@ -655,8 +655,8 @@ impl Transform {
 }
 
 impl ToJsonSchema for Transform {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             // 基础变换
             "position": (Position::schema()) "位置",
             "rotation": number               "旋转 (rad)",
@@ -725,8 +725,8 @@ impl Position {
 }
 
 impl ToJsonSchema for Position {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             "x": number "x 轴坐标 (pix)",
             "y": number "y 轴坐标 (pix)",
         }}
@@ -774,8 +774,8 @@ impl_from_str_for_serde_json!(Scale);
 impl_display_for_serde_json!(Scale);
 
 impl ToJsonSchema for Scale {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             "x": number "x 轴缩放 [0, +inf)",
             "y": number "y 轴缩放 [0, +inf)",
         }}
@@ -824,8 +824,8 @@ impl Animation {
 }
 
 impl ToJsonSchema for Animation {
-    fn schema() -> Value {
-        json! {{
+    fn schema() -> Schema {
+        json_schema! {{
             "duration": number "持续时间 (ms)",
             "ease":     string "缓动类型",
         }}
@@ -877,8 +877,8 @@ impl AnimationList {
 }
 
 impl ToJsonSchema for AnimationList {
-    fn schema() -> Value {
-        json! {[ (Animation::schema()) ]}
+    fn schema() -> Schema {
+        json_schema! {[ (Animation::schema()) ]}
     }
 }
 

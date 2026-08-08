@@ -4,9 +4,9 @@ use std::fmt::Write;
 
 use lsp_types::*;
 
-use crate::{Completion, IdentKind, Value};
+use crate::{Completion, IdentKind, Schema};
 
-impl Value {
+impl Schema {
     /// 宽松解析 JSON 字符串并提供补全 (LSP)
     pub fn complete_lsp(&self, s: &str, position: Position) -> Vec<CompletionItem> {
         self.complete(s)
