@@ -97,7 +97,7 @@ command:content -name -name=value; comment
 
 ### JSON
 
-JSON 补全由 `json-complete` 提供，是作者自己造的轮子，可以宽松解析和补全 JSON 字符串。
+JSON 补全由 `json-language-service` 提供，是作者自己造的轮子，可以宽松解析和补全 JSON 字符串。
 
 例如，对于 `transform` 参数，当键入 `{"pos|` 时，将自动提示出 `position` 这一个键。
 

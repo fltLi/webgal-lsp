@@ -1,12 +1,10 @@
 //! LSP 类型转换
 
-use std::fmt::Write;
-
 use lsp_types::*;
 
-use crate::{Completion, IdentKind, Value};
+use crate::{Completion, IdentKind, Schema};
 
-impl Value {
+impl Schema {
     /// 宽松解析 JSON 字符串并提供补全 (LSP)
     pub fn complete_lsp(&self, s: &str, position: Position) -> Vec<CompletionItem> {
         self.complete(s)
@@ -66,18 +64,4 @@ impl Completion {
             ..Default::default()
         }
     }
-}
-
-pub fn join_completion_text<S: AsRef<str>>(tokens: &[S]) -> String {
-    let mut text = String::new();
-    let mut token_iter = tokens.iter().enumerate().peekable();
-    while let Some((i, token)) = token_iter.next() {
-        let token = token.as_ref();
-        if token_iter.peek().is_some() {
-            let _ = write!(text, "{token}${}", i + 1);
-        } else {
-            let _ = write!(text, "{token}$0");
-        }
-    }
-    text
 }
