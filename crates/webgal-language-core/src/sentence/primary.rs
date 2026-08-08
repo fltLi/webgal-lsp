@@ -29,7 +29,7 @@ impl<'a> PrimarySentence<'a> {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(line: &'a str) -> Self {
         // 分离注释
-        let (line, comment) = split_once_escaped(line, ';').unwrap_or((line, ""));
+        let (line, comment) = split_once_escaped(line, ';').unwrap_or((line, &line[line.len()..]));
 
         // 提取语句头 (后续判定为语句类型或主参数)
         let (command, line) = match line.split_once(':') {
