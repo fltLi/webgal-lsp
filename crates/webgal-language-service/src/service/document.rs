@@ -17,11 +17,16 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
     } = scene.sentences().get(position.line as usize)?;
 
     // 查询文档
+    let command = match sentence {
+        Sentence::Say(_) => "say",
+        Sentence::Comment(_) => "comment",
+        _ => primary.command,
+    };
     let documentation = match primary.locate(position.character as usize) {
-        SentenceLocation::Command(_) => document_command(primary.command),
-        SentenceLocation::Content(_) => document_content(primary.command),
+        SentenceLocation::Command(_) => document_command(command),
+        SentenceLocation::Content(_) => document_content(command),
         SentenceLocation::ArgumentName(index, _) => {
-            document_argument(primary.command, primary.arguments[index].0)
+            document_argument(command, primary.arguments[index].0)
         }
         SentenceLocation::ArgumentValue(..) => None,
         SentenceLocation::Other if matches!(sentence, Sentence::Comment(_)) => {
