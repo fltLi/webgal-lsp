@@ -1,4 +1,4 @@
-use crate::{Ident, Location, Node};
+use crate::complete::locate::*;
 
 /// JSON 结构信息
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
