@@ -371,7 +371,11 @@ impl Complete for SaySentence {
                 self.figure.is_none() => ("figureId", "figureId=", "指定立绘 ID"),
                 self.figure.is_none() => ("center", "center", "指定中间立绘"),
                 self.figure.is_none() => ("left", "left", "指定左侧立绘"),
+                self.figure.is_none() => ("left13", "left13", "指定左侧 1/3 立绘"),
+                self.figure.is_none() => ("left14", "left14", "指定左侧 1/4 立绘"),
                 self.figure.is_none() => ("right", "right", "指定右侧立绘"),
+                self.figure.is_none() => ("right13", "right13", "指定右侧 1/3 立绘"),
+                self.figure.is_none() => ("right14", "right14", "指定右侧 1/4 立绘"),
                 self.font_size == Default::default() => ("fontSize", "fontSize=", "字体大小"),
                 !self.concat => ("concat", "concat", "将该对话与上一句连接"),
                 !self.notend => ("notend", "notend", "文字展示完执行下一句"),
@@ -513,7 +517,11 @@ impl Complete for ChangeFigureSentence {
         complete_argument_name_collect! {
             (input, position): {
                 self.side != FigureSide::Left => ("left", "left", "将立绘置于左侧"),
+                self.side != FigureSide::Left13 => ("left13", "left13", "将立绘置于左侧 1/3"),
+                self.side != FigureSide::Left14 => ("left14", "left14", "将立绘置于左侧 1/4"),
                 self.side != FigureSide::Right => ("right", "right", "将立绘置于右侧"),
+                self.side != FigureSide::Right13 => ("right13", "right13", "将立绘置于右侧 1/3"),
+                self.side != FigureSide::Right14 => ("right14", "right14", "将立绘置于右侧 1/4"),
                 self.id.is_none() => ("id", "id=", "设置 ID"),
                 self.mouth_open.is_none() => ("mouthOpen", "mouthOpen=", "嘴巴张开的图片立绘"),
                 self.mouth_half_open.is_none() => ("mouthHalfOpen", "mouthHalfOpen=", "嘴巴半张开的图片立绘"),

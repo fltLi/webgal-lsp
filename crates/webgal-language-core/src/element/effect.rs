@@ -71,7 +71,11 @@ pub enum FigureSide {
     #[default]
     Center,
     Left,
+    Left13,
+    Left14,
     Right,
+    Right13,
+    Right14,
 }
 
 impl FigureSide {
@@ -80,7 +84,11 @@ impl FigureSide {
         match self {
             Self::Center => "fig-center",
             Self::Left => "fig-left",
+            Self::Left13 => "fig-left13",
+            Self::Left14 => "fig-left14",
             Self::Right => "fig-right",
+            Self::Right13 => "fig-right13",
+            Self::Right14 => "fig-right14",
         }
     }
 }

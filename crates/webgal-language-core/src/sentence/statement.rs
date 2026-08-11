@@ -76,7 +76,14 @@ pub struct ChangeBackgroundSentence {
 pub struct ChangeFigureSentence {
     #[sentence(content)]
     pub figure: Option<String>,
-    #[sentence(variant = { "left": Left, "right": Right })]
+    #[sentence(variant = {
+        "left": Left,
+        "left13": Left13,
+        "left14": Left14,
+        "right": Right,
+        "right13": Right13,
+        "right14": Right14,
+    })]
     pub side: FigureSide,
     pub id: Option<String>,
     // 图像立绘
@@ -991,7 +998,7 @@ impl FromPrimary for SaySentence {
                     }
                     vocal = Some(value.unwrap_or("true").to_string());
                 }
-                "left" | "center" | "right" => {
+                "left" | "left13" | "left14" | "center" | "right" | "right13" | "right14" => {
                     if figure.is_some() {
                         errors.push(Error::ArgumentRepeated(i));
                     }
