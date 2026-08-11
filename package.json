@@ -1,0 +1,22 @@
+{
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "type-check": "npm run type-check --workspaces --if-present",
+    "build:wasm": "npm run build:wasm -w webgal-parse-playground",
+    "lint:all": "npm run build:wasm && npm run lint && npm run type-check",
+    "format": "prettier --write \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\"",
+    "format-check": "prettier --check \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.9.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.67.0"
+  }
+}

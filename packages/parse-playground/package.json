@@ -4,6 +4,8 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
+    "lint": "eslint src --ext .ts,.tsx",
+    "type-check": "tsc --noEmit",
     "build:wasm": "cd ../../crates/webgal-language-service && wasm-pack build --target web --release",
     "build:wasm:dev": "cd ../../crates/webgal-language-service && wasm-pack build --target web",
     "dev": "vite",
@@ -15,6 +17,7 @@
     "@monaco-editor/react": "^4.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "vscode-languageserver-types": "^3.18.0",
     "webgal-language-service": "file:../../crates/webgal-language-service/pkg"
   },
   "devDependencies": {
@@ -22,7 +25,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
     "monaco-editor": "^0.34.1",
-    "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^8.2.1"
   }
 }

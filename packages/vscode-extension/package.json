@@ -12,9 +12,16 @@
     "languages": [
       {
         "id": "webgal",
-        "aliases": ["WebGAL", "webgal"],
-        "extensions": [".txt"],
-        "filenamePatterns": ["**/scene/**/*.txt"],
+        "aliases": [
+          "WebGAL",
+          "webgal"
+        ],
+        "extensions": [
+          ".txt"
+        ],
+        "filenamePatterns": [
+          "**/scene/**/*.txt"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -25,7 +32,11 @@
         "webgal-language-server.trace.server": {
           "type": "string",
           "scope": "window",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
         }
@@ -33,14 +44,15 @@
     }
   },
   "scripts": {
+    "lint": "eslint src --ext .ts,.tsx",
+    "type-check": "tsc --noEmit",
     "compile": "tsc",
     "watch": "tsc --watch",
     "build": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
-    "typescript": "^5.4.5"
+    "@types/vscode": "^1.85.0"
   },
   "dependencies": {
     "vscode-languageclient": "^10.0.0"

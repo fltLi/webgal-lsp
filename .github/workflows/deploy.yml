@@ -19,8 +19,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: packages/parse-playground/package-lock.json
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
