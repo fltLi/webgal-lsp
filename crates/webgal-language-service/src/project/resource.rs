@@ -2,7 +2,7 @@
 
 use std::result;
 
-use path_tree::{Folder, Node};
+use path_tree::{Folder, Node, canonicalize, join, parent_of};
 use webgal_language_core::{
     element::AnimationList,
     resource::{FigureInfo, FigureKind, Live2dModel, WmdlModel},
@@ -33,13 +33,13 @@ impl Resource {
         Self::default()
     }
 
-    /// 获取立绘文件
-    ///
-    /// # Behavior
-    /// * 对于 WMDL 模型, 执行一次子模型重定向.
-    pub fn get_figure(&self, path: &str) -> Option<&FigureInfo> {
+    /// 获取立绘文件 (自动处理 WMDL 子模型重定向)
+    pub fn get_figure_redirected(&self, path: &str) -> Option<&FigureInfo> {
         match self.figure.get(path)?.as_item()? {
-            FigureInfo::Wmdl { import } => self.figure.get(import).and_then(Node::as_item),
+            FigureInfo::Wmdl { import } => {
+                let path = canonicalize(join(parent_of(path), import))?;
+                self.figure.get(&path)?.as_item()
+            }
             info => Some(info),
         }
     }

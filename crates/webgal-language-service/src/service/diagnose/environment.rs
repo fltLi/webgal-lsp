@@ -168,7 +168,7 @@ fn diagnose_resource<F>(
             if let Some(figure) = figure {
                 let info = match project
                     .resource()
-                    .get_figure(canonicalize(figure).as_ref().unwrap_or(figure))
+                    .get_figure_redirected(canonicalize(figure).as_ref().unwrap_or(figure))
                 {
                     Some(info) => info,
                     None => {

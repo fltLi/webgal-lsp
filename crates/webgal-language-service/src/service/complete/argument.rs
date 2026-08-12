@@ -571,7 +571,7 @@ impl Complete for ChangeFigureSentence {
             ),
             "motion"
                 if let Some(figure) = &self.figure
-                    && let Some(Node::Item(info)) = project.resource().figure.get(figure) =>
+                    && let Some(info) = project.resource().get_figure_redirected(figure) =>
             {
                 let description = match info.get_type() {
                     FigureKind::Spine => "Spine 动作",
@@ -590,8 +590,8 @@ impl Complete for ChangeFigureSentence {
             }
             "expression"
                 if let Some(figure) = &self.figure
-                    && let Some(Node::Item(FigureInfo::Live2d { expressions, .. })) =
-                        project.resource().figure.get(figure) =>
+                    && let Some(FigureInfo::Live2d { expressions, .. }) =
+                        project.resource().get_figure_redirected(figure) =>
             {
                 complete_file(
                     expressions,
