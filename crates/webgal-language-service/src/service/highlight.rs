@@ -154,10 +154,13 @@ where
         // 参数值
         match sentence {
             Sentence::Say(_) => highlight_say_content(content, shifted_push),
-            Sentence::Choose(_) => highlight_choose_content(content, shifted_push),
             Sentence::SetTransform(_) | Sentence::SetTempAnimation(_) => {
                 highlight_json(content, shifted_push)
             }
+            Sentence::Intro(_) => highlight_intro_content(content, shifted_push),
+            Sentence::Choose(_) => highlight_choose_content(content, shifted_push),
+            Sentence::SetVar(_) => highlight_set_variable_content(content, shifted_push),
+            Sentence::ApplyStyle(_) => highlight_apply_style_content(content, shifted_push),
             _ if let Some(kind) = TokenType::from_content(sentence) => f(PrimaryToken {
                 span: primary.get_span(content),
                 kind,
@@ -254,6 +257,21 @@ where
     }
 }
 
+fn highlight_intro_content<F>(content: &str, mut f: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    for token in content.split('|').flat_map(TokenSplit::new) {
+        // 文本
+        if !token.text.is_empty() {
+            f(PrimaryToken {
+                span: span_of(content, token.text),
+                kind: TokenType::String,
+            });
+        }
+    }
+}
+
 fn highlight_choose_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
@@ -335,6 +353,63 @@ where
     }
 }
 
+fn highlight_set_variable_content<F>(content: &str, mut f: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    let (variable, expression) = match content.split_once('=') {
+        Some(v) => v,
+        None => return,
+    };
+
+    // 变量
+    f(PrimaryToken {
+        span: span_of(content, variable),
+        kind: TokenType::Variable,
+    });
+
+    // `=`
+    f(PrimaryToken::from_position(
+        variable.len(),
+        TokenType::Operator,
+    ));
+
+    // 表达式
+    f(PrimaryToken {
+        span: span_of(content, expression),
+        kind: TokenType::Regex,
+    });
+}
+
+fn highlight_apply_style_content<F>(content: &str, mut f: F)
+where
+    F: FnMut(PrimaryToken),
+{
+    for (previous, current) in content
+        .split(',')
+        .flat_map(|change| change.split_once("->"))
+    {
+        // 原样式
+        let previous_span = span_of(content, previous);
+        f(PrimaryToken {
+            span: previous_span.clone(),
+            kind: TokenType::Regex,
+        });
+
+        // `->`
+        f(PrimaryToken {
+            span: previous_span.end..previous_span.end + 2,
+            kind: TokenType::Operator,
+        });
+
+        // 新样式
+        f(PrimaryToken {
+            span: span_of(content, current),
+            kind: TokenType::Regex,
+        });
+    }
+}
+
 fn highlight_json<F>(s: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
@@ -392,7 +467,7 @@ impl TokenType {
         from_content_match! {
             sentence: {
                 // 常规演出
-                Say => String,
+                // Say => String, // 已由调用者接管
                 ChangeBackground => Regex,
                 ChangeFigure => Regex,
                 Bgm => Regex,
@@ -402,12 +477,12 @@ impl TokenType {
                 // 舞台对象控制
                 SetAnimation => EnumMember,
                 SetComplexAnimation => EnumMember,
-                SetTransform => String,
-                SetTempAnimation => String,
+                // SetTransform => String, // 已由调用者接管
+                // SetTempAnimation => String, // 已由调用者接管
 
                 // 特殊演出
                 PixiPerform => EnumMember,
-                Intro => String,
+                // Intro => String, // 已由调用者接管
                 MiniAvatar => Regex,
                 SetTextbox => EnumMember,
                 FilmMode => EnumMember,
@@ -415,7 +490,7 @@ impl TokenType {
                 // 场景与分支
                 CallScene => Regex,
                 ChangeScene => Regex,
-                Choose => String, // 已由调用者接管
+                // Choose => String, // 已由调用者接管
                 Label => Variable,
                 JumpLabel => Variable,
 
@@ -425,9 +500,9 @@ impl TokenType {
 
                 // 游戏控制
                 GetUserInput => Variable,
-                SetVar => Regex,
+                // SetVar => Regex, // 已由调用者接管
                 Wait => Number,
-                ApplyStyle => Regex,
+                // ApplyStyle => Regex, // 已由调用者接管
             }
         }
     }
