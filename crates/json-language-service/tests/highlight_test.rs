@@ -11,25 +11,25 @@ fn collect_highlights(s: &str) -> Vec<(Range<usize>, TokenType)> {
 }
 
 #[test]
-fn test_highlight_empty() {
+fn highlight_empty() {
     let highlights = collect_highlights("");
     assert!(highlights.is_empty());
 }
 
 #[test]
-fn test_highlight_number() {
+fn highlight_number() {
     let highlights = collect_highlights("123");
     assert_eq!(highlights, vec![(0..3, TokenType::Number)]);
 }
 
 #[test]
-fn test_highlight_string() {
+fn highlight_string() {
     let highlights = collect_highlights("\"hello\"");
     assert_eq!(highlights, vec![(0..7, TokenType::String)]);
 }
 
 #[test]
-fn test_highlight_keyword() {
+fn highlight_keyword() {
     let highlights = collect_highlights("true");
     assert_eq!(highlights, vec![(0..4, TokenType::Keyword)]);
 
@@ -41,57 +41,82 @@ fn test_highlight_keyword() {
 }
 
 #[test]
-fn test_highlight_object() {
+fn highlight_object() {
     let s = r#"{"key": 123}"#;
     let highlights = collect_highlights(s);
-    let expected = vec![(1..6, TokenType::String), (8..11, TokenType::Number)];
+    let expected = vec![
+        (0..1, TokenType::Operator),   // {
+        (1..6, TokenType::String),     // "key"
+        (6..8, TokenType::Operator),   // ": "
+        (8..11, TokenType::Number),    // 123
+        (11..12, TokenType::Operator), // }
+    ];
     assert_eq!(highlights, expected);
 }
 
 #[test]
-fn test_highlight_nested_object() {
+fn highlight_nested_object() {
     let s = r#"{"a": {"b": true}}"#;
     let highlights = collect_highlights(s);
     let expected = vec![
-        (1..4, TokenType::String),    // "a"
-        (7..10, TokenType::String),   // "b"
-        (12..16, TokenType::Keyword), // true
+        (0..1, TokenType::Operator),   // {
+        (1..4, TokenType::String),     // "a"
+        (4..7, TokenType::Operator),   // ": {"
+        (7..10, TokenType::String),    // "b"
+        (10..12, TokenType::Operator), // ": "
+        (12..16, TokenType::Keyword),  // true
+        (16..18, TokenType::Operator), // 合并连续的 "}}"
     ];
     assert_eq!(highlights, expected);
 }
 
 #[test]
-fn test_highlight_array() {
+fn highlight_array() {
     let s = r#"[1, "two", 3]"#;
     let highlights = collect_highlights(s);
     let expected = vec![
-        (1..2, TokenType::Number),   // 1
-        (4..9, TokenType::String),   // "two"
-        (11..12, TokenType::Number), // 3
+        (0..1, TokenType::Operator),   // [
+        (1..2, TokenType::Number),     // 1
+        (2..4, TokenType::Operator),   // ", "
+        (4..9, TokenType::String),     // "two"
+        (9..11, TokenType::Operator),  // ", "
+        (11..12, TokenType::Number),   // 3
+        (12..13, TokenType::Operator), // ]
     ];
     assert_eq!(highlights, expected);
 }
 
 #[test]
-fn test_highlight_mixed() {
+fn highlight_mixed() {
     let s = r#"{"name": "John", "age": 30, "active": true}"#;
     let highlights = collect_highlights(s);
     let types: Vec<TokenType> = highlights.iter().map(|(_, ty)| *ty).collect();
     let expected_types = vec![
-        TokenType::String,  // "name"
-        TokenType::String,  // "John"
-        TokenType::String,  // "age"
-        TokenType::Number,  // 30
-        TokenType::String,  // "active"
-        TokenType::Keyword, // true
+        TokenType::Operator, // {
+        TokenType::String,   // "name"
+        TokenType::Operator, // ": "
+        TokenType::String,   // "John"
+        TokenType::Operator, // ", "
+        TokenType::String,   // "age"
+        TokenType::Operator, // ": "
+        TokenType::Number,   // 30
+        TokenType::Operator, // ", "
+        TokenType::String,   // "active"
+        TokenType::Operator, // ": "
+        TokenType::Keyword,  // true
+        TokenType::Operator, // }
     ];
     assert_eq!(types, expected_types);
 }
 
 #[test]
-fn test_highlight_partial_object() {
+fn highlight_partial_object() {
     let s = r#"{"key": "#;
     let highlights = collect_highlights(s);
-    // Even though the JSON is incomplete, the key string is fully parsed.
-    assert_eq!(highlights, vec![(1..6, TokenType::String)]);
+    let expected = vec![
+        (0..1, TokenType::Operator), // {
+        (1..6, TokenType::String),   // "key"
+        (6..8, TokenType::Operator), // ": "
+    ];
+    assert_eq!(highlights, expected);
 }

@@ -301,21 +301,32 @@ fn highlight_say_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
-    for token in content.split('|').flat_map(TokenSplit::new) {
-        // 文本
-        if !token.text.is_empty() {
-            f(PrimaryToken {
-                span: span_of(content, token.text),
-                kind: TokenType::String,
-            });
+    let mut text_split = content.split('|').peekable();
+    while let Some(text) = text_split.next() {
+        for token in TokenSplit::new(text) {
+            // 文本
+            if !token.text.is_empty() {
+                f(PrimaryToken {
+                    span: span_of(content, token.text),
+                    kind: TokenType::String,
+                });
+            }
+
+            // 注音和样式
+            if let Some(style) = token.get_full_style() {
+                f(PrimaryToken {
+                    span: span_of(content, style),
+                    kind: TokenType::Regex,
+                })
+            }
         }
 
-        // 注音和样式
-        if let Some(style) = token.get_full_style() {
-            f(PrimaryToken {
-                span: span_of(content, style),
-                kind: TokenType::Regex,
-            })
+        if text_split.peek().is_some() {
+            // `|`
+            f(PrimaryToken::from_position(
+                span_of(content, text).end,
+                TokenType::Operator,
+            ));
         }
     }
 }
@@ -324,13 +335,22 @@ fn highlight_intro_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
-    for token in content.split('|').flat_map(TokenSplit::new) {
+    let mut text_split = content.split('|').peekable();
+    while let Some(text) = text_split.next() {
         // 文本
-        if !token.text.is_empty() {
+        if !text.is_empty() {
             f(PrimaryToken {
-                span: span_of(content, token.text),
+                span: span_of(content, text),
                 kind: TokenType::String,
             });
+        }
+
+        if text_split.peek().is_some() {
+            // `|`
+            f(PrimaryToken::from_position(
+                span_of(content, text).end,
+                TokenType::Operator,
+            ));
         }
     }
 }
@@ -672,6 +692,7 @@ impl From<JsonTokenType> for TokenType {
             JsonTokenType::Keyword => Self::Keyword,
             JsonTokenType::String => Self::String,
             JsonTokenType::Number => Self::Number,
+            JsonTokenType::Operator => Self::Operator,
         }
     }
 }

@@ -7,12 +7,37 @@ use crate::parse::parse_for_each;
 /// # Behavior
 /// * 键 / 字符串 - [`TokenType::String`].
 /// * 数值 - [`TokenType::Number`].
-/// * 布尔值 - [`TokenType::Keyword`]
+/// * 布尔值 - [`TokenType::Keyword`].
+/// * 符号 - [`TokenType::Operator`].
 pub fn highlight<F>(s: &str, mut f: F)
 where
     F: FnMut(ops::Range<usize>, TokenType),
 {
-    parse_for_each(s, |s, span| f(span, TokenType::from_str(s)));
+    let mut last_end = 0;
+    parse_for_each(s, |s, span| {
+        // 符号
+        if last_end < span.start {
+            f(last_end..span.start, TokenType::Operator);
+        }
+        last_end = span.end;
+
+        // token
+        f(
+            span,
+            if s.starts_with('"') {
+                TokenType::String
+            } else if matches!(s, "true" | "false" | "null") {
+                TokenType::Keyword
+            } else {
+                TokenType::Number
+            },
+        );
+    });
+
+    // 符号
+    if last_end != s.len() {
+        f(last_end..s.len(), TokenType::Operator);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -20,17 +45,5 @@ pub enum TokenType {
     Keyword,
     String,
     Number,
-}
-
-impl TokenType {
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        if s.starts_with('"') {
-            Self::String
-        } else if matches!(s, "true" | "false" | "null") {
-            Self::Keyword
-        } else {
-            Self::Number
-        }
-    }
+    Operator,
 }
