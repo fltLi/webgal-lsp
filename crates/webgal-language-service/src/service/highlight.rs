@@ -110,7 +110,7 @@ where
         highlight_argument(name, value, primary, sentence, &mut f);
     }
 
-    highlight_comment(content, primary, &mut f);
+    highlight_comment(content, primary.comment, &mut f);
 }
 
 /// 语句类型高亮
@@ -216,20 +216,83 @@ fn highlight_argument<F>(
 }
 
 /// 语句注释高亮
-fn highlight_comment<F>(content: &str, primary: &PrimarySentence, mut f: F)
+fn highlight_comment<F>(content: &str, comment: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
-    let comment = content
-        .len()
-        .checked_sub(primary.comment.len() + 1)
-        .and_then(|pos| content.get(pos..))
-        .filter(|comment| comment.starts_with(';'))
-        .unwrap_or(primary.comment);
-    if !comment.is_empty() {
+    let ops::Range { start, end } = span_of(content, comment);
+
+    if let Some(position) = start.checked_sub(1)
+        && let Some(";") = content.get(position..position + 1)
+    {
+        // `;`
+        f(PrimaryToken::from_position(position, TokenType::Comment));
+    }
+
+    // 普通注释
+    if !comment.starts_with("nolint:") {
+        // 注释
         f(PrimaryToken {
-            span: primary.get_span(comment),
+            span: start..end,
             kind: TokenType::Comment,
+        });
+
+        return;
+    }
+
+    // `nolint`
+    f(PrimaryToken {
+        span: start..start + 6,
+        kind: TokenType::Keyword,
+    });
+
+    // `:`
+    f(PrimaryToken::from_position(start + 6, TokenType::Operator));
+
+    let mut last_end = start + 7;
+    for (i, ch) in comment[7..].char_indices() {
+        let i = start + 7 + i;
+
+        match ch {
+            '|' => {
+                // 诊断码
+                f(PrimaryToken {
+                    span: last_end..i,
+                    kind: TokenType::EnumMember,
+                });
+
+                // `|`
+                f(PrimaryToken::from_position(i, TokenType::Operator));
+
+                last_end = i + 1;
+            }
+
+            ';' => {
+                // 诊断码
+                f(PrimaryToken {
+                    span: last_end..i,
+                    kind: TokenType::EnumMember,
+                });
+
+                // 注释
+                f(PrimaryToken {
+                    span: i..end,
+                    kind: TokenType::Comment,
+                });
+
+                last_end = end;
+                break;
+            }
+
+            _ => {}
+        }
+    }
+
+    if last_end != end {
+        // 诊断码
+        f(PrimaryToken {
+            span: last_end..end,
+            kind: TokenType::EnumMember,
         });
     }
 }
