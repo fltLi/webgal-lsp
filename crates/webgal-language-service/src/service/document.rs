@@ -29,6 +29,7 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
             document_argument(command, primary.arguments[index].0)
         }
         SentenceLocation::ArgumentValue(..) => None,
+        SentenceLocation::Comment(_) => None,
         SentenceLocation::Other if matches!(sentence, Sentence::Comment(_)) => {
             document_comment_sentence()
         }

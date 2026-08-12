@@ -3,11 +3,12 @@ use webgal_language_core::sentence::{Scene, SentenceInfo, SentenceLocation};
 
 use crate::{
     project::Project,
-    service::complete::{argument::Complete, command::complete_command},
+    service::complete::{argument::Complete, command::complete_command, comment::complete_comment},
 };
 
 mod argument;
 mod command;
+mod comment;
 
 pub fn complete_capability() -> CompletionOptions {
     CompletionOptions {
@@ -46,6 +47,7 @@ pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<Com
         SentenceLocation::ArgumentValue(_, name, input) => {
             sentence.complete_argument_value(name, input, position, project)
         }
+        SentenceLocation::Comment(input) => complete_comment(input, position),
         SentenceLocation::Other => Vec::default(),
     };
     completions.into_iter().map(From::from).collect()

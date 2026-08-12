@@ -18,6 +18,7 @@ pub enum SentenceLocation<'a> {
     Content(&'a str),
     ArgumentName(usize, &'a str),
     ArgumentValue(usize, &'a str, &'a str),
+    Comment(&'a str),
     Other,
 }
 
@@ -158,6 +159,7 @@ impl<'a> PrimarySentence<'a> {
             command,
             content,
             arguments,
+            comment,
             ..
         } = self;
 
@@ -191,6 +193,11 @@ impl<'a> PrimarySentence<'a> {
                     );
                 }
             }
+        }
+
+        let comment_start = self.len() - self.comment.len() + 1;
+        if position >= comment_start && position <= self.len() {
+            return SentenceLocation::Comment(&comment[..=position - comment_start]);
         }
 
         SentenceLocation::Other
@@ -589,11 +596,26 @@ mod tests {
     }
 
     #[test]
-    fn locate_in_comment_area_returns_other() {
+    fn locate_in_comment_area_returns_comment() {
         let s = "cmd:content; comment here";
         let parsed = PrimarySentence::from_str(s);
-        let semicolon_pos = s.find(';').unwrap();
-        assert_eq!(parsed.locate(semicolon_pos + 3), SentenceLocation::Other);
+        let semicolon_pos = s.find(';').unwrap(); // 11
+        assert_eq!(
+            parsed.locate(semicolon_pos + 3),
+            SentenceLocation::Comment(" c")
+        );
+    }
+
+    #[test]
+    fn locate_comment_start_and_end() {
+        let s = "cmd:content; comment here";
+        let parsed = PrimarySentence::from_str(s);
+        let comment_start = parsed.len() - parsed.comment.len() + 1;
+        assert_eq!(parsed.locate(comment_start), SentenceLocation::Comment(" "));
+        assert_eq!(
+            parsed.locate(parsed.len()),
+            SentenceLocation::Comment(" comment here")
+        );
     }
 
     #[test]
