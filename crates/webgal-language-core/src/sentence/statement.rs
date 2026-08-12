@@ -1243,9 +1243,9 @@ fn parse_style_applications(applications: &str) -> (Vec<(String, String)>, Optio
     }
     let mut miss_current = false;
     let applications = applications
-        .split('|')
+        .split(',')
         .map(|application| {
-            let (previous, current) = application.split_once(':').unwrap_or_else(|| {
+            let (previous, current) = application.split_once("->").unwrap_or_else(|| {
                 miss_current = true;
                 (application, "")
             });
