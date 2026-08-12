@@ -58,6 +58,7 @@ struct PrimaryCompletion {
     name: String,
     kind: CompletionItemKind,
     description: Option<String>,
+    document: Option<MarkupContent>,
     sort_key: Option<String>,
     // 执行
     span: Range,
@@ -70,6 +71,7 @@ impl From<PrimaryCompletion> for CompletionItem {
             name,
             kind,
             description,
+            document,
             sort_key,
             span,
             insert_text,
@@ -89,6 +91,7 @@ impl From<PrimaryCompletion> for CompletionItem {
                 description,
             }),
             kind: Some(kind),
+            documentation: document.map(Documentation::MarkupContent),
             sort_text: sort_key,
             insert_text_format: Some(insert_text_format),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -125,6 +128,7 @@ impl From<CompletionItem> for PrimaryCompletion {
             name: label,
             kind: kind.unwrap_or(CompletionItemKind::TEXT),
             description,
+            document: None,
             sort_key: sort_text,
             span,
             insert_text,

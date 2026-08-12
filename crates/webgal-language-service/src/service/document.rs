@@ -36,10 +36,7 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
         SentenceLocation::Other => None,
     };
     documentation.map(|document| Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: document.to_string(),
-        }),
+        contents: HoverContents::Markup(document.to_markdown()),
         range: None,
     })
 }
@@ -49,21 +46,21 @@ static DOCUMENT: Lazy<HashMap<String, SentenceDocument>> = Lazy::new(|| {
         .expect("WebGAL 离线文档 JSON 解析失败")
 });
 
-fn document_command(command: &str) -> Option<&'static Document> {
+pub(crate) fn document_command(command: &str) -> Option<&'static Document> {
     DOCUMENT.get(command).map(|sentence| &sentence.command)
 }
 
-fn document_content(command: &str) -> Option<&'static Document> {
+pub(crate) fn document_content(command: &str) -> Option<&'static Document> {
     DOCUMENT.get(command).map(|sentence| &sentence.content)
 }
 
-fn document_argument(command: &str, name: &str) -> Option<&'static Document> {
+pub(crate) fn document_argument(command: &str, name: &str) -> Option<&'static Document> {
     DOCUMENT
         .get(command)
         .and_then(|sentence| sentence.arguments.get(name))
 }
 
-fn document_comment_sentence() -> Option<&'static Document> {
+pub(crate) fn document_comment_sentence() -> Option<&'static Document> {
     DOCUMENT.get("comment").map(|sentence| &sentence.command)
 }
 
@@ -74,10 +71,19 @@ struct SentenceDocument {
     arguments: HashMap<String, Document>,
 }
 
-#[derive(Deserialize)]
-struct Document {
-    link: String,
-    document: String,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+pub(crate) struct Document {
+    pub link: String,
+    pub document: String,
+}
+
+impl Document {
+    pub(crate) fn to_markdown(&self) -> MarkupContent {
+        MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: self.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for Document {

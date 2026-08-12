@@ -3,7 +3,11 @@ use lsp_types::*;
 
 use crate::{
     project::Project,
-    service::complete::{PrimaryCompletion, make_span},
+    service::{
+        Document,
+        complete::{PrimaryCompletion, make_span},
+        document_command,
+    },
 };
 
 /// 补全语句类型
@@ -31,6 +35,7 @@ fn complete_speaker(
             name: name.clone(),
             kind: CompletionItemKind::VARIABLE,
             description: Some("人物".to_string()),
+            document: None,
             sort_key: Some(format!("b{:016x}{name}", !count)),
             span: make_span(position, input.len()),
             insert_text: Some(format!("{name}:")),
@@ -53,12 +58,15 @@ struct CommandTemplate {
 
 impl CommandInfo {
     fn complete(&self, input: &str, position: Position, completions: &mut Vec<PrimaryCompletion>) {
+        let document = document_command(self.name);
+
         // 语句类型补全
         if self.name.starts_with(input) {
             completions.push(PrimaryCompletion {
                 name: self.name.to_string(),
                 kind: CompletionItemKind::FUNCTION,
                 description: Some(self.description.to_string()),
+                document: document.map(Document::to_markdown),
                 sort_key: Some(format!("a{}", self.name)),
                 span: make_span(position, input.len()),
                 insert_text: Some(if self.with_content {
@@ -87,6 +95,7 @@ impl CommandInfo {
                         } else {
                             format!("{} ({description})", self.description)
                         }),
+                        document: document.map(Document::to_markdown),
                         sort_key: Some(format!("a{name}")),
                         span: make_span(position, input.len()),
                         insert_text: Some(template.to_string()),

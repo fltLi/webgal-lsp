@@ -14,7 +14,11 @@ use webgal_language_core::{
 
 use crate::{
     project::Project,
-    service::complete::{PrimaryCompletion, make_span},
+    service::{
+        Document,
+        complete::{PrimaryCompletion, make_span},
+        document_argument,
+    },
 };
 
 /// 语句的代码补全服务
@@ -118,6 +122,7 @@ where
                         name: name.to_string(),
                         kind,
                         description: Some(description),
+                        document: None,
                         sort_key: Some(format!("c{name}")),
                         span,
                         insert_text: None,
@@ -127,6 +132,7 @@ where
                     name: name.to_string(),
                     kind: CompletionItemKind::FOLDER,
                     description: None,
+                    document: None,
                     sort_key: Some(format!("b{name}")),
                     span,
                     insert_text: Some(format!("{name}/")),
@@ -176,6 +182,7 @@ where
                 name: name.to_string(),
                 kind,
                 description: Some(description.as_ref().to_string()),
+                document: None,
                 sort_key: Some(format!("{i:016x}{name}")),
                 span: make_span(position, input.len()),
                 insert_text: None,
@@ -334,7 +341,7 @@ fn animation_list_json_schema() -> &'static Schema {
 
 macro_rules! complete_argument_name_collect {
     (
-        ($input:ident, $position:ident):
+        ($command:literal, $input:ident, $position:ident):
         {$($guard:expr => ($name:literal, $insert:literal, $description:literal)),* $(,)?}
     ) => {{
         let mut completions = Vec::new();
@@ -344,6 +351,7 @@ macro_rules! complete_argument_name_collect {
                     name: $name.to_string(),
                     kind: CompletionItemKind::PROPERTY,
                     description: Some($description.to_string()),
+                    document: document_argument($command, $name).map(Document::to_markdown),
                     sort_key: Some(format!("a{}", $name)),
                     span: make_span($position, $input.len()),
                     insert_text: Some($insert.to_string()),
@@ -365,7 +373,7 @@ impl Complete for SaySentence {
     ) -> Vec<PrimaryCompletion> {
         // 补全参数
         let mut arguments = complete_argument_name_collect! {
-            (input, position): {
+            ("say", input, position): {
                 self.speaker.is_none() => ("speaker", "speaker=", "人物"),
                 self.vocal.is_none() => ("vocal", "vocal=", "播放语音"),
                 self.figure.is_none() => ("figureId", "figureId=", "指定立绘 ID"),
@@ -439,7 +447,7 @@ impl Complete for ChangeBackgroundSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("changeBg", input, position): {
                 self.transform.is_none() => ("transform", "transform=", "设置变换效果"),
                 self.enter.is_none() => ("enter", "enter=", "入场动画"),
                 self.exit.is_none() => ("exit", "exit=", "退场动画"),
@@ -515,7 +523,7 @@ impl Complete for ChangeFigureSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("changeFigure", input, position): {
                 self.side != FigureSide::Left => ("left", "left", "将立绘置于左侧"),
                 self.side != FigureSide::Left13 => ("left13", "left13", "将立绘置于左侧 1/3"),
                 self.side != FigureSide::Left14 => ("left14", "left14", "将立绘置于左侧 1/4"),
@@ -648,7 +656,7 @@ impl Complete for BgmSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("bgm", input, position): {
                 self.volume.is_none() => ("volume", "volume=", "音量大小 [0..100]"),
                 self.enter.is_none() => ("enter", "enter=", "音量淡入淡出时长"),
                 self.unlockname.is_none() => ("unlockname", "unlockname=", "鉴赏解锁名称"),
@@ -695,7 +703,7 @@ impl Complete for PlayVideoSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("playVideo", input, position): {
                 !self.skip_off => ("skipOff", "skipOff", "禁止跳过"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
@@ -725,7 +733,7 @@ impl Complete for PlayEffectSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("playEffect", input, position): {
                 self.id.is_none() => ("id", "id=", "设置 ID"),
                 self.volume.is_none() => ("volume", "volume=", "音量大小 [0..100]"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -773,7 +781,7 @@ impl Complete for SetAnimationSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
@@ -824,7 +832,7 @@ impl Complete for SetComplexAnimationSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setComplexAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
@@ -871,7 +879,7 @@ impl Complete for SetTransformSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setTransform", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.ease == Default::default() => ("ease", "ease=", "缓动类型"),
@@ -922,7 +930,7 @@ impl Complete for SetTempAnimationSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setTempAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
@@ -956,7 +964,7 @@ impl Complete for SetTransitionSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setTransition", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 self.enter.is_none() => ("enter", "enter=", "入场动画"),
                 self.exit.is_none() => ("exit", "exit=", "退场动画"),
@@ -1010,7 +1018,7 @@ impl Complete for PixiPerformSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("pixiPerform", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1025,7 +1033,7 @@ impl Complete for PixiInitSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("pixiInit", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1040,7 +1048,7 @@ impl Complete for IntroSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("intro", input, position): {
                 self.font_size == Default::default() => ("fontSize", "fontSize=", "字体大小"),
                 self.font_color.is_none() => ("fontColor", "fontColor=rgba($1,$2,$3,$4)$0", "字体颜色"),
                 self.background_color.is_none() => ("backgroundColor", "backgroundColor=rgba($1,$2,$3,$4)$0", "背景颜色"),
@@ -1104,7 +1112,7 @@ impl Complete for MiniAvatarSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("miniAvatar", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1133,7 +1141,7 @@ impl Complete for SetTextboxSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setTextbox", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1162,7 +1170,7 @@ impl Complete for FilmModeSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("filmMode", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1188,7 +1196,7 @@ impl Complete for CallSceneSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("callScene", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1212,7 +1220,7 @@ impl Complete for ChangeSceneSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("changeScene", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1248,7 +1256,7 @@ impl Complete for ChooseSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("choose", input, position): {
                 self.default_choice.is_none() => ("defaultChoice", "defaultChoice=", "快速预览默认选项"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
@@ -1282,7 +1290,7 @@ impl Complete for LabelSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("label", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1306,7 +1314,7 @@ impl Complete for JumpLabelSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("jumpLabel", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1337,7 +1345,7 @@ impl Complete for UnlockCgSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("unlockCg", input, position): {
                 self.name.is_none() => ("name", "name=", "鉴赏解锁名称"),
                 self.series.is_none() => ("series", "series=", "鉴赏系列名称"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1381,7 +1389,7 @@ impl Complete for UnlockBgmSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("unlockBgm", input, position): {
                 self.name.is_none() => ("name", "name=", "鉴赏解锁名称"),
                 self.series.is_none() => ("series", "series=", "鉴赏系列名称"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1413,7 +1421,7 @@ impl Complete for GetUserInputSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("getUserInput", input, position): {
                 self.title.is_none() => ("title", "title=", "对话框标题"),
                 self.button_text.is_none() => ("buttonText", "buttonText=", "确认按钮文本"),
                 self.default_value.is_none() => ("defaultValue", "defaultValue=", "默认值"),
@@ -1435,7 +1443,7 @@ impl Complete for SetVarSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("setVar", input, position): {
                 !self.global => ("global", "global", "全局变量"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
@@ -1451,7 +1459,7 @@ impl Complete for ShowVarsSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("showVars", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1475,7 +1483,7 @@ impl Complete for WaitSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("wait", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1490,7 +1498,7 @@ impl Complete for ApplyStyleSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("applyStyle", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1505,7 +1513,7 @@ impl Complete for CallSteamSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("callSteam", input, position): {
                 self.achivement_id.is_none() => ("achivementId", "achivementId=", "成就 ID"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
@@ -1521,7 +1529,7 @@ impl Complete for EndSentence {
         _project: &Project,
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
-            (input, position): {
+            ("end", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
