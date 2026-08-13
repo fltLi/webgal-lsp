@@ -1,6 +1,6 @@
 //! 单语句资源及全局上下文诊断
 
-use std::{borrow::Borrow, ops};
+use std::borrow::Borrow;
 
 use path_tree::{Folder, canonicalize};
 use webgal_language_core::{
@@ -11,7 +11,7 @@ use webgal_language_core::{
 
 use crate::{
     project::Project,
-    service::diagnose::{DiagnosticLevel, PrimaryDiagnostic},
+    service::diagnose::{DiagnosticLevel, DiagnosticLocation, PrimaryDiagnostic},
 };
 
 /// 语句环境诊断 (资源 + 全局上下文)
@@ -55,7 +55,7 @@ fn diagnose_resource<F>(
                 None => 0..content.len(),
             };
             diagnose(PrimaryDiagnostic {
-                span,
+                span: span.into(),
                 code: "WG007",
                 level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别语音: {vocal}"),
@@ -75,10 +75,9 @@ fn diagnose_resource<F>(
                     .resource()
                     .background
                     .contains(canonicalize(background).as_ref().unwrap_or(background))
-                && let Some(content) = primary.content
             {
                 diagnose(PrimaryDiagnostic {
-                    span: primary.get_span(content),
+                    span: DiagnosticLocation::Content,
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别背景: {background}"),
@@ -87,10 +86,9 @@ fn diagnose_resource<F>(
 
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("enter"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
@@ -98,10 +96,9 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("exit"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
@@ -126,7 +123,6 @@ fn diagnose_resource<F>(
 
             diagnose_argument_resource(
                 "mouthOpen",
-                primary,
                 mouth_open,
                 &project.resource().figure,
                 "图片立绘",
@@ -134,7 +130,6 @@ fn diagnose_resource<F>(
             .map(&mut diagnose);
             diagnose_argument_resource(
                 "mouthHalfOpen",
-                primary,
                 mouth_half_open,
                 &project.resource().figure,
                 "图片立绘",
@@ -142,7 +137,6 @@ fn diagnose_resource<F>(
             .map(&mut diagnose);
             diagnose_argument_resource(
                 "mouthClose",
-                primary,
                 mouth_close,
                 &project.resource().figure,
                 "图片立绘",
@@ -150,7 +144,6 @@ fn diagnose_resource<F>(
             .map(&mut diagnose);
             diagnose_argument_resource(
                 "eyesOpen",
-                primary,
                 eyes_open,
                 &project.resource().figure,
                 "图片立绘",
@@ -158,7 +151,6 @@ fn diagnose_resource<F>(
             .map(&mut diagnose);
             diagnose_argument_resource(
                 "eyesClose",
-                primary,
                 eyes_close,
                 &project.resource().figure,
                 "图片立绘",
@@ -172,14 +164,12 @@ fn diagnose_resource<F>(
                 {
                     Some(info) => info,
                     None => {
-                        if let Some(content) = primary.content {
-                            diagnose(PrimaryDiagnostic {
-                                span: primary.get_span(content),
-                                code: "WG007",
-                                level: DiagnosticLevel::Error,
-                                message: format!("找不到或无法识别立绘: {figure}"),
-                            })
-                        }
+                        diagnose(PrimaryDiagnostic {
+                            span: DiagnosticLocation::Content,
+                            code: "WG007",
+                            level: DiagnosticLevel::Error,
+                            message: format!("找不到或无法识别立绘: {figure}"),
+                        });
                         return;
                     }
                 };
@@ -187,10 +177,9 @@ fn diagnose_resource<F>(
                 if let Some(motion) = motion
                     && let FigureInfo::Live2d { motions, .. } = info
                     && !motions.contains(motion)
-                    && let Some(span) = argument_value_or_name_span_of("motion", primary)
                 {
                     diagnose(PrimaryDiagnostic {
-                        span,
+                        span: DiagnosticLocation::ArgumentValue("motion"),
                         code: "WG007",
                         level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别立绘动作: {motion}"),
@@ -199,10 +188,9 @@ fn diagnose_resource<F>(
                 if let Some(expression) = expression
                     && let FigureInfo::Live2d { expressions, .. } = info
                     && !expressions.contains(expression)
-                    && let Some(span) = argument_value_or_name_span_of("expression", primary)
                 {
                     diagnose(PrimaryDiagnostic {
-                        span,
+                        span: DiagnosticLocation::ArgumentValue("expression"),
                         code: "WG007",
                         level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别 Live2D 表情: {expression}"),
@@ -212,10 +200,9 @@ fn diagnose_resource<F>(
 
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("enter"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
@@ -223,10 +210,9 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("exit"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
@@ -235,29 +221,26 @@ fn diagnose_resource<F>(
         }
 
         Bgm(BgmSentence { bgm: Some(bgm), .. }) => {
-            diagnose_content_resource(primary, bgm, &project.resource().bgm, "音乐")
-                .map(&mut diagnose);
+            diagnose_content_resource(bgm, &project.resource().bgm, "音乐").map(&mut diagnose);
         }
 
         PlayVideo(PlayVideoSentence { video, .. }) => {
-            diagnose_content_resource(primary, video, &project.resource().video, "视频")
-                .map(&mut diagnose);
+            diagnose_content_resource(video, &project.resource().video, "视频").map(&mut diagnose);
         }
 
         PlayEffect(PlayEffectSentence {
             vocal: Some(vocal), ..
         }) => {
-            diagnose_content_resource(primary, vocal, &project.resource().bgm, "语音 (音效)")
+            diagnose_content_resource(vocal, &project.resource().bgm, "语音 (音效)")
                 .map(&mut diagnose);
         }
 
         // 舞台对象控制
         SetAnimation(SetAnimationSentence { animation, .. })
-            if !project.resource().contains_animation(animation)
-                && let Some(content) = primary.content =>
+            if !project.resource().contains_animation(animation) =>
         {
             diagnose(PrimaryDiagnostic {
-                span: primary.get_span(content),
+                span: DiagnosticLocation::Content,
                 code: "WG007",
                 level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别动画: {animation}"),
@@ -265,11 +248,10 @@ fn diagnose_resource<F>(
         }
 
         SetComplexAnimation(SetComplexAnimationSentence { animation, .. })
-            if !matches!(animation.as_str(), "universalSoftIn" | "universalSoftOut")
-                && let Some(content) = primary.content =>
+            if !matches!(animation.as_str(), "universalSoftIn" | "universalSoftOut") =>
         {
             diagnose(PrimaryDiagnostic {
-                span: primary.get_span(content),
+                span: DiagnosticLocation::Content,
                 code: "WG007",
                 level: DiagnosticLevel::Error,
                 message: format!("找不到或无法识别复杂动画: {animation}"),
@@ -279,10 +261,9 @@ fn diagnose_resource<F>(
         SetTransition(SetTransitionSentence { enter, exit, .. }) => {
             if let Some(enter) = enter
                 && !project.resource().contains_animation(enter)
-                && let Some(span) = argument_value_or_name_span_of("enter", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("enter"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {enter}"),
@@ -290,10 +271,9 @@ fn diagnose_resource<F>(
             }
             if let Some(exit) = exit
                 && !project.resource().contains_animation(exit)
-                && let Some(span) = argument_value_or_name_span_of("exit", primary)
             {
                 diagnose(PrimaryDiagnostic {
-                    span,
+                    span: DiagnosticLocation::ArgumentValue("exit"),
                     code: "WG007",
                     level: DiagnosticLevel::Error,
                     message: format!("找不到或无法识别动画: {exit}"),
@@ -307,7 +287,6 @@ fn diagnose_resource<F>(
         }) => {
             diagnose_argument_resource(
                 "backgroundImage",
-                primary,
                 background_image,
                 &project.resource().background,
                 "背景",
@@ -319,19 +298,17 @@ fn diagnose_resource<F>(
             avatar: Some(avatar),
             ..
         }) => {
-            diagnose_content_resource(primary, avatar, &project.resource().figure, "小头像")
+            diagnose_content_resource(avatar, &project.resource().figure, "小头像")
                 .map(&mut diagnose);
         }
 
         // 场景与分支
         CallScene(CallSceneSentence { scene, .. }) => {
-            diagnose_content_resource(primary, scene, &project.resource().scene, "场景")
-                .map(&mut diagnose);
+            diagnose_content_resource(scene, &project.resource().scene, "场景").map(&mut diagnose);
         }
 
         ChangeScene(ChangeSceneSentence { scene, .. }) => {
-            diagnose_content_resource(primary, scene, &project.resource().scene, "场景")
-                .map(&mut diagnose);
+            diagnose_content_resource(scene, &project.resource().scene, "场景").map(&mut diagnose);
         }
 
         Choose(_) if let Some(content) = primary.content => {
@@ -343,7 +320,7 @@ fn diagnose_resource<F>(
                 })
                 .for_each(|target| {
                     diagnose(PrimaryDiagnostic {
-                        span: primary.get_span(target),
+                        span: primary.get_span(target).into(),
                         code: "WG007",
                         level: DiagnosticLevel::Error,
                         message: format!("找不到或无法识别场景选项: {target}"),
@@ -353,13 +330,12 @@ fn diagnose_resource<F>(
 
         // 鉴赏
         UnlockCg(UnlockCgSentence { image, .. }) => {
-            diagnose_content_resource(primary, image, &project.resource().background, "图片")
+            diagnose_content_resource(image, &project.resource().background, "图片")
                 .map(&mut diagnose);
         }
 
         UnlockBgm(UnlockBgmSentence { bgm, .. }) => {
-            diagnose_content_resource(primary, bgm, &project.resource().bgm, "音乐")
-                .map(&mut diagnose);
+            diagnose_content_resource(bgm, &project.resource().bgm, "音乐").map(&mut diagnose);
         }
 
         _ => {}
@@ -367,16 +343,13 @@ fn diagnose_resource<F>(
 }
 
 fn diagnose_content_resource<T>(
-    primary: &PrimarySentence,
     path: &str,
     folder: &Folder<T>,
     description: &str,
 ) -> Option<PrimaryDiagnostic> {
-    if !folder.contains(&canonicalize(path).unwrap_or_else(|| path.to_string()))
-        && let Some(content) = primary.content
-    {
+    if !folder.contains(&canonicalize(path).unwrap_or_else(|| path.to_string())) {
         Some(PrimaryDiagnostic {
-            span: primary.get_span(content),
+            span: DiagnosticLocation::Content,
             code: "WG007",
             level: DiagnosticLevel::Error,
             message: format!("找不到或无法识别{description}: {path}"),
@@ -387,8 +360,7 @@ fn diagnose_content_resource<T>(
 }
 
 fn diagnose_argument_resource<P, T>(
-    name: &str,
-    primary: &PrimarySentence,
+    name: &'static str,
     path: impl Borrow<Option<P>>,
     folder: &Folder<T>,
     description: &str,
@@ -398,10 +370,9 @@ where
 {
     if let Some(path) = path.borrow().as_ref().map(P::as_ref)
         && !folder.contains(&canonicalize(path).unwrap_or_else(|| path.to_string()))
-        && let Some(span) = argument_value_or_name_span_of(name, primary)
     {
         Some(PrimaryDiagnostic {
-            span,
+            span: DiagnosticLocation::ArgumentValue(name),
             code: "WG007",
             level: DiagnosticLevel::Error,
             message: format!("找不到或无法识别{description}: {path}"),
@@ -409,21 +380,4 @@ where
     } else {
         None
     }
-}
-
-// -------- util --------
-
-// fn argument_name_span_of(name: &str, primary: &PrimarySentence) -> Option<ops::Range<usize>> {
-//     let (index, _) = primary.get_argument(name)?;
-//     let (name, _) = primary.arguments[index];
-//     Some(primary.get_span(name))
-// }
-
-fn argument_value_or_name_span_of(
-    name: &str,
-    primary: &PrimarySentence,
-) -> Option<ops::Range<usize>> {
-    let (index, _) = primary.get_argument(name)?;
-    let (name, value) = primary.arguments[index];
-    Some(primary.get_span(value.unwrap_or(name)))
 }

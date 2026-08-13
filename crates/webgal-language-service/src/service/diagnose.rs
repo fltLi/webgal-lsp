@@ -141,13 +141,14 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
     diagnostics
         .into_par_iter()
         .flat_map(|(line, diagnostics)| {
+            let sentence = &scene.sentences()[line];
             diagnostics
                 .into_iter()
                 .filter_map(|diagnostic| {
                     // 含高于 info 级别诊断时, 过滤 info 级别诊断
                     let reserve =
                         !has_error_or_warning || diagnostic.level != DiagnosticLevel::Info;
-                    reserve.then(|| diagnostic.into_diagnostic(line))
+                    reserve.then(|| diagnostic.into_diagnostic(line, &sentence.primary))
                 })
                 .collect::<Vec<_>>()
         })
@@ -189,20 +190,21 @@ where
 }
 
 struct PrimaryDiagnostic {
-    span: ops::Range<usize>,
+    span: DiagnosticLocation,
     code: &'static str,
     level: DiagnosticLevel,
     message: String,
 }
 
 impl PrimaryDiagnostic {
-    fn into_diagnostic(self, line: usize) -> Diagnostic {
+    fn into_diagnostic(self, line: usize, primary: &PrimarySentence) -> Diagnostic {
         let Self {
-            span: ops::Range { start, end },
+            span,
             code,
             level,
             message,
         } = self;
+        let ops::Range { start, end } = span.to_span(primary);
 
         Diagnostic {
             range: Range {
@@ -221,6 +223,45 @@ impl PrimaryDiagnostic {
             message,
             ..Default::default()
         }
+    }
+}
+
+#[derive(Clone)]
+enum DiagnosticLocation {
+    #[allow(dead_code)]
+    Command,
+    Content,
+    #[allow(dead_code)]
+    ArgumentName(&'static str),
+    ArgumentValue(&'static str),
+    #[allow(dead_code)]
+    Comment,
+    Sentence,
+    Custom(ops::Range<usize>),
+}
+
+impl DiagnosticLocation {
+    fn to_span(&self, primary: &PrimarySentence) -> ops::Range<usize> {
+        match self {
+            Self::Command => Some(primary.get_span(primary.command)),
+            Self::Content => primary.content.map(|content| primary.get_span(content)),
+            Self::ArgumentName(name) => primary
+                .get_argument(name)
+                .map(|(index, _)| primary.get_span(primary.arguments[index].0)),
+            Self::ArgumentValue(name) => primary
+                .get_argument(name)
+                .and_then(|(_, value)| Some(primary.get_span(value?))),
+            Self::Comment => Some(primary.get_span(primary.comment)),
+            Self::Sentence => None,
+            Self::Custom(span) => Some(span.clone()),
+        }
+        .unwrap_or_else(|| 0..primary.len())
+    }
+}
+
+impl From<ops::Range<usize>> for DiagnosticLocation {
+    fn from(value: ops::Range<usize>) -> Self {
+        Self::Custom(value)
     }
 }
 

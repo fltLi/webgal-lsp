@@ -2,7 +2,7 @@
 
 use webgal_language_core::sentence::{self, PrimarySentence, SentenceInfo};
 
-use crate::service::diagnose::{DiagnosticLevel, PrimaryDiagnostic};
+use crate::service::diagnose::{DiagnosticLevel, DiagnosticLocation, PrimaryDiagnostic};
 
 /// 将 [`webgal_language_core::sentence::Sentence`] 解析产生的错误转换为诊断信息
 pub fn diagnose_sentence_error(
@@ -19,7 +19,7 @@ pub fn diagnose_sentence_error(
         ContentType(error) => {
             let content = (*content)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(content),
+                span: primary.get_span(content).into(),
                 code: "WG002",
                 level: DiagnosticLevel::Error,
                 message: format!("语句主参数值 `{content}` 类型错误: {error}"),
@@ -29,7 +29,7 @@ pub fn diagnose_sentence_error(
         ArgumentType(index, error) => {
             let (name, value) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(value.unwrap_or(name)),
+                span: primary.get_span(value.unwrap_or(name)).into(),
                 code: "WG002",
                 level: DiagnosticLevel::Error,
                 message: match value {
@@ -44,7 +44,7 @@ pub fn diagnose_sentence_error(
         ArgumentRepeated(index) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(name),
+                span: primary.get_span(name).into(),
                 code: "WG003",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 重复设置或与其他参数冲突"),
@@ -54,7 +54,7 @@ pub fn diagnose_sentence_error(
         ArgumentMissingDependencies(index, missings) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(name),
+                span: primary.get_span(name).into(),
                 code: "WG004",
                 level: DiagnosticLevel::Error,
                 message: format!("语句中缺少参数 `{name}` 所依赖的相关参数: {missings:?}"),
@@ -64,7 +64,7 @@ pub fn diagnose_sentence_error(
         ArgumentObsolete(index, reason) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(name),
+                span: primary.get_span(name).into(),
                 code: "WG005",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 已被弃用或不建议使用, 理由: {reason}"),
@@ -74,7 +74,7 @@ pub fn diagnose_sentence_error(
         ArgumentUnknown(index) => {
             let (name, _) = *arguments.get(*index)?;
             Some(PrimaryDiagnostic {
-                span: primary.get_span(name),
+                span: primary.get_span(name).into(),
                 code: "WG006",
                 level: DiagnosticLevel::Warning,
                 message: format!("语句参数 `{name}` 未知或无法识别"),
@@ -87,7 +87,7 @@ pub fn diagnose_sentence_error(
 pub fn diagnose_format(sentence: &SentenceInfo) -> Option<PrimaryDiagnostic> {
     let expected = sentence.to_string();
     expected.ne(sentence.content).then(|| PrimaryDiagnostic {
-        span: 0..sentence.content.len(),
+        span: DiagnosticLocation::Sentence,
         code: "WG001",
         level: DiagnosticLevel::Info,
         message: format!("语句格式不规范，应为：`{expected}`"),
