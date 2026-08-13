@@ -24,7 +24,11 @@ impl IdentTable {
                 "bg-main",
                 "fig-center",
                 "fig-left",
+                "fig-left13",
+                "fig-left14",
                 "fig-right",
+                "fig-right13",
+                "fig-right14",
             ]
             .into_iter()
             .map(str::to_string)

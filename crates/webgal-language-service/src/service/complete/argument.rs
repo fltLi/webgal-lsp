@@ -261,6 +261,7 @@ fn complete_ident_enum<T: Eq + Hash + AsRef<str>>(
     complete_enum_with_order(
         ident
             .iter_with_count()
+            .filter(|&(name, count)| count != 1 || name.as_ref() != input) // 过滤当前输入项
             .map(|(name, count)| (!count, name, description)),
         CompletionItemKind::VARIABLE,
         input,
