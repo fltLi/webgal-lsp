@@ -113,7 +113,7 @@ impl Schema {
         match *ident {
             Ident::Key(input) if let Self::Object(fields) = value => fields
                 .iter()
-                .filter(|SchemaField { key, .. }| key.starts_with(input))
+                // .filter(|SchemaField { key, .. }| key.starts_with(input))
                 .map(|field| {
                     // TODO: 根据光标后的内容更好地提供下列补全
                     // let text = match value {

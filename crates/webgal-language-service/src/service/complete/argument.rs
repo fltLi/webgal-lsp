@@ -112,7 +112,6 @@ where
 
     folder
         .iter()
-        .filter(|(name, _)| name.starts_with(current))
         .map(|(name, node)| {
             let span = make_span(position, current.len());
             match node {
@@ -176,9 +175,9 @@ where
     D: AsRef<str>,
 {
     iter.into_iter()
-        .filter_map(|(i, name, description)| {
+        .map(|(i, name, description)| {
             let name = name.as_ref();
-            name.starts_with(input).then(|| PrimaryCompletion {
+            PrimaryCompletion {
                 name: name.to_string(),
                 kind,
                 description: Some(description.as_ref().to_string()),
@@ -186,7 +185,7 @@ where
                 sort_key: Some(format!("{i:016x}{name}")),
                 span: make_span(position, input.len()),
                 insert_text: None,
-            })
+            }
         })
         .collect()
 }
@@ -347,7 +346,7 @@ macro_rules! complete_argument_name_collect {
     ) => {{
         let mut completions = Vec::new();
         $(
-            if $guard && $name.starts_with($input)  {
+            if $guard {
                 completions.push(PrimaryCompletion {
                     name: $name.to_string(),
                     kind: CompletionItemKind::PROPERTY,

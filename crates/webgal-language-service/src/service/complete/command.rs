@@ -30,7 +30,6 @@ fn complete_speaker(
 ) -> Vec<PrimaryCompletion> {
     speakers
         .iter_with_count()
-        .filter(|(name, _)| name.starts_with(input))
         .map(|(name, count)| PrimaryCompletion {
             name: name.clone(),
             kind: CompletionItemKind::VARIABLE,
@@ -61,51 +60,44 @@ impl CommandInfo {
         let document = document_command(self.name);
 
         // 语句类型补全
-        if self.name.starts_with(input) {
-            completions.push(PrimaryCompletion {
-                name: self.name.to_string(),
-                kind: CompletionItemKind::FUNCTION,
-                description: Some(self.description.to_string()),
-                document: document.map(Document::to_markdown),
-                sort_key: Some(format!("a{}", self.name)),
-                span: make_span(position, input.len()),
-                insert_text: Some(if self.with_content {
-                    format!("{}:", self.name)
-                } else {
-                    format!("{};", self.name)
-                }),
-            });
-        }
+        completions.push(PrimaryCompletion {
+            name: self.name.to_string(),
+            kind: CompletionItemKind::FUNCTION,
+            description: Some(self.description.to_string()),
+            document: document.map(Document::to_markdown),
+            sort_key: Some(format!("a{}", self.name)),
+            span: make_span(position, input.len()),
+            insert_text: Some(if self.with_content {
+                format!("{}:", self.name)
+            } else {
+                format!("{};", self.name)
+            }),
+        });
 
         // 语句模板补全
-        completions.extend(
-            self.templates
-                .iter()
-                .filter(|CommandTemplate { name, .. }| name.starts_with(input))
-                .map(
-                    |&CommandTemplate {
-                         name,
-                         description,
-                         template,
-                     }| PrimaryCompletion {
-                        name: name.to_string(),
-                        kind: CompletionItemKind::SNIPPET,
-                        description: Some(if description.is_empty() {
-                            self.description.to_string()
-                        } else {
-                            format!("{} ({description})", self.description)
-                        }),
-                        document: document.map(Document::to_markdown),
-                        sort_key: Some(format!("a{name}")),
-                        span: make_span(position, input.len()),
-                        insert_text: Some(template.to_string()),
-                    },
-                ),
-        );
+        completions.extend(self.templates.iter().map(
+            |&CommandTemplate {
+                 name,
+                 description,
+                 template,
+             }| PrimaryCompletion {
+                name: name.to_string(),
+                kind: CompletionItemKind::SNIPPET,
+                description: Some(if description.is_empty() {
+                    self.description.to_string()
+                } else {
+                    format!("{} ({description})", self.description)
+                }),
+                document: document.map(Document::to_markdown),
+                sort_key: Some(format!("a{name}")),
+                span: make_span(position, input.len()),
+                insert_text: Some(template.to_string()),
+            },
+        ));
     }
 }
 
-fn default_commands() -> &'static [CommandInfo] {
+const fn default_commands() -> &'static [CommandInfo] {
     &[
         // 常规演出
         CommandInfo {

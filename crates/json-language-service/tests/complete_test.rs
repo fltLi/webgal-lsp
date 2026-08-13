@@ -41,23 +41,23 @@ fn complete_object_keys() {
     assert_completions_equal(completions, expected);
 }
 
-#[test]
-fn complete_object_keys_with_prefix() {
-    let schema = json_schema!({
-        "firstName": string,
-        "lastName": string,
-        "age": number
-    });
+// #[test]
+// fn complete_object_keys_with_prefix() {
+//     let schema = json_schema!({
+//         "firstName": string,
+//         "lastName": string,
+//         "age": number
+//     });
 
-    let completions = schema.complete(r#"{"fi"#);
-    let expected = vec![Completion {
-        name: "firstName".to_string(),
-        kind: IdentKind::Key,
-        len: 2,
-        description: "".to_string(),
-    }];
-    assert_completions_equal(completions, expected);
-}
+//     let completions = schema.complete(r#"{"fi"#);
+//     let expected = vec![Completion {
+//         name: "firstName".to_string(),
+//         kind: IdentKind::Key,
+//         len: 2,
+//         description: "".to_string(),
+//     }];
+//     assert_completions_equal(completions, expected);
+// }
 
 #[test]
 fn complete_bool_values() {

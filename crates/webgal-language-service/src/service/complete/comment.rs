@@ -25,10 +25,8 @@ pub fn complete_comment(input: &str, position: Position) -> Vec<PrimaryCompletio
         };
 
         return (1..=16) // 此处需要实时同步最新诊断码编号
-            .map(|code| format!("WG{code:03}"))
-            .filter(|code| code.starts_with(current))
             .map(|code| PrimaryCompletion {
-                name: code,
+                name: format!("WG{code:03}"),
                 kind: CompletionItemKind::ENUM_MEMBER,
                 description: None,
                 document: None,
