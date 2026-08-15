@@ -55,6 +55,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Ensure tauri CLI platform binary
+        if: runner.os != 'macOS'
+        run: npm install @tauri-apps/cli@2
+        working-directory: editor
+
       - name: Set version
         shell: bash
         run: |
@@ -65,8 +70,6 @@ jobs:
             VERSION="0.1.0"
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-      # -------- 独立语言服务器 (供 VS Code 等客户端使用) --------
 
       - name: Build server binary
         run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
@@ -92,9 +95,8 @@ jobs:
           fi
           echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
-      # -------- WebGAL Ink 编辑器安装包 (tauri build 产出) --------
-
       - name: Build editor installers
+        if: runner.os != 'macOS'
         shell: bash
         run: |
           cd editor
@@ -103,41 +105,49 @@ jobs:
             --bundles ${{ matrix.editor-bundles }} \
             --config "{\"version\":\"${{ env.VERSION }}\"}"
 
-          BUNDLE_ROOT="src-tauri/target/${{ matrix.target }}/release/bundle"
+          BUNDLE_ROOT="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/bundle"
+          echo "Bundle root: $BUNDLE_ROOT"
+          ls -R "$BUNDLE_ROOT" || true
+
           case "${{ matrix.editor-bundles }}" in
             nsis)
-              INSTALLER="$(find "$BUNDLE_ROOT/nsis" -maxdepth 1 -name '*.exe' | head -n1)"
+              INSTALLER=$(find "$BUNDLE_ROOT/nsis" -maxdepth 1 -name '*.exe' | head -n1)
               EXT="exe"
               ;;
             dmg)
-              INSTALLER="$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -name '*.dmg' | head -n1)"
+              INSTALLER=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -name '*.dmg' | head -n1)
               EXT="dmg"
               ;;
             appimage)
-              INSTALLER="$(find "$BUNDLE_ROOT/appimage" -maxdepth 1 -name '*.AppImage' | head -n1)"
+              INSTALLER=$(find "$BUNDLE_ROOT/appimage" -maxdepth 1 -name '*.AppImage' | head -n1)
               EXT="AppImage"
               ;;
           esac
 
           if [ -z "$INSTALLER" ]; then
-            echo "未找到编辑器安装包, bundle 目录内容:"
+            echo "未找到编辑器安装包，bundle 目录内容:"
             find "$BUNDLE_ROOT" -maxdepth 2 -type f 2>/dev/null || true
             exit 1
           fi
 
           DST="editor-${{ env.VERSION }}-${{ matrix.os-label }}.$EXT"
-          cp "$INSTALLER" "$DST"
+          cp "$INSTALLER" "$GITHUB_WORKSPACE/$DST"
           echo "EDITOR_INSTALLER=$DST" >> $GITHUB_ENV
+          ls -l "$GITHUB_WORKSPACE/$DST" || true
 
-      # -------- 上传 --------
-
-      - name: Upload to Release
+      - name: Upload server binary to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ env.SERVER_ARCHIVE }}
-            ${{ env.EDITOR_INSTALLER }}
+          files: ${{ env.SERVER_ARCHIVE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload editor installer to Release (Windows & Linux only)
+        if: github.event_name == 'release' && runner.os != 'macOS'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.EDITOR_INSTALLER }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -148,4 +158,4 @@ jobs:
           name: ${{ matrix.os-label }}-binaries
           path: |
             ${{ env.SERVER_ARCHIVE }}
-            ${{ env.EDITOR_INSTALLER }}
+            ${{ runner.os != 'macOS' && env.EDITOR_INSTALLER || '' }}
