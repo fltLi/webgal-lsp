@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "editor/src-tauri"]
 
 [workspace.package]
 edition = "2024"
@@ -44,15 +44,23 @@ itertools = "0.14"
 once_cell = "1.21"
 rayon = "1.12"
 rand = "0.10"
+percent-encoding = "2.3"
 
+tower = "=0.4.13"
+tower-http = "=0.5.2"
 tower-lsp = "=0.20.0"
-lsp-types = "=0.94.1" # 与 tower-lsp 保持一致
+lsp-types = "=0.94.1"
+futures-util = "0.3"
+async-tungstenite = "0.28"
+ws_stream_tungstenite = { version = "0.14", features = ["tokio_io"] }
+tokio = "1.53"
+tokio-util = { version = "0.7", features = ["compat"] }
 
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
+opt-level = 3
 panic = "abort"
 strip = true

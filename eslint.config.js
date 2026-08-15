@@ -50,6 +50,20 @@ export default tseslint.config(
       },
     },
   },
+  // Editor（浏览器 + React + Tauri）
+  {
+    files: ['editor/**/*.ts', 'editor/**/*.tsx'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+    },
+  },
   // Prettier 格式化检查
   prettier
 );

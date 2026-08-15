@@ -27,20 +27,20 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Error, Result};
+use anyhow::Result;
+use async_tungstenite::accept_async;
 use clap::{Parser, ValueEnum};
-use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use strum::{Display, EnumString};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, duplex, stdin, stdout},
+    io::{stdin, stdout},
     net::TcpListener,
-    select,
 };
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use tower_lsp::{ClientSocket, LspService, Server};
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use webgal_language_server::server::{Backend, BackendBuilder};
+use ws_stream_tungstenite::WsStream;
 
 /// 日志级别
 #[derive(
@@ -153,7 +153,7 @@ fn init_logging(level: LogLevel, format: LogFormat) {
     }
 }
 
-/// 运行 WebSocket 服务器, 将第一个连接桥接到 LSP 服务
+/// 运行 WebSocket 服务器, 将 WebSocket 适配为字节流后直接交给 LSP 服务。
 async fn run_websocket_server(
     port: u16,
     service: LspService<Backend>,
@@ -165,65 +165,11 @@ async fn run_websocket_server(
     // 只接受第一个客户端连接 (LSP 通常单客户端)
     let (stream, addr) = listener.accept().await?;
     info!("Accepted connection from {addr}");
-    let ws_stream = accept_async(stream).await?;
 
-    // 创建两对管道, 用于桥接 WebSocket 和 LSP 字节流
-    let (pipe_reader, mut pipe_writer) = duplex(64 * 1024);
-    let (mut pipe_reader2, pipe_writer2) = duplex(64 * 1024);
+    // 将 WebSocket 包装为字节流
+    let ws_stream = WsStream::new(accept_async(stream.compat()).await?);
+    let (reader, writer) = tokio::io::split(ws_stream);
 
-    // 分离 WebSocket 为 Sink 和 Stream
-    let (mut ws_sink, mut ws_stream) = ws_stream.split();
-
-    // 任务 1: WebSocket -> pipe_writer (模拟 stdin)
-    let ws_to_pipe = tokio::spawn(async move {
-        while let Some(msg) = ws_stream.try_next().await? {
-            if msg.is_text() || msg.is_binary() {
-                let data = msg.into_data();
-                if let Err(error) = pipe_writer.write_all(&data).await {
-                    warn!("Failed to write to pipe: {error}");
-                    break;
-                }
-            }
-        }
-        Ok::<_, Error>(())
-    });
-
-    // 任务 2: pipe_reader2 -> WebSocket (模拟 stdout)
-    let pipe_to_ws = tokio::spawn(async move {
-        let mut buf = vec![0u8; 4096];
-        loop {
-            match pipe_reader2.read(&mut buf).await {
-                Ok(0) => break, // 管道关闭
-                Ok(n) => {
-                    let data = buf[..n].to_vec(); // 复制数据
-                    if let Err(error) = ws_sink.send(Message::binary(data)).await {
-                        warn!("Failed to send WebSocket message: {error}");
-                        break;
-                    }
-                }
-                Err(error) => {
-                    warn!("Failed to read from pipe: {error}");
-                    break;
-                }
-            }
-        }
-        Ok::<_, Error>(())
-    });
-
-    // 在独立任务中运行 LSP 服务
-    let server_task = tokio::spawn(async move {
-        Server::new(pipe_reader, pipe_writer2, socket)
-            .serve(service)
-            .await;
-    });
-
-    // 等待任一任务结束 (连接断开或服务终止)
-    select! {
-        _ = ws_to_pipe => info!("WebSocket -> pipe task finished"),
-        _ = pipe_to_ws => info!("Pipe -> WebSocket task finished"),
-        _ = server_task => info!("LSP server finished"),
-    }
-
-    info!("WebSocket connection closed, shutting down");
+    Server::new(reader, writer, socket).serve(service).await;
     Ok(())
 }

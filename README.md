@@ -12,6 +12,7 @@ WebGAL 语言基础设施。
 - **动态诊断**[^1]：通过后台模拟脚本执行，检测逻辑问题 -> [详细说明](./docs/diagnose.md#逻辑分析)
 - **语义高亮**：语句类型、参数、注释等色彩渲染
 - **悬浮文档**：悬停查看语句、参数的详细说明 -> [详细说明](#documentation-license)
+- **代码编辑**：提供轻量级编辑器，集成上述语言服务 -> [详细说明](#webgal-ink-编辑器)
 
 [^1]: 实验性功能，后续将逐步完善和稳定。
 
@@ -62,6 +63,29 @@ cargo build -p webgal-language-server
 ```bash
 cargo run -p webgal-language-server -- --log-level debug --disable-hover --disable-complete --diagnostic-delay 300
 ```
+
+---
+
+### :pencil2: WebGAL Ink 编辑器
+
+> 基于 Tauri 2 + React + Monaco + Fluent UI 的 WebGAL 桌面场景编辑器，内置上述语言服务与实时预览，开箱即用。
+
+1. 安装依赖：
+   ```bash
+   npm install
+   ```
+
+2. 启动开发模式：
+   ```bash
+   cd editor
+   npm run tauri dev
+   ```
+
+编辑器特性：
+
+- 多标签场景编辑、自动保存、最近项目；
+- **内置 LSP**：语义高亮、自动补全、诊断、格式化、悬浮文档等；
+- **实时预览**、资源浏览、深浅色主题与编辑器设置。
 
 ---
 

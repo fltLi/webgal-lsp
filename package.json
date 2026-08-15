@@ -1,6 +1,7 @@
 {
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "editor"
   ],
   "type": "module",
   "scripts": {
@@ -8,8 +9,8 @@
     "type-check": "npm run type-check --workspaces --if-present",
     "build:wasm": "npm run build:wasm -w webgal-parse-playground",
     "lint:all": "npm run build:wasm && npm run lint && npm run type-check",
-    "format": "prettier --write \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\"",
-    "format-check": "prettier --check \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\""
+    "format": "prettier --write \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"editor/{src/**/*.{ts,tsx,css},*.{json,js,cjs,mjs,ts,html}}\" \"*.{js,cjs,mjs,json}\"",
+    "format-check": "prettier --check \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"editor/{src/**/*.{ts,tsx,css},*.{json,js,cjs,mjs,ts,html}}\" \"*.{js,cjs,mjs,json}\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

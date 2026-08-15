@@ -31,15 +31,20 @@ serde_json.workspace = true
 clap = { version = "4.6", features = ["derive"] }
 
 rayon.workspace = true
+percent-encoding.workspace = true
 
 tower-lsp.workspace = true
-percent-encoding = "2.3"
 async-trait = "0.1"
-futures-util = "0.3"
-tokio = { version = "1", features = [
+futures-util.workspace = true
+async-tungstenite.workspace = true
+ws_stream_tungstenite.workspace = true
+tokio = { workspace = true, features = [
     "rt-multi-thread",
     "macros",
-    "io-std",
+    "sync",
     "time",
+    "io-std",
+    "io-util",
+    "net",
 ] }
-tokio-tungstenite = "0.29"
+tokio-util.workspace = true
