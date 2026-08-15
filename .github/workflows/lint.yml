@@ -34,8 +34,44 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run clippy
-        run: cargo clippy --workspace -- --deny warnings
-  
+        run: cargo clippy --workspace --exclude webgal-ink -- --deny warnings
+
+  clippy-editor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          override: true
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Create placeholder frontend dist
+        run: |
+          mkdir -p editor/dist
+          printf '<!doctype html><html><body></body></html>' > editor/dist/index.html
+
+      - name: Run clippy on editor backend
+        run: cargo clippy -p webgal-ink -- --deny warnings
+
   ts-lint:
     runs-on: ubuntu-latest
     steps:
