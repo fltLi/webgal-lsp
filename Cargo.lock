@@ -2319,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "json-language-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lsp-types",
 ]
@@ -5546,7 +5546,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -5567,7 +5567,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5594,7 +5594,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "count",

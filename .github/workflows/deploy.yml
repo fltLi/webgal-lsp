@@ -42,9 +42,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install dependencies
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install
+        run: npm install
         working-directory: packages/parse-playground
 
       - name: Build WASM

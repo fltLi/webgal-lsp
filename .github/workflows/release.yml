@@ -53,7 +53,7 @@ jobs:
           node-version: 22
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install
 
       - name: Set version
         shell: bash
