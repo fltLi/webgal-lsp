@@ -80,6 +80,13 @@ mod info;
 /// 标注在参数上, 可选, 形如 `require = ["依赖参数名"]`.
 /// 反序列化时, 若存在依赖者的同时不存在被依赖者, 则记录错误.
 ///
+/// ## 关联资源
+/// 标注在常规参数上, 可选:
+/// * `resource = Scene / Animation / Background / Figure / Bgm / Vocal / Video` -
+///   标注在类型为 [`String`] 或 [`Option<String>`] 的字段上, 表示参数本身就是一个特定类型的资源.
+/// * `resource = fn(&self, &mut Vec<(ResourceKind, Cow<'_, str>)>)` -
+///   标注在任意类型的字段上, 依靠自定义方法提取关联资源.
+///
 /// ## 自定义序列化 / 反序列化
 /// * `serialize_with = 序列化函数`
 ///   ```rust,ignore

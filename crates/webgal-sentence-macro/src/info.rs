@@ -11,16 +11,17 @@ pub struct SentenceInfo {
     pub validate: Option<Path>,
     pub forward: Either<Path, Ident>,
     pub obsolete: Vec<(String, String)>,
-    pub content: Option<FieldInfo>,
+    pub content: Option<ContentInfo>,
     pub condition: Option<Ident>,
     pub arguments: Vec<ArgumentInfo>,
 }
 
-pub struct FieldInfo {
+pub struct ContentInfo {
     pub ident: Ident,
     pub ty: Type,
     pub serialize_with: Option<Path>,
     pub deserialize_with: Option<Path>,
+    pub resource: Option<Either<Path, Ident>>,
 }
 
 pub struct ArgumentInfo {
@@ -36,6 +37,7 @@ pub enum ArgumentKind {
         default: bool,
         serialize_with: Option<Path>,
         deserialize_with: Option<Path>,
+        resource: Option<Either<Path, Ident>>,
     },
     Enum {
         variant: Vec<(String, Ident)>,
@@ -96,7 +98,7 @@ fn collect_struct(attrs: &[Attribute]) -> Result<(String, Option<Path>, Vec<(Str
                     obsolete.append(&mut map);
                 }
 
-                SentenceAttr::Forward(_) => {}
+                SentenceAttr::Forward(_) | SentenceAttr::Resource(_) => {}
                 _ => return make_error("`sentence` 标注内只能带有 `command` 和 `obsolete` 属性"),
             }
         }
@@ -162,7 +164,7 @@ fn collect_forward(attrs: &[Attribute], fields: &FieldsNamed) -> Result<Either<P
 
 fn collect_arguments(
     fields: &FieldsNamed,
-) -> Result<(Option<FieldInfo>, Option<Ident>, Vec<ArgumentInfo>)> {
+) -> Result<(Option<ContentInfo>, Option<Ident>, Vec<ArgumentInfo>)> {
     let mut content = None;
     let mut condition = None;
     let mut arguments = Vec::new();
@@ -195,7 +197,7 @@ fn collect_arguments(
 }
 
 enum FieldRole {
-    Content(FieldInfo),
+    Content(ContentInfo),
     Argument {
         info: ArgumentInfo,
         is_condition: bool,
@@ -215,6 +217,7 @@ impl FieldRole {
         let mut deserialize_with = None;
         let mut variant = None;
         let mut requires = Vec::new();
+        let mut resource = None;
 
         for attr in field
             .attrs
@@ -296,6 +299,13 @@ impl FieldRole {
                         requires.append(&mut req);
                     }
 
+                    SentenceAttr::Resource(res) => {
+                        if resource.is_some() {
+                            return make_error("重复的 `resource` 属性");
+                        }
+                        resource = Some(res);
+                    }
+
                     SentenceAttr::Forward(_) => {}
                     _ => return make_error("字段不能含有 `command` 或 `obsolete` 属性"),
                 }
@@ -305,20 +315,25 @@ impl FieldRole {
         let make_error = |msg| Err(Error::new(field.span(), msg));
 
         if is_content {
-            return Ok(Self::Content(FieldInfo {
+            return Ok(Self::Content(ContentInfo {
                 ident,
                 ty,
                 serialize_with,
                 deserialize_with,
+                resource,
             }));
         }
 
         let kind = match variant {
             // 枚举型参数
             Some(variant) => {
-                if default || serialize_with.is_some() || deserialize_with.is_some() {
+                if default
+                    || serialize_with.is_some()
+                    || deserialize_with.is_some()
+                    || resource.is_some()
+                {
                     return make_error(
-                        "枚举型参数不能具有 `default`, `serialize_with` 和 `deserialize_with` 参数",
+                        "枚举型参数不能具有 `default`, `serialize_with`, `deserialize_with` 或 `resource` 参数",
                     );
                 }
                 ArgumentKind::Enum { variant }
@@ -329,6 +344,7 @@ impl FieldRole {
                 default,
                 serialize_with,
                 deserialize_with,
+                resource,
             },
         };
 
