@@ -18,12 +18,24 @@ import {
   type LspTextEdit,
 } from './client';
 
+// Monaco 内部模块 (无公开类型声明): 用于在启动时把补全详情面板设为默认展开
+// (expandSuggestionDocs 标志默认 false, 会导致补全项文档不显示)。
+// 注意: StorageScope/StorageTarget 是编译期内联的 TS 枚举, 不作为运行时导出, 这里直接使用其数值。
+// @ts-expect-error -- Monaco 内部模块, 无类型声明
+import { IStorageService } from 'monaco-editor/esm/vs/platform/storage/common/storage.js';
+// @ts-expect-error -- Monaco 内部模块, 无类型声明
+import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js';
+
 // 配置 Monaco worker (Vite 打包); webgal 为自定义语言, 仅需基础 editor worker
 self.MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
 
 export const LANGUAGE_ID = 'webgal';
+
+// 服务端 completionProvider.triggerCharacters (见 crates/webgal-language-service/src/service/complete.rs):
+// 输入这些符号时自动触发补全 (Monaco 原生支持 provider 级 triggerCharacters)。
+export const TRIGGER_CHARACTERS = [':', '-', '=', '/', '\\', '"'];
 
 // Monaco model -> 原始系统路径。
 // 不能依赖 `model.uri.toString()` 往返还原路径: Monaco 的 Uri 会把
@@ -201,6 +213,19 @@ export function setupMonaco(): void {
   if (setupDone) return;
   setupDone = true;
 
+  // 补全详情面板默认展开: Monaco 的 `expandSuggestionDocs` 存储标志默认 false,
+  // 导致补全项的 documentation 面板收起。直接写入 standalone 存储服务设为 true,
+  // 让详情面板从一开始就展开 (无需用户按 Ctrl+Space)。
+  try {
+    const storage = StandaloneServices.get(IStorageService) as {
+      store: (key: string, value: unknown, scope: unknown, target: unknown) => void;
+    };
+    // expandSuggestionDocs: 0 = StorageScope.PROFILE, 0 = StorageTarget.USER
+    storage.store('expandSuggestionDocs', true, 0, 0);
+  } catch {
+    // 内部 API 变化时静默忽略, 不影响编辑器
+  }
+
   defineWebgalThemes();
   monaco.languages.register({ id: LANGUAGE_ID });
 
@@ -221,6 +246,7 @@ export function setupMonaco(): void {
   });
 
   monaco.languages.registerCompletionItemProvider(LANGUAGE_ID, {
+    triggerCharacters: TRIGGER_CHARACTERS,
     provideCompletionItems: async (model, position) => {
       const path = pathOfModel(model);
       if (!path) return { suggestions: [] };

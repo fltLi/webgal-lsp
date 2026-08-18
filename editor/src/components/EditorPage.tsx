@@ -38,10 +38,34 @@ export function EditorPage() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources'>('scenes');
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(480);
+  const [resizing, setResizing] = useState(false);
+
+  const MIN_SIDEBAR = 280;
+  const MAX_SIDEBAR = 760;
 
   const activeDoc = documents.find((d) => d.path === activePath) ?? null;
 
   const toggleTheme = () => updateSettings({ theme: theme === 'dark' ? 'light' : 'dark' });
+
+  /** 开始拖拽分隔条 (指针捕获, 移动时调整侧栏宽度) */
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setResizing(true);
+    document.body.classList.add('resizing');
+  };
+
+  const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizing) return;
+    const max = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, window.innerWidth - 320));
+    setSidebarWidth(Math.min(Math.max(e.clientX, MIN_SIDEBAR), max));
+  };
+
+  const onResizeEnd = () => {
+    setResizing(false);
+    document.body.classList.remove('resizing');
+  };
 
   /** 生成快照: 先处理未保存更改, 再选择输出位置。 */
   const startSnapshot = () => {
@@ -86,23 +110,36 @@ export function EditorPage() {
 
       <div className="editor-main">
         {sidebarVisible ? (
-          <div className="sidebar">
-            <div className="sidebar-preview">
-              <PreviewPanel />
+          <>
+            <div className="sidebar" style={{ width: sidebarWidth }}>
+              <div className="sidebar-preview">
+                <PreviewPanel />
+              </div>
+              <div className="sidebar-tabs">
+                <button className={sidebarTab === 'scenes' ? 'active' : ''} onClick={() => setSidebarTab('scenes')}>
+                  场景
+                </button>
+                <button
+                  className={sidebarTab === 'resources' ? 'active' : ''}
+                  onClick={() => setSidebarTab('resources')}
+                >
+                  资源
+                </button>
+                <button className="sidebar-collapse" title="折叠侧栏" onClick={() => setSidebarVisible(false)}>
+                  <PanelLeftContractRegular />
+                </button>
+              </div>
+              <div className="sidebar-content">{sidebarTab === 'scenes' ? <SceneBrowser /> : <ResourceBrowser />}</div>
             </div>
-            <div className="sidebar-tabs">
-              <button className={sidebarTab === 'scenes' ? 'active' : ''} onClick={() => setSidebarTab('scenes')}>
-                场景
-              </button>
-              <button className={sidebarTab === 'resources' ? 'active' : ''} onClick={() => setSidebarTab('resources')}>
-                资源
-              </button>
-              <button className="sidebar-collapse" title="折叠侧栏" onClick={() => setSidebarVisible(false)}>
-                <PanelLeftContractRegular />
-              </button>
-            </div>
-            <div className="sidebar-content">{sidebarTab === 'scenes' ? <SceneBrowser /> : <ResourceBrowser />}</div>
-          </div>
+            <div
+              className={`sidebar-resizer${resizing ? ' active' : ''}`}
+              title="拖拽调整侧栏宽度"
+              onPointerDown={onResizeStart}
+              onPointerMove={onResizeMove}
+              onPointerUp={onResizeEnd}
+              onPointerCancel={onResizeEnd}
+            />
+          </>
         ) : (
           <button className="sidebar-expand" title="展开侧栏" onClick={() => setSidebarVisible(true)}>
             <PanelLeftExpandRegular />

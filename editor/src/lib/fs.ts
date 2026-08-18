@@ -2,7 +2,17 @@
 
 // 文件系统服务: 统一封装 Tauri FS 插件, 供 UI 文件树/资源浏览与 LSP 反向请求共用。
 
-import { mkdir, readDir, readFile, readTextFile, remove, rename, stat, writeTextFile } from '@tauri-apps/plugin-fs';
+import {
+  mkdir,
+  open,
+  readDir,
+  readFile,
+  readTextFile,
+  remove,
+  rename,
+  stat,
+  writeTextFile,
+} from '@tauri-apps/plugin-fs';
 
 export interface FsEntry {
   name: string;
@@ -33,8 +43,26 @@ export const fs = {
     return readTextFile(path);
   },
 
+  /** 容错文本读取: 以字节读取并用非致命 UTF-8 解码, 含非法字节的文件 (如部分 JSON/模型文件) 也不会抛错。 */
+  async readTextLossy(path: string): Promise<string> {
+    const bytes = await readFile(path);
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  },
+
   async readBytes(path: string): Promise<Uint8Array> {
     return readFile(path);
+  },
+
+  /** 只读取文件头部若干字节 (用于类型探测, 避免大文件整体读入内存)。 */
+  async readHead(path: string, length: number): Promise<Uint8Array> {
+    const handle = await open(path);
+    try {
+      const buf = new Uint8Array(length);
+      await handle.read(buf);
+      return buf;
+    } finally {
+      await handle.close();
+    }
   },
 
   async writeText(path: string, content: string): Promise<void> {

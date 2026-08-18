@@ -35,7 +35,7 @@ export function SettingsDialog() {
     if (typeof dir === 'string') updateSettings({ enginePath: dir });
   };
 
-  const updateNumber = (key: 'editorFontSize' | 'editorTabSize', raw: string, min: number, max: number) => {
+  const updateNumber = (key: 'editorFontSize', raw: string, min: number, max: number) => {
     const n = Number(raw);
     if (!Number.isFinite(n)) return;
     updateSettings({ [key]: Math.min(max, Math.max(min, Math.round(n))) } as Partial<Settings>);
@@ -74,14 +74,13 @@ export function SettingsDialog() {
                   </div>
                 </div>
 
-                <div className="settings-field">
+                <div className="settings-field settings-field-start">
                   <Button appearance="secondary" onClick={() => updateSettings({ recentProjects: [] })}>
                     清除最近项目
                   </Button>
                 </div>
               </div>
             )}
-
             {category === 'editor' && (
               <div className="settings-group">
                 <h3 className="settings-group-title">编辑器</h3>
@@ -127,17 +126,6 @@ export function SettingsDialog() {
                     checked={settings.editorMinimap}
                     onChange={(_, data) => updateSettings({ editorMinimap: data.checked })}
                     label="迷你地图"
-                  />
-                </div>
-
-                <div className="settings-field settings-field-inline">
-                  <span className="settings-label">制表符大小</span>
-                  <Input
-                    type="number"
-                    min={2}
-                    max={8}
-                    value={String(settings.editorTabSize)}
-                    onChange={(_, data) => updateNumber('editorTabSize', data.value, 2, 8)}
                   />
                 </div>
               </div>

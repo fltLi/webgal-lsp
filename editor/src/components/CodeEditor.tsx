@@ -2,13 +2,16 @@
 
 // CodeEditor: 单个文档的 Monaco 编辑器 (仅活动文档被挂载)。
 
+import { openUrl } from '@tauri-apps/plugin-opener';
 import * as monaco from 'monaco-editor';
 import { useEffect, useRef } from 'react';
 
 import { fs } from '../lib/fs';
-import { applyDiagnostics, bindModel, openModel } from '../lsp/monaco';
+import { applyDiagnostics, bindModel, openModel, TRIGGER_CHARACTERS } from '../lsp/monaco';
 import { previewClient } from '../preview/client';
 import { useAppStore, type OpenDocument } from '../state/store';
+
+const TRIGGER_SET = new Set(TRIGGER_CHARACTERS);
 
 export function CodeEditor({ doc }: { doc: OpenDocument }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,7 +35,6 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       fontSize: initialSettings.editorFontSize,
       minimap: { enabled: initialSettings.editorMinimap },
       wordWrap: initialSettings.editorWordWrap ? 'on' : 'off',
-      tabSize: initialSettings.editorTabSize,
       // 显式启用语义高亮: 内置主题的 semanticHighlighting 恒为 false,
       // 不开启则语义 token 不会被请求/着色 (与 parse-playground 一致的做法)
       'semanticHighlighting.enabled': true,
@@ -46,15 +48,13 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
         s.editorFontFamily !== p.editorFontFamily ||
         s.editorFontSize !== p.editorFontSize ||
         s.editorWordWrap !== p.editorWordWrap ||
-        s.editorMinimap !== p.editorMinimap ||
-        s.editorTabSize !== p.editorTabSize
+        s.editorMinimap !== p.editorMinimap
       ) {
         editor.updateOptions({
           fontFamily: s.editorFontFamily,
           fontSize: s.editorFontSize,
           minimap: { enabled: s.editorMinimap },
           wordWrap: s.editorWordWrap ? 'on' : 'off',
-          tabSize: s.editorTabSize,
         });
       }
     });
@@ -78,16 +78,22 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       void saveDoc();
     });
 
+    // 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)
+    const scheduleSync = () => {
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        if (!useAppStore.getState().settings.autoSyncPreview) return;
+        const position = editor.getPosition();
+        if (position) void previewClient.syncScene(path, position.lineNumber);
+      }, 150);
+    };
+
     // 光标移动 -> 状态栏位置 + 跨行时触发预览同步
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
       useAppStore.getState().setCursor({ line: e.position.lineNumber, column: e.position.column });
       if (e.position.lineNumber !== lastSyncLine) {
         lastSyncLine = e.position.lineNumber;
-        if (syncTimer) clearTimeout(syncTimer);
-        syncTimer = setTimeout(() => {
-          if (!useAppStore.getState().settings.autoSyncPreview) return;
-          void previewClient.syncScene(path, e.position.lineNumber);
-        }, 150);
+        scheduleSync();
       }
     });
 
@@ -99,6 +105,8 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
         const store = useAppStore.getState();
         store.updateDocument(path, { content: text, dirty: true });
         if (store.settings.autoSave) scheduleAutoSave();
+        // 场景内容发生更改时也触发一次预览同步 (与光标跨行同步共用防抖)
+        scheduleSync();
       });
       applyDiagnostics(model, path);
       unsubscribeDiagnostics = useAppStore.subscribe((state, prev) => {
@@ -114,10 +122,51 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       }
     });
 
+    // 补全项以触发符号结尾 (如 `changeBg:`) 时, 插入完成后再次触发补全。
+    // 手动输入触发符由 provider 的 triggerCharacters 原生处理; 这里只兜底
+    // 程序化插入 (确认补全) 的场景: 延迟一帧, 若建议窗口已被原生触发打开则跳过。
+    const suggestTriggerSub = editor.onDidChangeModelContent((e) => {
+      let triggered = false;
+      for (const change of e.changes) {
+        if (change.text && TRIGGER_SET.has(change.text[change.text.length - 1])) {
+          triggered = true;
+          break;
+        }
+      }
+      if (!triggered) return;
+      setTimeout(() => {
+        if (container.querySelector('.suggest-widget.visible')) return; // 已打开, 不重复触发
+        editor.trigger('webgal', 'editor.action.triggerSuggest', {});
+      }, 0);
+    });
+
+    // 悬浮文档 (markdown) 中的链接点击 -> 用系统浏览器打开。
+    // 注意: Monaco 渲染 markdown 后会把 <a> 的 href 清空并改用 data-href,
+    // 且 standalone 的 opener 为空实现并 preventDefault, 因此:
+    //  1) 从 data-href 读取真实地址; 2) 使用 document 捕获阶段监听, 先于 Monaco 处理执行。
+    const onHoverLinkClick = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target || typeof target.closest !== 'function') return;
+      const anchor = target.closest('a');
+      if (!anchor) return;
+      // 仅处理悬浮窗口 / 补全详情面板内的链接
+      if (!anchor.closest('.monaco-hover') && !anchor.closest('.suggest-details')) return;
+      const editorRoot = editor.getDomNode();
+      if (!editorRoot || !editorRoot.contains(anchor)) return;
+      const href = anchor.dataset['href'] || anchor.getAttribute('href') || '';
+      if (!/^(https?:|mailto:)/i.test(href)) return;
+      ev.preventDefault();
+      ev.stopPropagation(); // 阻止 Monaco 自身的无操作处理
+      void openUrl(href);
+    };
+    document.addEventListener('click', onHoverLinkClick, true);
+
     return () => {
       settingsSub();
       unsubscribeReady();
       cursorSub.dispose();
+      suggestTriggerSub.dispose();
+      document.removeEventListener('click', onHoverLinkClick, true);
       if (unbindModel) unbindModel();
       if (unsubscribeDiagnostics) unsubscribeDiagnostics();
       if (saveTimer) clearTimeout(saveTimer);

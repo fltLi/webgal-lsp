@@ -19,6 +19,7 @@
     },
     "fs:allow-rename",
     "fs:allow-copy-file",
-    "fs:allow-write-file"
+    "fs:allow-write-file",
+    "fs:allow-watch"
   ]
 }

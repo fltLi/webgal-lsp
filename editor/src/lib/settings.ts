@@ -17,7 +17,6 @@ export interface Settings {
   editorFontSize: number;
   editorWordWrap: boolean;
   editorMinimap: boolean;
-  editorTabSize: number;
 }
 
 const STORAGE_KEY = 'webgal-ink.settings';
@@ -32,7 +31,6 @@ export const defaultSettings: Settings = {
   editorFontSize: 14,
   editorWordWrap: true,
   editorMinimap: false,
-  editorTabSize: 4,
 };
 
 export function loadSettings(): Settings {

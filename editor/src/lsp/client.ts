@@ -13,6 +13,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { fs } from '../lib/fs';
 import { fromUri, toUri } from '../lib/uri';
 import { useAppStore } from '../state/store';
+import { startWatching, stopWatching } from './watch';
 
 export interface LspPosition {
   line: number;
@@ -88,6 +89,10 @@ class LspClient {
   private initialized = false;
   private pendingFolders: { added: string[]; removed: string[] } | null = null;
   private frameBuffer: Uint8Array = new Uint8Array(0);
+
+  /** 文件监听: 服务器通过 client/registerCapability 注册 didChangeWatchedFiles 后启用 */
+  private watchedEnabled = false;
+  private watcherRoots: string[] = [];
 
   private decodeData(data: unknown): void {
     let bytes: Uint8Array;
@@ -267,7 +272,10 @@ class LspClient {
       const { path } = params as { path: string };
       return fs.readText(fromUri(path));
     });
-    this.onRequest('client/registerCapability', () => null);
+    this.onRequest('client/registerCapability', (params) => {
+      this.handleRegisterCapability(params);
+      return null;
+    });
 
     // 诊断回写: LSP 推送 publishDiagnostics -> 写入 store 供编辑器 lint 使用
     this.onDiagnostics((uri, diagnostics) => {
@@ -380,14 +388,45 @@ class LspClient {
   changeWorkspaceFolders(added: string[], removed: string[]): void {
     if (!this.initialized) {
       this.pendingFolders = { added, removed };
-      return;
+    } else {
+      this.sendWorkspaceFolders(added, removed);
     }
+    // 同步文件监听根目录 (无论初始化与否都记录)
+    this.watcherRoots = [...this.watcherRoots.filter((r) => !removed.includes(r)), ...added];
+    void this.syncWatcher();
+  }
+
+  private sendWorkspaceFolders(added: string[], removed: string[]): void {
     this.sendNotification('workspace/didChangeWorkspaceFolders', {
       event: {
         added: added.map((p) => ({ uri: toUri(p), name: toUri(p) })),
         removed: removed.map((p) => ({ uri: toUri(p), name: toUri(p) })),
       },
     });
+  }
+
+  // -------- 文件监听 (workspace/didChangeWatchedFiles) --------
+
+  /** 解析服务器通过 client/registerCapability 注册的文件监听能力。 */
+  private handleRegisterCapability(params: unknown): void {
+    const registrations = (params as { registrations?: { method?: string }[] } | null)?.registrations ?? [];
+    const hasWatched = registrations.some((r) => r.method === 'workspace/didChangeWatchedFiles');
+    if (!hasWatched) return;
+    this.watchedEnabled = true;
+    void this.syncWatcher();
+  }
+
+  private async syncWatcher(): Promise<void> {
+    if (this.watchedEnabled && this.watcherRoots.length > 0) {
+      await startWatching(this.watcherRoots, (changes) => {
+        if (changes.length === 0) return;
+        this.sendNotification('workspace/didChangeWatchedFiles', {
+          changes: changes.map((c) => ({ uri: toUri(c.path), type: c.type })),
+        });
+      });
+    } else {
+      await stopWatching();
+    }
   }
 
   // -------- 语言能力 --------

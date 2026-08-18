@@ -315,6 +315,26 @@ body {
   padding: 6px;
 }
 
+/* 侧栏与编辑区之间的拖拽分隔条 */
+.sidebar-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--app-border);
+  transition: background-color 0.12s ease;
+  touch-action: none;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer.active {
+  background: var(--app-accent);
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .editor-workspace {
   flex: 1;
   display: flex;
@@ -364,6 +384,11 @@ body {
 
 .editor-tab.drop-target {
   box-shadow: inset 2px 0 0 var(--app-accent);
+}
+
+/* 拖到末尾 (最后一个选项卡右侧) 的落点指示 */
+.editor-tab.drop-target-end {
+  box-shadow: inset -2px 0 0 var(--app-accent);
 }
 
 .editor-tab-name {
@@ -432,6 +457,10 @@ body {
 
 .status-spacer {
   flex: 1;
+}
+
+.status-chars {
+  color: var(--app-fg);
 }
 
 .lsp-status.lsp-ready {
@@ -540,16 +569,27 @@ body {
   padding: 16px;
 }
 
+/* 资源浏览: 工具栏置顶全宽, 下方为 列表 | 预览 */
+.resource-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .resource-files {
   width: 55%;
   min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--app-border);
   display: flex;
   flex-direction: column;
 }
 
-.scene-browser .file-tree {
+.scene-browser .file-tree,
+.resource-browser .file-tree {
   width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .file-tree {
@@ -568,25 +608,41 @@ body {
   align-items: center;
 }
 
-.file-tree-up {
-  padding: 5px 10px;
+.file-tree-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 1px solid var(--app-border);
   border-radius: 4px;
   background: var(--app-bg);
   color: var(--app-fg);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   flex: 0 0 auto;
   line-height: 1;
 }
 
-.file-tree-up:hover:not(:disabled) {
+.file-tree-icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.file-tree-icon-btn:hover:not(:disabled) {
   background: var(--app-hover);
 }
 
-.file-tree-up:disabled {
+.file-tree-icon-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.file-tree-icon-btn.active {
+  background: var(--app-accent);
+  color: #fff;
+  border-color: var(--app-accent);
 }
 
 .file-tree-path {
@@ -617,27 +673,6 @@ body {
 
 .file-tree-search::placeholder {
   color: var(--app-muted);
-}
-
-.file-tree-flat {
-  padding: 5px 12px;
-  border: 1px solid var(--app-border);
-  border-radius: 4px;
-  background: var(--app-bg);
-  color: var(--app-fg);
-  cursor: pointer;
-  font-size: 12px;
-  flex: 0 0 auto;
-}
-
-.file-tree-flat:hover {
-  background: var(--app-hover);
-}
-
-.file-tree-flat.active {
-  background: var(--app-accent);
-  color: #fff;
-  border-color: var(--app-accent);
 }
 
 .file-tree-list {
@@ -762,6 +797,114 @@ body {
   word-break: break-all;
 }
 
+/* -------- 文件树右键菜单 -------- */
+.context-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 2600;
+  min-width: 180px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--app-fg);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.context-menu-item svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--app-muted);
+}
+
+.context-menu-item:hover {
+  background: var(--app-hover);
+}
+
+/* -------- 场景操作对话框 -------- */
+.small-surface {
+  min-width: 380px;
+  max-width: 440px;
+}
+
+.prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-field .fui-Input {
+  width: 100%;
+}
+
+.prompt-hint {
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.prompt-error {
+  font-size: 12px;
+  color: #d13438;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+[data-theme='dark'] .prompt-error {
+  color: #f1707b;
+}
+
+.confirm-message {
+  margin: 0 0 4px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+/* 删除确认等危险操作的红色按钮 */
+.danger-button.fui-Button {
+  background: #d13438;
+  border-color: #d13438;
+  color: #fff;
+}
+
+.danger-button.fui-Button:hover {
+  background: #b02e31;
+  border-color: #b02e31;
+}
+
+[data-theme='dark'] .danger-button.fui-Button {
+  background: #f1707b;
+  border-color: #f1707b;
+  color: #1e1e1e;
+}
+
+[data-theme='dark'] .danger-button.fui-Button:hover {
+  background: #f58b94;
+  border-color: #f58b94;
+}
+
 /* -------- 设置 -------- */
 .modal-backdrop {
   position: fixed;
@@ -881,6 +1024,24 @@ body {
   align-items: center;
 }
 
+/* 引擎目录输入框占满剩余宽度 (不再被按钮挤窄) */
+.engine-path-row .fui-Input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 选择按钮保持合适宽度, 不随内容过窄 */
+.engine-path-row .fui-Button {
+  flex: 0 0 auto;
+  min-width: 92px;
+  justify-content: center;
+}
+
+/* 按钮等不随纵向 field 拉伸 (如"清除最近项目"不再占满整行) */
+.settings-field-start {
+  align-items: flex-start;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -964,8 +1125,8 @@ body {
 .sidebar-tabs button,
 .file-tree-file,
 .file-tree-dir,
-.file-tree-flat,
-.file-tree-up,
+.file-tree-icon-btn,
+.context-menu-item,
 .recent-projects button,
 .settings-nav-item,
 .scene-picker-item {

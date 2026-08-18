@@ -3,7 +3,8 @@
 // 目录浏览组件: 每次只打开一层目录 (文件夹 + 文件), 不递归扫描子目录。
 // 进入子目录后才扫描该层; 支持返回上级、在当前目录内搜索、展平当前目录。
 
-import { useEffect, useState } from 'react';
+import { ArrowUpRegular, GroupListRegular, OpenFolderRegular } from '@fluentui/react-icons';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { fs } from '../lib/fs';
 
@@ -85,9 +86,30 @@ interface FileTreeProps {
   selectedPath?: string | null;
   excludeTop?: (name: string) => boolean;
   assetUrl?: (rel: string) => string | undefined;
+  /** 内容变更 (新建/重命名/删除) 后递增, 强制重新加载当前目录 */
+  refreshKey?: number;
+  /** 工具栏末尾附加按钮, 接收当前绝对目录 (用于新建场景/文件夹等) */
+  toolbarActions?: (currentDir: string) => ReactNode;
+  /** 提供时在工具栏显示"在文件管理器中打开"图标按钮 */
+  onRevealDir?: (dir: string) => void;
+  /** 列表项右键菜单回调 (文件与文件夹均触发) */
+  onItemContextMenu?: (node: FileNode, e: React.MouseEvent) => void;
+  /** 自定义工具栏与列表的摆放方式; 缺省时工具栏在列表上方 (上下堆叠) */
+  header?: (toolbar: ReactNode, list: ReactNode) => ReactNode;
 }
 
-export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl }: FileTreeProps) {
+export function FileTree({
+  rootPath,
+  onOpen,
+  selectedPath,
+  excludeTop,
+  assetUrl,
+  refreshKey = 0,
+  toolbarActions,
+  onRevealDir,
+  onItemContextMenu,
+  header,
+}: FileTreeProps) {
   const [currentRel, setCurrentRel] = useState('');
   const [dirEntries, setDirEntries] = useState<FileNode[]>([]);
   const [query, setQuery] = useState('');
@@ -124,7 +146,7 @@ export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl 
     return () => {
       cancelled = true;
     };
-  }, [currentAbs, excludeTop]);
+  }, [currentAbs, excludeTop, refreshKey]);
 
   // 展平: 递归列出当前目录下所有文件
   useEffect(() => {
@@ -139,7 +161,7 @@ export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl 
     return () => {
       cancelled = true;
     };
-  }, [flat, currentAbs, currentRel]);
+  }, [flat, currentAbs, currentRel, refreshKey]);
 
   // 搜索: 在当前目录内递归过滤文件
   useEffect(() => {
@@ -157,7 +179,7 @@ export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl 
     return () => {
       cancelled = true;
     };
-  }, [query, currentAbs, currentRel]);
+  }, [query, currentAbs, currentRel, refreshKey]);
 
   const resetView = () => {
     setQuery('');
@@ -200,6 +222,7 @@ export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl 
         key={node.path}
         className={`file-tree-file${node.path === selectedPath ? ' active' : ''}`}
         onClick={() => onOpen(node)}
+        onContextMenu={(e) => onItemContextMenu?.(node, e)}
         title={node.rel}
       >
         {node.kind === 'image' && assetUrl ? (
@@ -214,53 +237,79 @@ export function FileTree({ rootPath, onOpen, selectedPath, excludeTop, assetUrl 
     );
   };
 
+  const toolbar = (
+    <div className="file-tree-toolbar">
+      <button className="file-tree-icon-btn" title="返回上级" disabled={currentRel === ''} onClick={goUp}>
+        <ArrowUpRegular />
+      </button>
+      <span className="file-tree-path" title={currentRel || '/'}>
+        {currentRel || '根目录'}
+      </span>
+      <input
+        className="file-tree-search"
+        type="text"
+        placeholder="搜索当前目录…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <button
+        className={`file-tree-icon-btn${flat ? ' active' : ''}`}
+        title="展平当前目录"
+        onClick={() => {
+          setQuery('');
+          setFlat((v) => !v);
+        }}
+      >
+        <GroupListRegular />
+      </button>
+      {onRevealDir ? (
+        <button className="file-tree-icon-btn" title="在文件管理器中打开" onClick={() => onRevealDir(currentAbs)}>
+          <OpenFolderRegular />
+        </button>
+      ) : null}
+      {toolbarActions ? toolbarActions(currentAbs) : null}
+    </div>
+  );
+
+  const listNode = (
+    <div className="file-tree-list">
+      {list.length === 0 ? (
+        <span className="muted">{searchResults || flatEntries ? '无匹配项' : '空目录'}</span>
+      ) : searchResults || flatEntries ? (
+        list.map(fileRow)
+      ) : (
+        list.map((node) =>
+          node.isDirectory ? (
+            <div
+              key={node.path}
+              className="file-tree-dir"
+              onClick={() => enterDir(node.name)}
+              onContextMenu={(e) => onItemContextMenu?.(node, e)}
+              title={node.rel}
+            >
+              <span className="file-tree-arrow">▸</span>
+              <span className="file-tree-dir-name" title={node.name}>
+                {middleEllipsis(node.name, 30)}
+              </span>
+            </div>
+          ) : (
+            fileRow(node)
+          )
+        )
+      )}
+    </div>
+  );
+
   return (
     <div className="file-tree">
-      <div className="file-tree-toolbar">
-        <button className="file-tree-up" title="返回上级" disabled={currentRel === ''} onClick={goUp}>
-          ↑
-        </button>
-        <span className="file-tree-path" title={currentRel || '/'}>
-          {currentRel || '根目录'}
-        </span>
-        <input
-          className="file-tree-search"
-          type="text"
-          placeholder="搜索当前目录…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button
-          className={`file-tree-flat${flat ? ' active' : ''}`}
-          title="展平当前目录"
-          onClick={() => {
-            setQuery('');
-            setFlat((v) => !v);
-          }}
-        >
-          展平
-        </button>
-      </div>
-      <div className="file-tree-list">
-        {list.length === 0 ? (
-          <span className="muted">{searchResults || flatEntries ? '无匹配项' : '空目录'}</span>
-        ) : searchResults || flatEntries ? (
-          list.map(fileRow)
-        ) : (
-          list.map((node) =>
-            node.isDirectory ? (
-              <div key={node.path} className="file-tree-dir" onClick={() => enterDir(node.name)} title={node.rel}>
-                <span className="file-tree-arrow">▸</span>
-                <span className="file-tree-dir-name" title={node.name}>
-                  {middleEllipsis(node.name, 30)}
-                </span>
-              </div>
-            ) : (
-              fileRow(node)
-            )
-          )
-        )}
-      </div>
+      {header ? (
+        header(toolbar, listNode)
+      ) : (
+        <>
+          {toolbar}
+          {listNode}
+        </>
+      )}
     </div>
   );
 }

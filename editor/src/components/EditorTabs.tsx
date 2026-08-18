@@ -25,15 +25,21 @@ export function EditorTabs() {
   const [draggingPath, setDraggingPath] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
-  /** 命中检测: 返回指针 x 坐标所在的选项卡下标 */
+  /** 命中检测: 返回指针 x 坐标所在的选项卡下标。
+   *  - 命中某个选项卡 -> 其下标;
+   *  - 位于第一个选项卡左侧 (条内空白) -> 0 (放到开头);
+   *  - 位于最后一个选项卡右侧 (条内空白, 或越界) -> tabs.length (放到末尾)。
+   */
   const hitTest = (clientX: number): number => {
     const tabs = containerRef.current?.querySelectorAll<HTMLElement>('.editor-tab');
-    if (!tabs) return -1;
+    const container = containerRef.current;
+    if (!tabs || !container || tabs.length === 0) return -1;
     for (let i = 0; i < tabs.length; i++) {
       const rect = tabs[i].getBoundingClientRect();
       if (clientX >= rect.left && clientX <= rect.right) return i;
     }
-    return -1;
+    if (clientX < container.getBoundingClientRect().left) return 0;
+    return tabs.length;
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, path: string) => {
@@ -76,7 +82,7 @@ export function EditorTabs() {
           aria-selected={d.path === activePath}
           className={`editor-tab${d.path === activePath ? ' active' : ''}${draggingPath === d.path ? ' dragging' : ''}${
             dropIndex === index && draggingPath !== d.path ? ' drop-target' : ''
-          }`}
+          }${dropIndex === documents.length && index === documents.length - 1 && draggingPath !== d.path ? ' drop-target-end' : ''}`}
           onClick={() => setActiveDocument(d.path)}
           onPointerDown={(e) => onPointerDown(e, d.path)}
           onPointerMove={onPointerMove}
