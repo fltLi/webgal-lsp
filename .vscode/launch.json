@@ -30,6 +30,19 @@
             "env": {
                 "SERVER_PATH": "${workspaceFolder}/target/debug/webgal-language-server.exe"
             }
+        },
+        {
+            "name": "Launch Ink Editor",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "run",
+                "dev:desktop"
+            ],
+            "cwd": "${workspaceFolder}/editor",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
         }
     ]
 }
