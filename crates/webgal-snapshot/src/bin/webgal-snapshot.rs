@@ -34,9 +34,9 @@ struct Cli {
     #[arg(required = true)]
     projects: Vec<PathBuf>,
 
-    /// 输出目录 (默认: 当前目录, 文件名: <项目名>-snapshot.zip)
-    #[arg(short, long, default_value = ".")]
-    output_dir: PathBuf,
+    /// 输出压缩包路径 (默认: <项目目录>/<项目名>.zip)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
 
     /// 压缩方式
     #[arg(short, long, value_enum, default_value_t = CompressionArg::Deflated)]
@@ -390,31 +390,42 @@ fn main() {
     // 解析参数 (clap 自动处理帮助, 版本与参数错误)
     let cli = Cli::parse();
 
-    // 校验输出目录
-    let output_dir = match std::path::absolute(&cli.output_dir) {
-        Ok(dir) => dir,
-        Err(error) => {
-            eprintln!(
-                "{}",
-                style(format!(
-                    "error: 无法解析输出目录 `{}`: {error}",
-                    cli.output_dir.display()
-                ))
-                .for_stderr()
-                .red()
-            );
-            process::exit(2);
+    // 校验显式指定的输出路径 (默认输出位置为项目目录, 无需在此校验)
+    let output = match &cli.output {
+        Some(path) => {
+            let path = match std::path::absolute(path) {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        style(format!(
+                            "error: 无法解析输出路径 `{}`: {error}",
+                            path.display()
+                        ))
+                        .for_stderr()
+                        .red()
+                    );
+                    process::exit(2);
+                }
+            };
+            if let Some(parent) = path.parent()
+                && !parent.is_dir()
+            {
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "error: 输出位置所在目录不存在: {}",
+                        parent.display()
+                    ))
+                    .for_stderr()
+                    .red()
+                );
+                process::exit(2);
+            }
+            Some(path)
         }
+        None => None,
     };
-    if !output_dir.is_dir() {
-        eprintln!(
-            "{}",
-            style(format!("error: 输出目录不存在: {}", output_dir.display()))
-                .for_stderr()
-                .red()
-        );
-        process::exit(2);
-    }
 
     let tty = io::stderr().is_terminal();
     let started = Instant::now();
@@ -450,9 +461,12 @@ fn main() {
             continue;
         };
 
-        // 输出位置
+        // 输出位置 (默认: 项目目录/<项目名>.zip)
         let name = name.to_string_lossy();
-        let destination = output_dir.join(format!("{name}-snapshot.zip"));
+        let destination = match &output {
+            Some(path) => path.clone(),
+            None => project.join(format!("{name}.zip")),
+        };
         if !destinations.insert(destination.clone()) {
             eprintln!(
                 "{}",
