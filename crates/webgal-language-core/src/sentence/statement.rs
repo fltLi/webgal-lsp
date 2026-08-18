@@ -10,6 +10,7 @@ use webgal_sentence_macro::Sentence;
 
 use crate::{
     element::*,
+    resource::{FigureKind, ResourceKind},
     sentence::{Error, FromPrimary, PrimarySentence, SentenceExt},
     util::{write_joined, write_joined_with},
 };
@@ -37,11 +38,13 @@ pub struct SaySentence {
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Background)]
     pub background: Option<String>,
     // 效果
     pub transform: Option<Transform>,
+    #[sentence(resource = animation_resource_of)]
     pub enter: Option<String>,
+    #[sentence(resource = animation_resource_of)]
     pub exit: Option<String>,
     #[sentence(default)]
     pub ease: Ease,
@@ -74,7 +77,7 @@ pub struct ChangeBackgroundSentence {
     }
 )]
 pub struct ChangeFigureSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = figure_resource_of)]
     pub figure: Option<String>,
     #[sentence(variant = {
         "left": Left,
@@ -87,15 +90,15 @@ pub struct ChangeFigureSentence {
     pub side: FigureSide,
     pub id: Option<String>,
     // 图像立绘
-    #[sentence(rename = "mouthOpen")]
+    #[sentence(rename = "mouthOpen", resource = Figure)]
     pub mouth_open: Option<String>,
-    #[sentence(rename = "mouthHalfOpen")]
+    #[sentence(rename = "mouthHalfOpen", resource = Figure)]
     pub mouth_half_open: Option<String>,
-    #[sentence(rename = "mouthClose")]
+    #[sentence(rename = "mouthClose", resource = Figure)]
     pub mouth_close: Option<String>,
-    #[sentence(rename = "eyesOpen")]
+    #[sentence(rename = "eyesOpen", resource = Figure)]
     pub eyes_open: Option<String>,
-    #[sentence(rename = "eyesClose")]
+    #[sentence(rename = "eyesClose", resource = Figure)]
     pub eyes_close: Option<String>,
     // Live2D / Spine 立绘
     pub skin: Option<String>,
@@ -106,7 +109,9 @@ pub struct ChangeFigureSentence {
     pub focus: Option<Live2dFocus>,
     // 效果
     pub transform: Option<Transform>,
+    #[sentence(resource = animation_resource_of)]
     pub enter: Option<String>,
+    #[sentence(resource = animation_resource_of)]
     pub exit: Option<String>,
     #[sentence(default)]
     pub ease: Ease,
@@ -145,7 +150,7 @@ impl ChangeFigureSentence {
     }
 )]
 pub struct BgmSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Bgm)]
     pub bgm: Option<String>,
     // 效果
     pub volume: Option<u32>,
@@ -171,7 +176,7 @@ pub struct BgmSentence {
     }
 )]
 pub struct PlayVideoSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Video)]
     pub video: String,
     // 控制
     #[sentence(rename = "skipOff")]
@@ -192,7 +197,7 @@ pub struct PlayVideoSentence {
     }
 )]
 pub struct PlayEffectSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Vocal)]
     pub vocal: Option<String>,
     pub id: Option<String>,
     // 效果
@@ -209,7 +214,7 @@ pub struct PlayEffectSentence {
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setAnimation")]
 pub struct SetAnimationSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = non_null_animation_resource_of)]
     pub animation: String,
     pub target: Option<ObjectId>,
     // 效果
@@ -299,7 +304,9 @@ pub struct SetTempAnimationSentence {
 )]
 pub struct SetTransitionSentence {
     pub target: Option<ObjectId>,
+    #[sentence(resource = animation_resource_of)]
     pub enter: Option<String>,
+    #[sentence(resource = animation_resource_of)]
     pub exit: Option<String>,
     // 控制
     #[sentence(condition)]
@@ -374,7 +381,7 @@ pub struct IntroSentence {
         deserialize_with = parse_color_css_rgba,
     )]
     pub background_color: Option<Color>,
-    #[sentence(rename = "backgroundImage")]
+    #[sentence(rename = "backgroundImage", resource = Background)]
     pub background_image: Option<String>,
     #[sentence(default)]
     pub animation: IntroAnimation,
@@ -400,7 +407,7 @@ pub struct IntroSentence {
     }
 )]
 pub struct MiniAvatarSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Figure)]
     pub avatar: Option<String>,
     // 控制
     #[sentence(condition)]
@@ -459,7 +466,7 @@ pub struct FilmModeSentence {
     }
 )]
 pub struct CallSceneSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Scene)]
     pub scene: String,
     // 控制
     #[sentence(condition)]
@@ -478,7 +485,7 @@ pub struct CallSceneSentence {
     }
 )]
 pub struct ChangeSceneSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Scene)]
     pub scene: String,
     // 控制
     #[sentence(condition)]
@@ -498,7 +505,12 @@ pub struct ChangeSceneSentence {
     }
 )]
 pub struct ChooseSentence {
-    #[sentence(content, serialize_with = display_choices, deserialize_with = parse_choices)]
+    #[sentence(
+        content,
+        serialize_with = display_choices,
+        deserialize_with = parse_choices,
+        resource = choose_resource_of,
+    )]
     pub choices: Vec<Choice>,
     // 控制
     #[sentence(rename = "defaultChoice")]
@@ -559,7 +571,7 @@ pub struct JumpLabelSentence {
     }
 )]
 pub struct UnlockCgSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Background)]
     pub image: String,
     // 鉴赏
     pub name: Option<String>,
@@ -582,7 +594,7 @@ pub struct UnlockCgSentence {
     }
 )]
 pub struct UnlockBgmSentence {
-    #[sentence(content)]
+    #[sentence(content, resource = Bgm)]
     pub bgm: String,
     // 鉴赏
     pub name: Option<String>,
@@ -956,6 +968,14 @@ impl SentenceExt for SaySentence {
     fn condition(&self) -> Option<&str> {
         self.when.as_deref()
     }
+
+    fn resources(&self) -> Vec<(ResourceKind, Cow<'_, str>)> {
+        if let Some(vocal) = &self.vocal {
+            vec![(ResourceKind::Vocal, Cow::Borrowed(vocal))]
+        } else {
+            Vec::default()
+        }
+    }
 }
 
 impl FromPrimary for SaySentence {
@@ -1265,6 +1285,50 @@ fn display_style_applications(
     write_joined_with(f, appliactions.iter(), ",", |(previous, current), f| {
         write!(f, "{previous}->{current}")
     })
+}
+
+// -------- 关联参数 --------
+
+fn animation_resource_of<'a>(
+    animation: &'a Option<String>,
+    resources: &mut Vec<(ResourceKind, Cow<'a, str>)>,
+) {
+    if let Some(animation) = animation {
+        non_null_animation_resource_of(animation, resources);
+    }
+}
+
+fn non_null_animation_resource_of(
+    animation: &String,
+    resources: &mut Vec<(ResourceKind, Cow<'_, str>)>,
+) {
+    resources.push((
+        ResourceKind::Animation,
+        Cow::Owned(format!("{animation}.json")),
+    ));
+}
+
+fn figure_resource_of<'a>(
+    figure: &'a Option<String>,
+    resources: &mut Vec<(ResourceKind, Cow<'a, str>)>,
+) {
+    if let Some(figure) = figure {
+        let (_, path) = FigureKind::from_path(figure);
+        resources.push((ResourceKind::Figure, Cow::Borrowed(path)));
+    }
+}
+
+fn choose_resource_of<'a>(
+    choices: &'a [Choice],
+    resources: &mut Vec<(ResourceKind, Cow<'a, str>)>,
+) {
+    resources.extend(
+        choices
+            .iter()
+            .filter_map(|choice| choice.target.as_ref())
+            .filter(|target| target.ends_with(".txt"))
+            .map(|target| (ResourceKind::Scene, Cow::Borrowed(target.as_str()))),
+    );
 }
 
 #[cfg(test)]
@@ -1737,5 +1801,73 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Error::ArgumentType(_, _)))
         );
+    }
+
+    // -------- resources --------
+
+    #[test]
+    fn resources_bgm() {
+        let bgm = BgmSentence {
+            bgm: Some("theme.ogg".to_string()),
+            ..Default::default()
+        };
+        let resources = bgm.resources();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, ResourceKind::Bgm);
+        assert_eq!(resources[0].1, "theme.ogg");
+
+        let bgm_none = BgmSentence::default();
+        assert!(bgm_none.resources().is_empty());
+    }
+
+    #[test]
+    fn resources_change_figure() {
+        let figure = ChangeFigureSentence {
+            figure: Some("char.png".to_string()),
+            mouth_open: Some("mouth_open.png".to_string()),
+            eyes_close: Some("eyes_close.png".to_string()),
+            ..Default::default()
+        };
+        let resources = figure.resources();
+        assert_eq!(resources.len(), 3);
+
+        assert_eq!(resources[0].0, ResourceKind::Figure);
+        assert_eq!(resources[0].1, "char.png");
+
+        assert_eq!(resources[1].0, ResourceKind::Figure);
+        assert_eq!(resources[1].1, "mouth_open.png");
+
+        assert_eq!(resources[2].0, ResourceKind::Figure);
+        assert_eq!(resources[2].1, "eyes_close.png");
+
+        let figure_partial = ChangeFigureSentence {
+            figure: Some("model.json".to_string()),
+            skin: Some("default".to_string()),
+            ..Default::default()
+        };
+        let resources_partial = figure_partial.resources();
+        assert_eq!(resources_partial.len(), 1);
+        assert_eq!(resources_partial[0].0, ResourceKind::Figure);
+        assert_eq!(resources_partial[0].1, "model.json");
+    }
+
+    #[test]
+    fn resources_set_animation() {
+        let anim = SetAnimationSentence {
+            animation: "idle".to_string(),
+            ..Default::default()
+        };
+        let resources = anim.resources();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, ResourceKind::Animation);
+        assert_eq!(resources[0].1, "idle.json");
+
+        let anim2 = SetAnimationSentence {
+            animation: "walk".to_string(),
+            ..Default::default()
+        };
+        let resources2 = anim2.resources();
+        assert_eq!(resources2.len(), 1);
+        assert_eq!(resources2[0].1, "walk.json");
     }
 }

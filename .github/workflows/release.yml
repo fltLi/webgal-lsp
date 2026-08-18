@@ -95,6 +95,30 @@ jobs:
           fi
           echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
+      - name: Build snapshot binary
+        run: cargo build -p webgal-snapshot --target ${{ matrix.target }} --release
+
+      - name: Package snapshot binary
+        shell: bash
+        run: |
+          BIN_NAME="webgal-snapshot"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN_NAME="webgal-snapshot.exe"
+          fi
+          SRC="target/${{ matrix.target }}/release/$BIN_NAME"
+          DST="./$BIN_NAME"
+          cp "$SRC" "$DST"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ARCHIVE="snapshot-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+            7z a "$ARCHIVE" "$DST"
+          else
+            chmod +x "$DST"
+            ARCHIVE="snapshot-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
+            tar czf "$ARCHIVE" "$DST"
+          fi
+          echo "SNAPSHOT_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
       - name: Build editor installers
         if: runner.os != 'macOS'
         shell: bash
@@ -143,6 +167,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload snapshot binary to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.SNAPSHOT_ARCHIVE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload editor installer to Release (Windows & Linux only)
         if: github.event_name == 'release' && runner.os != 'macOS'
         uses: softprops/action-gh-release@v2
@@ -158,4 +190,5 @@ jobs:
           name: ${{ matrix.os-label }}-binaries
           path: |
             ${{ env.SERVER_ARCHIVE }}
+            ${{ env.SNAPSHOT_ARCHIVE }}
             ${{ runner.os != 'macOS' && env.EDITOR_INSTALLER || '' }}

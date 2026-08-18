@@ -1,12 +1,12 @@
 //! 语句模型
 
-use std::{fmt, result};
+use std::{borrow::Cow, fmt, result};
 
 use derive_more::{From, Into, TryInto};
 #[cfg(feature = "serde")]
 use serde::Serialize;
 
-use crate::element::Forward;
+use crate::{element::Forward, resource::ResourceKind};
 
 pub use error::*;
 pub use primary::*;
@@ -32,13 +32,13 @@ pub trait SentenceExt {
         None
     }
 
-    // /// 关联资源
-    // ///
-    // /// # Returns
-    // /// 资源类型和相对根的路径 (对于立绘可能包含类型后缀).
-    // fn resources(&self) -> Vec<(ResourceKind, &str)> {
-    //     Vec::default()
-    // }
+    /// 关联资源
+    ///
+    /// # Returns
+    /// 资源类型和相对根的路径 (对于立绘可能包含类型后缀).
+    fn resources<'a>(&'a self) -> Vec<(ResourceKind, Cow<'a, str>)> {
+        Vec::default()
+    }
 }
 
 /// 可从初级语句 [`PrimarySentence`] 构建的语句类型
@@ -141,6 +141,10 @@ impl SentenceExt for Sentence {
 
     fn condition(&self) -> Option<&str> {
         crate::dispatch_sentence!(self.condition())
+    }
+
+    fn resources<'a>(&'a self) -> Vec<(ResourceKind, Cow<'a, str>)> {
+        crate::dispatch_sentence!(self.resources())
     }
 }
 

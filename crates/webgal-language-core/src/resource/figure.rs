@@ -173,6 +173,19 @@ impl Live2dModel {
     pub fn to_info(&self) -> FigureInfo {
         FigureInfo::from_live2d(self)
     }
+
+    pub fn resources(&self) -> impl Iterator<Item = &str> {
+        [&self.model, &self.physics]
+            .into_iter()
+            .chain(self.textures.iter())
+            .chain(
+                self.motions
+                    .iter()
+                    .flat_map(|(_, motions)| motions.iter().map(|motion| &motion.file)),
+            )
+            .chain(self.expressions.iter().map(|expression| &expression.file))
+            .map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

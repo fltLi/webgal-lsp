@@ -1,5 +1,6 @@
 use std::vec;
 
+use either::Either;
 use syn::{
     Ident, LitStr, Path, Result, Token, braced, bracketed,
     parse::{Parse, ParseStream},
@@ -19,6 +20,7 @@ pub enum SentenceAttr {
     DeserializeWith(Path),
     Variant(Vec<(String, Ident)>),
     Require(Vec<String>),
+    Resource(Either<Path, Ident>),
 }
 
 pub struct SentenceAttrList(pub Vec<SentenceAttr>);
@@ -92,6 +94,19 @@ impl Parse for SentenceAttr {
                 let list = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?;
                 let requires = list.into_iter().map(|lit| lit.value()).collect();
                 Ok(Self::Require(requires))
+            }
+            "resource" => {
+                input.parse::<Token![=]>()?;
+                if input.cursor().ident().is_some_and(|(ident, _)| {
+                    matches!(
+                        ident.to_string().as_str(),
+                        "Scene" | "Animation" | "Background" | "Figure" | "Bgm" | "Vocal" | "Video"
+                    )
+                }) {
+                    Ok(Self::Resource(Either::Right(input.parse()?)))
+                } else {
+                    Ok(Self::Resource(Either::Left(input.parse()?)))
+                }
             }
             _ => Err(lookahead.error()),
         }

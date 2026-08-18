@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 webgal-language-server.workspace = true
+webgal-snapshot.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

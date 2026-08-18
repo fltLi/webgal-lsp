@@ -3,7 +3,9 @@
 // 项目编辑页: 顶栏 + 左侧(预览 + 场景/资源) + 右侧(选项卡/编辑器/状态栏)。
 
 import { Button } from '@fluentui/react-components';
+import { save } from '@tauri-apps/plugin-dialog';
 import {
+  ArchiveRegular,
   ArrowLeftRegular,
   PanelLeftContractRegular,
   PanelLeftExpandRegular,
@@ -21,9 +23,11 @@ import { EditorTabs } from './EditorTabs';
 import { PreviewPanel } from './PreviewPanel';
 import { ResourceBrowser } from './ResourceBrowser';
 import { SceneBrowser } from './SceneBrowser';
+import { SnapshotDialog } from './SnapshotDialog';
 import { StatusBar } from './StatusBar';
 
 export function EditorPage() {
+  const projectPath = useAppStore((s) => s.projectPath);
   const projectName = useAppStore((s) => s.projectName);
   const documents = useAppStore((s) => s.documents);
   const activePath = useAppStore((s) => s.activePath);
@@ -33,10 +37,29 @@ export function EditorPage() {
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources'>('scenes');
+  const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
 
   const activeDoc = documents.find((d) => d.path === activePath) ?? null;
 
   const toggleTheme = () => updateSettings({ theme: theme === 'dark' ? 'light' : 'dark' });
+
+  /** 生成快照: 先处理未保存更改, 再选择输出位置。 */
+  const startSnapshot = () => {
+    if (!projectPath) return;
+    confirmClose(() => void pickSnapshotLocation(), undefined, '生成快照前是否保存未保存的更改？');
+  };
+
+  /** 选择输出压缩包位置 (默认: 项目目录/<项目名>.zip)。 */
+  const pickSnapshotLocation = async () => {
+    if (!projectPath || !projectName) return;
+    const defaultPath = `${projectPath.replace(/[\\/]+$/, '')}/${projectName}.zip`;
+    const destination = await save({
+      defaultPath,
+      filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
+    });
+    if (typeof destination !== 'string') return;
+    setSnapshot({ source: projectPath, destination });
+  };
 
   return (
     <div className="editor-page">
@@ -51,6 +74,7 @@ export function EditorPage() {
 
         <span className="top-bar-spacer" />
 
+        <Button appearance="subtle" icon={<ArchiveRegular />} title="生成快照" onClick={startSnapshot} />
         <Button
           appearance="subtle"
           icon={theme === 'dark' ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
@@ -97,6 +121,10 @@ export function EditorPage() {
           <StatusBar />
         </div>
       </div>
+
+      {snapshot && (
+        <SnapshotDialog source={snapshot.source} destination={snapshot.destination} onClose={() => setSnapshot(null)} />
+      )}
     </div>
   );
 }

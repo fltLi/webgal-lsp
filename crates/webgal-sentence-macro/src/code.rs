@@ -5,21 +5,24 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{GenericArgument, Ident, Path, PathArguments, Type, TypePath};
 
-use crate::info::{ArgumentInfo, ArgumentKind, FieldInfo, SentenceInfo};
+use crate::info::{ArgumentInfo, ArgumentKind, ContentInfo, SentenceInfo};
 
-// -------- get_command --------
+// -------- sentence --------
 
 pub fn impl_sentence_ext(info: &SentenceInfo) -> TokenStream {
     let SentenceInfo {
         ident,
         command,
         forward,
+        content,
         condition,
+        arguments,
         ..
     } = info;
 
     let forward = gen_forward(forward);
     let condition = condition.as_ref().map(gen_condition).unwrap_or_default();
+    let resources = gen_resources(content, arguments);
 
     quote! {
         #[automatically_derived]
@@ -33,6 +36,12 @@ pub fn impl_sentence_ext(info: &SentenceInfo) -> TokenStream {
             }
 
             #condition
+
+            fn resources<'a>(
+                &'a self,
+            ) -> Vec<(crate::resource::ResourceKind, ::std::borrow::Cow<'a, str>)> {
+                #resources
+            }
         }
     }
 }
@@ -65,7 +74,74 @@ fn gen_condition(condition: &Ident) -> TokenStream {
     }
 }
 
-// -------- FromPrimary --------
+fn gen_resources(content: &Option<ContentInfo>, arguments: &[ArgumentInfo]) -> TokenStream {
+    let content_resources = content
+        .as_ref()
+        .and_then(
+            |ContentInfo {
+                 ident,
+                 ty,
+                 resource,
+                 ..
+             }| Some(gen_field_resources(ident, ty, resource.as_ref()?)),
+        )
+        .unwrap_or_default();
+
+    let arguments_resources = arguments
+        .iter()
+        .filter_map(
+            |ArgumentInfo {
+                 ident, ty, kind, ..
+             }| {
+                if let ArgumentKind::Named { resource, .. } = kind {
+                    Some((ident, ty, resource.as_ref()?))
+                } else {
+                    None
+                }
+            },
+        )
+        .map(|(ident, ty, resource)| gen_field_resources(ident, ty, resource));
+
+    quote! {
+        let mut resources: Vec<(_, ::std::borrow::Cow<'_, str>)> = Vec::new();
+        #content_resources
+        #(#arguments_resources)*
+        resources
+    }
+}
+
+fn gen_field_resources(ident: &Ident, ty: &Type, resource: &Either<Path, Ident>) -> TokenStream {
+    match resource {
+        // 自定义资源类型
+        Either::Left(f) => quote! {
+            #f(&self.#ident, &mut resources);
+        },
+
+        // 指定资源类型 + String 类型
+        Either::Right(kind) if is_string_type(ty) => quote! {
+            resources.push((
+                crate::resource::ResourceKind::#kind,
+                ::std::borrow::Cow::Borrowed(&self.#ident),
+            ));
+        },
+
+        // 指定资源类型 + Option<String> 类型
+        Either::Right(kind) if is_option_string_type(ty) => quote! {
+            if let Some(resource) = &self.#ident {
+                resources.push((
+                    crate::resource::ResourceKind::#kind,
+                    ::std::borrow::Cow::Borrowed(resource),
+                ));
+            }
+        },
+
+        Either::Right(_) => panic!(
+            "参数关联资源自动生成不支持非 String 或 Option<String> 的参数, 请考虑改为手动收集"
+        ),
+    }
+}
+
+// -------- parse --------
 
 pub fn impl_from_primary(info: &SentenceInfo) -> TokenStream {
     let SentenceInfo {
@@ -136,17 +212,17 @@ fn gen_validate(validate: &Path) -> TokenStream {
     }
 }
 
-fn gen_content_parse(content: &Option<FieldInfo>) -> TokenStream {
+fn gen_content_parse(content: &Option<ContentInfo>) -> TokenStream {
     match content {
         // 有参数 + Option<String> 类型
-        Some(FieldInfo { ty, .. }) if is_option_string_type(ty) => quote! {
+        Some(ContentInfo { ty, .. }) if is_option_string_type(ty) => quote! {
             let content = content
                 .filter(|&content| !matches!(content, "" | "none"))
                 .map(str::to_string);
         },
 
         // 有参数 + 自定义反序列化
-        Some(FieldInfo {
+        Some(ContentInfo {
             deserialize_with: Some(deserialize_with),
             ..
         }) => quote! {
@@ -157,12 +233,12 @@ fn gen_content_parse(content: &Option<FieldInfo>) -> TokenStream {
         },
 
         // 有参数 + String 类型
-        Some(FieldInfo { ty, .. }) if is_string_type(ty) => quote! {
+        Some(ContentInfo { ty, .. }) if is_string_type(ty) => quote! {
             let content = content.unwrap_or("").to_string();
         },
 
         // 有参数
-        Some(FieldInfo { ty, .. }) => quote! {
+        Some(ContentInfo { ty, .. }) => quote! {
             let content = content
                 .unwrap_or("")
                 .parse::<#ty>()
@@ -181,9 +257,9 @@ fn gen_content_parse(content: &Option<FieldInfo>) -> TokenStream {
     }
 }
 
-fn gen_content_collect(content: &Option<FieldInfo>) -> TokenStream {
+fn gen_content_collect(content: &Option<ContentInfo>) -> TokenStream {
     match content {
-        Some(FieldInfo { ident, .. }) => quote! {
+        Some(ContentInfo { ident, .. }) => quote! {
             #ident: content,
         },
         None => Default::default(),
@@ -379,7 +455,7 @@ fn gen_obsolete_validate(argument: &str, reason: &str) -> TokenStream {
     }
 }
 
-// -------- Display --------
+// -------- display --------
 
 pub fn impl_display(info: &SentenceInfo) -> TokenStream {
     let SentenceInfo {
@@ -413,8 +489,8 @@ pub fn impl_display(info: &SentenceInfo) -> TokenStream {
     }
 }
 
-fn gen_content_display(content: &FieldInfo) -> TokenStream {
-    let FieldInfo {
+fn gen_content_display(content: &ContentInfo) -> TokenStream {
+    let ContentInfo {
         ident,
         ty,
         serialize_with,
