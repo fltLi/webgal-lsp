@@ -888,6 +888,76 @@ body {
   margin-top: 4px;
 }
 
+/* -------- 快照打包 -------- */
+.snapshot-surface {
+  min-width: 460px;
+}
+
+.snapshot-destination {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--app-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.snapshot-line {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.snapshot-bar {
+  height: 8px;
+  margin: 8px 0 4px;
+  border-radius: 4px;
+  background: var(--app-hover);
+  overflow: hidden;
+}
+
+.snapshot-bar-fill {
+  height: 100%;
+  background: var(--app-accent);
+  transition: width 0.1s ease;
+}
+
+.snapshot-errors {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--app-hover);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #d13438;
+}
+
+[data-theme='dark'] .snapshot-errors {
+  color: #f1707b;
+}
+
+.snapshot-error-text {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #d13438;
+}
+
+[data-theme='dark'] .snapshot-error-text {
+  color: #f1707b;
+}
+
+.snapshot-success {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #107c10;
+}
+
+[data-theme='dark'] .snapshot-success {
+  color: #6ccb5f;
+}
+
 /* -------- 微交互与滚动条 -------- */
 
 /* 统一悬停过渡, 让交互更顺滑 */

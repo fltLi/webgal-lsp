@@ -9,6 +9,8 @@ interface PendingClose {
   action: () => void;
   /** 待关闭的文档路径; `null` 表示关闭全部 (退出项目/程序)。 */
   path: string | null;
+  /** 确认框提示文本; 缺省时由对话框提供默认文案。 */
+  message?: string;
 }
 
 let pendingClose: PendingClose | null = null;
@@ -16,9 +18,10 @@ let pendingClose: PendingClose | null = null;
 /** 存在未保存更改时弹窗确认; 否则直接执行 action。
  *
  * 传入 `path` 时只检查该文档 (关闭单个选项卡);
- * 不传时检查全部文档 (关闭项目/退出程序)。
+ * 不传时检查全部文档 (关闭项目/程序)。
+ * `message` 可自定义确认框提示文本 (如打包前的保存确认)。
  */
-export function confirmClose(action: () => void, path?: string): void {
+export function confirmClose(action: () => void, path?: string, message?: string): void {
   const store = useAppStore.getState();
   const dirty =
     path !== undefined ? store.documents.some((d) => d.path === path && d.dirty) : store.documents.some((d) => d.dirty);
@@ -26,8 +29,13 @@ export function confirmClose(action: () => void, path?: string): void {
     action();
     return;
   }
-  pendingClose = { action, path: path ?? null };
+  pendingClose = { action, path: path ?? null, message };
   store.setUnsavedDialog(true);
+}
+
+/** 获取当前待确认操作的提示文本 (无待确认操作时为 undefined)。 */
+export function pendingUnsavedMessage(): string | undefined {
+  return pendingClose?.message;
 }
 
 /** 保存 `path` 指定的文档; `path === null` 时保存全部脏文档。 */

@@ -5803,6 +5803,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tower-lsp",
  "webgal-language-server",
+ "webgal-snapshot",
  "ws_stream_tungstenite",
 ]
 

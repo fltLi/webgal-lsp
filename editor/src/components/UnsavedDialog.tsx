@@ -5,17 +5,18 @@
 import { Button } from '@fluentui/react-components';
 
 import { useAppStore } from '../state/store';
-import { resolveUnsaved } from '../unsaved';
+import { pendingUnsavedMessage, resolveUnsaved } from '../unsaved';
 
 export function UnsavedDialog() {
   const open = useAppStore((s) => s.unsavedDialog);
   if (!open) return null;
+  const message = pendingUnsavedMessage() ?? '场景文件有未保存的修改，关闭前是否保存？';
 
   return (
     <div className="modal-backdrop" onClick={() => resolveUnsaved('cancel')}>
       <div className="modal-surface unsaved-surface" onClick={(e) => e.stopPropagation()}>
         <h2 className="modal-title">有未保存的更改</h2>
-        <p className="unsaved-hint">场景文件有未保存的修改，关闭前是否保存？</p>
+        <p className="unsaved-hint">{message}</p>
         <div className="modal-actions">
           <Button appearance="primary" onClick={() => resolveUnsaved('save')}>
             保存
