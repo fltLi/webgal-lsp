@@ -1,0 +1,25 @@
+[package]
+name = "webgal-snapshot"
+version = "0.1.0"
+edition.workspace = true
+readme.workspace = true
+description = "WebGAL 项目快照打包"
+
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+webgal-language-core.workspace = true
+
+thiserror.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+walkdir = "2.5"
+zip = "8.6"
+indicatif = "0.18"
+console = "0.16"
+
+[dev-dependencies]
+tempfile = "3.27"
