@@ -2,6 +2,7 @@
 
 // 项目打开/关闭控制器。
 
+import { copyDirectory } from './commands/server';
 import { fs } from './lib/fs';
 import { pushRecentProject } from './lib/settings';
 import { toUri } from './lib/uri';
@@ -70,4 +71,35 @@ export function closeProject(): void {
   disposeAllModels();
   store.setProject(null);
   previewClient.resetSite();
+}
+
+// -------- 模板切换 --------
+
+/** 将模板目录复制到项目 game/template (替换原有内容)。 */
+export async function applyTemplateToProject(projectPath: string, templatePath: string): Promise<void> {
+  const target = `${projectPath.replace(/[\\/]+$/, '')}\\game\\template`;
+  await fs.remove(target, true).catch(() => {});
+  await copyDirectory(templatePath, target);
+}
+
+/** 切换当前项目的模板, 并刷新预览 (整体重挂 iframe, 兼容旧版引擎)。 */
+export async function switchTemplate(templateId: string | null, templatePath: string | null): Promise<void> {
+  const store = useAppStore.getState();
+  const projectPath = store.projectPath;
+  if (!projectPath) return;
+
+  if (templatePath) {
+    await applyTemplateToProject(projectPath, templatePath);
+  } else {
+    await fs.remove(`${projectPath}\\game\\template`, true).catch(() => {});
+  }
+
+  store.setProjectBinding(projectPath, { templateId: templateId ?? undefined });
+
+  // 通知引擎重拉模板 (新版 V1 引擎支持时无需重启即可生效)
+  await previewClient.reloadTemplates();
+
+  // 无论引擎版本, 均强制整体刷新预览 iframe, 保证模板立即生效
+  // (旧版引擎对 reload-templates 支持不一致 / 经 service worker 缓存, 必须重挂)
+  store.requestPreviewReload();
 }

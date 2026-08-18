@@ -14,7 +14,8 @@ class PreviewClient {
 
   private buildServeUrl(siteId: string, server: string): string {
     const base = server.endsWith('/') ? server : server + '/';
-    return new URL(`game/${siteId}/`, base).href;
+    // 使用 /game/{siteId}/s/ 作为缓存破坏前缀, 绕过 WebView 旧 HTTP 缓存。
+    return new URL(`game/${siteId}/s/`, base).href;
   }
 
   async ensureServer(): Promise<string | null> {
@@ -68,6 +69,17 @@ class PreviewClient {
       await sendPreviewCommand(JSON.stringify(request));
     } catch (e) {
       console.error('sync-scene 发送失败', e);
+    }
+  }
+
+  /** 通知引擎重新拉取模板文件 (切换模板 / 模板文件变更后调用)。 */
+  async reloadTemplates(): Promise<void> {
+    if (!this.siteUrl) return;
+    const request = createRequestEnvelope('preview.command.reload-templates', createId(), {});
+    try {
+      await sendPreviewCommand(JSON.stringify(request));
+    } catch (e) {
+      console.error('reload-templates 发送失败', e);
     }
   }
 

@@ -9,16 +9,16 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button, Input, Switch } from '@fluentui/react-components';
 import { FolderOpenRegular } from '@fluentui/react-icons';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { useAppStore } from '../state/store';
+import { useAppStore, type SettingsCategory } from '../state/store';
 import type { Settings } from '../lib/settings';
-
-type SettingsCategory = 'general' | 'editor';
+import { TemplateManager } from './TemplateManager';
 
 const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'general', label: '通用' },
-  { id: 'editor', label: '编辑器' },
+  { id: 'editor', label: '编辑' },
+  { id: 'template', label: '模板' },
 ];
 
 export function SettingsDialog() {
@@ -26,7 +26,13 @@ export function SettingsDialog() {
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const storeCategory = useAppStore((s) => s.settingsCategory);
   const [category, setCategory] = useState<SettingsCategory>('general');
+
+  // 打开设置时定位到 store 指定的分类 (如"项目"页的"管理模板"入口)
+  useEffect(() => {
+    if (settingsOpen) setCategory(storeCategory);
+  }, [settingsOpen, storeCategory]);
 
   if (!settingsOpen) return null;
 
@@ -128,6 +134,11 @@ export function SettingsDialog() {
                     label="迷你地图"
                   />
                 </div>
+              </div>
+            )}
+            {category === 'template' && (
+              <div className="settings-group">
+                <TemplateManager />
               </div>
             )}
           </div>

@@ -29,6 +29,7 @@ pub fn run() {
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
+            service::fs_ops::copy_directory,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

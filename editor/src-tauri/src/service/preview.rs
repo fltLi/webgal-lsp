@@ -366,9 +366,9 @@ async fn handle_static_request(
         None => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    let Some(physical_path) =
-        resolve_file(&site.project, site.engine.as_deref(), &logical_path).await
-    else {
+    let resolved = resolve_file(&site.project, site.engine.as_deref(), &logical_path).await;
+
+    let Some(physical_path) = resolved else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -377,11 +377,23 @@ async fn handle_static_request(
         .body(axum::body::Body::empty())
         .expect("空请求构造不会失败");
 
-    ServeFile::new(&physical_path)
+    let response = ServeFile::new(&physical_path)
         .oneshot(request)
         .await
         .map(IntoResponse::into_response)
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+
+    // 禁用缓存: 引擎运行时通过 HTTP fetch 读取场景/模板等文件,
+    // 若被 WebView 启发式缓存, 编辑后 sync-scene / reload-templates 将拿到旧内容。
+    apply_no_cache(response)
+}
+
+fn apply_no_cache(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+    response
 }
 
 fn normalize_project_path(path: &str) -> Result<(String, PathBuf), String> {
@@ -430,6 +442,33 @@ pub async fn start_preview_server(
         .route("/game/{hash}", get(|uri: axum::http::Uri| async move {
             Redirect::permanent(&format!("{}/", uri.path()))
         }))
+        // 预览入口使用 /game/{hash}/s/ 作为缓存破坏前缀:
+        // 引擎的 `./game/...` 相对请求会落到 /game/{hash}/s/game/... 下,
+        // 从而绕过旧 HTTP 缓存 (no-store 只能防新缓存, 无法清除旧缓存)。
+        .route(
+            "/game/{hash}/s",
+            get(|uri: axum::http::Uri| async move {
+                Redirect::permanent(&format!("{}/", uri.path()))
+            }),
+        )
+        .route(
+            "/game/{hash}/s/",
+            get(
+                |state: AxumState<Arc<PreviewAppState>>, hash: AxumPath<String>| async move {
+                    handle_static_request(state, hash, None).await
+                },
+            ),
+        )
+        .route(
+            "/game/{hash}/s/{*path}",
+            get(
+                |state: AxumState<Arc<PreviewAppState>>,
+                 path: AxumPath<(String, String)>| async move {
+                    let (hash, path) = path.0;
+                    handle_static_request(state, AxumPath(hash), Some(path)).await
+                },
+            ),
+        )
         .route(
             "/game/{hash}/",
             get(

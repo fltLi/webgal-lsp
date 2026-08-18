@@ -4,14 +4,23 @@
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
+/** 已添加的 WebGAL 模板 (引用式: 记录磁盘路径, 不复制)。 */
+export interface TemplateEntry {
+  id: string;
+  name: string;
+  path: string;
+}
+
 export interface Settings {
   theme: ThemePreference;
   autoSave: boolean;
   /** 预览工具栏"预览"开关 (光标移动自动同步预览; 不在设置面板中展示) */
   autoSyncPreview: boolean;
-  /** 本地 WebGAL 引擎目录 (可空: 由项目自包含 index.html 兜底) */
+  /** 全局默认 WebGAL 引擎目录 (项目自带 index.html 时无需设置) */
   enginePath: string | null;
   recentProjects: string[];
+  /** 已添加的模板列表 */
+  templates: TemplateEntry[];
   // Monaco 编辑器
   editorFontFamily: string;
   editorFontSize: number;
@@ -27,6 +36,7 @@ export const defaultSettings: Settings = {
   autoSyncPreview: true,
   enginePath: null,
   recentProjects: [],
+  templates: [],
   editorFontFamily: 'FiraCode, SourceHanSans, Consolas, "Courier New", monospace',
   editorFontSize: 14,
   editorWordWrap: true,

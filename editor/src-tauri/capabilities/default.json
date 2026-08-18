@@ -20,6 +20,7 @@
     "fs:allow-rename",
     "fs:allow-copy-file",
     "fs:allow-write-file",
-    "fs:allow-watch"
+    "fs:allow-watch",
+    "fs:allow-unwatch"
   ]
 }

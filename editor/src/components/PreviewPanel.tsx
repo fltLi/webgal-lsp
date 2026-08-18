@@ -21,6 +21,7 @@ export function PreviewPanel() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const previewReady = useAppStore((s) => s.previewReady);
+  const previewReloadToken = useAppStore((s) => s.previewReloadToken);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const launchIdRef = useRef(createId());
@@ -77,6 +78,11 @@ export function PreviewPanel() {
     await previewClient.bindEmbeddedLaunchId(id);
     setFrame({ url: frame.url, key: id });
   };
+
+  // 模板切换等场景通过 store 令牌触发整体重挂 (兼容旧版引擎)
+  useEffect(() => {
+    if (previewReloadToken > 0) void reload();
+  }, [previewReloadToken]);
 
   return (
     <div className="preview-panel">

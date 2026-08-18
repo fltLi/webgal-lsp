@@ -12,6 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import { fs } from '../lib/fs';
 import { fromUri, toUri } from '../lib/uri';
+import { previewClient } from '../preview/client';
 import { useAppStore } from '../state/store';
 import { startWatching, stopWatching } from './watch';
 
@@ -423,6 +424,11 @@ class LspClient {
         this.sendNotification('workspace/didChangeWatchedFiles', {
           changes: changes.map((c) => ({ uri: toUri(c.path), type: c.type })),
         });
+        // 模板文件变化 -> 通知预览重新拉取模板 (否则已运行引擎会缓存旧模板)
+        const templateChanged = changes.some((c) =>
+          c.path.replace(/\\/g, '/').toLowerCase().includes('/game/template/')
+        );
+        if (templateChanged) void previewClient.reloadTemplates();
       });
     } else {
       await stopWatching();

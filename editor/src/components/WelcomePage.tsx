@@ -15,6 +15,7 @@ export function WelcomePage() {
   const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const setSettingsCategory = useAppStore((s) => s.setSettingsCategory);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +62,14 @@ export function WelcomePage() {
           >
             主题
           </Button>
-          <Button size="large" icon={<SettingsRegular />} onClick={() => setSettingsOpen(true)}>
+          <Button
+            size="large"
+            icon={<SettingsRegular />}
+            onClick={() => {
+              setSettingsCategory('general');
+              setSettingsOpen(true);
+            }}
+          >
             设置
           </Button>
         </div>

@@ -21,6 +21,7 @@ import { confirmClose } from '../unsaved';
 import { CodeEditor } from './CodeEditor';
 import { EditorTabs } from './EditorTabs';
 import { PreviewPanel } from './PreviewPanel';
+import { ProjectTab } from './ProjectTab';
 import { ResourceBrowser } from './ResourceBrowser';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
@@ -34,9 +35,10 @@ export function EditorPage() {
   const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const setSettingsCategory = useAppStore((s) => s.setSettingsCategory);
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources'>('scenes');
+  const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project'>('scenes');
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
@@ -105,7 +107,15 @@ export function EditorPage() {
           title="切换主题"
           onClick={toggleTheme}
         />
-        <Button appearance="subtle" icon={<SettingsRegular />} title="设置" onClick={() => setSettingsOpen(true)} />
+        <Button
+          appearance="subtle"
+          icon={<SettingsRegular />}
+          title="设置"
+          onClick={() => {
+            setSettingsCategory('general');
+            setSettingsOpen(true);
+          }}
+        />
       </div>
 
       <div className="editor-main">
@@ -116,6 +126,9 @@ export function EditorPage() {
                 <PreviewPanel />
               </div>
               <div className="sidebar-tabs">
+                <button className={sidebarTab === 'project' ? 'active' : ''} onClick={() => setSidebarTab('project')}>
+                  项目
+                </button>
                 <button className={sidebarTab === 'scenes' ? 'active' : ''} onClick={() => setSidebarTab('scenes')}>
                   场景
                 </button>
@@ -129,7 +142,15 @@ export function EditorPage() {
                   <PanelLeftContractRegular />
                 </button>
               </div>
-              <div className="sidebar-content">{sidebarTab === 'scenes' ? <SceneBrowser /> : <ResourceBrowser />}</div>
+              <div className="sidebar-content">
+                {sidebarTab === 'scenes' ? (
+                  <SceneBrowser />
+                ) : sidebarTab === 'resources' ? (
+                  <ResourceBrowser />
+                ) : (
+                  <ProjectTab />
+                )}
+              </div>
             </div>
             <div
               className={`sidebar-resizer${resizing ? ' active' : ''}`}

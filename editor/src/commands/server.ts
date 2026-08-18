@@ -32,3 +32,8 @@ export function setEmbeddedPreviewLaunchId(embeddedLaunchId?: string): Promise<v
 export function sendPreviewCommand(request: string): Promise<void> {
   return invoke<void>('send_preview_command', { request });
 }
+
+/** 递归复制目录 (用于项目骨架生成与模板应用)。 */
+export function copyDirectory(source: string, destination: string): Promise<void> {
+  return invoke<void>('copy_directory', { source, destination });
+}

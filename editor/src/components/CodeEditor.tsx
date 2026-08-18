@@ -81,8 +81,12 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     // 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)
     const scheduleSync = () => {
       if (syncTimer) clearTimeout(syncTimer);
-      syncTimer = setTimeout(() => {
+      syncTimer = setTimeout(async () => {
         if (!useAppStore.getState().settings.autoSyncPreview) return;
+        // 先落盘再同步: 引擎按场景名重新 fetch, 必须保证磁盘内容是最新
+        // (否则 sync 早于自动保存, 引擎会取到上一版内容)
+        const docState = useAppStore.getState().documents.find((d) => d.path === path);
+        if (docState?.dirty) await saveDoc();
         const position = editor.getPosition();
         if (position) void previewClient.syncScene(path, position.lineNumber);
       }, 150);

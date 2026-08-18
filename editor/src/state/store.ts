@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 
+import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
 
 export interface OpenDocument {
@@ -28,6 +29,8 @@ export interface LspDiagnostic {
 
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
+export type SettingsCategory = 'general' | 'editor' | 'template';
+
 export interface StageSnapshot {
   sceneName: string;
   sentenceId: number;
@@ -39,6 +42,8 @@ interface AppStore {
 
   projectPath: string | null;
   projectName: string | null;
+  /** 项目绑定 (key: 规范化项目路径 -> 引擎/模板 id) */
+  projectBindings: Record<string, ProjectBinding>;
 
   documents: OpenDocument[];
   activePath: string | null;
@@ -57,10 +62,16 @@ interface AppStore {
 
   settingsOpen: boolean;
   unsavedDialog: boolean;
+  /** 打开设置时定位到的分类 */
+  settingsCategory: SettingsCategory;
+  /** 预览刷新令牌 (自增触发 iframe 整体重挂) */
+  previewReloadToken: number;
 
   setTheme: (t: Exclude<ThemePreference, 'system'>) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   setProject: (path: string | null) => void;
+  /** 设置项目绑定 (模板) 并持久化 */
+  setProjectBinding: (projectPath: string, binding: ProjectBinding) => void;
   openDocument: (doc: OpenDocument) => void;
   closeDocument: (path: string) => void;
   setActiveDocument: (path: string) => void;
@@ -74,7 +85,9 @@ interface AppStore {
   ) => void;
   setCursor: (cursor: { line: number; column: number } | null) => void;
   setSettingsOpen: (open: boolean) => void;
+  setSettingsCategory: (category: SettingsCategory) => void;
   setUnsavedDialog: (open: boolean) => void;
+  requestPreviewReload: () => void;
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -83,6 +96,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   projectPath: null,
   projectName: null,
+  projectBindings: loadBindings(),
 
   documents: [],
   activePath: null,
@@ -101,6 +115,8 @@ export const useAppStore = create<AppStore>((set) => ({
 
   settingsOpen: false,
   unsavedDialog: false,
+  settingsCategory: 'general',
+  previewReloadToken: 0,
 
   setTheme: (t) => set({ theme: t }),
   updateSettings: (patch) => {
@@ -129,6 +145,12 @@ export const useAppStore = create<AppStore>((set) => ({
       });
     }
   },
+  setProjectBinding: (projectPath, binding) =>
+    set((s) => {
+      const projectBindings = { ...s.projectBindings, [bindingKey(projectPath)]: binding };
+      persistBindings(projectBindings);
+      return { projectBindings };
+    }),
   openDocument: (doc) =>
     set((s) => {
       const exists = s.documents.some((d) => d.path === doc.path);
@@ -166,5 +188,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   setCursor: (cursor) => set({ cursor }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsCategory: (category) => set({ settingsCategory: category }),
   setUnsavedDialog: (open) => set({ unsavedDialog: open }),
+  requestPreviewReload: () => set((s) => ({ previewReloadToken: s.previewReloadToken + 1 })),
 }));
