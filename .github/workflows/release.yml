@@ -52,13 +52,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install frontend dependencies
-        run: npm install
-
-      - name: Ensure tauri CLI platform binary
-        if: runner.os != 'macOS'
-        run: npm install @tauri-apps/cli@2
+      - name: Install editor dependencies
         working-directory: editor
+        run: npm install --workspaces=false
 
       - name: Set version
         shell: bash
@@ -71,6 +67,7 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
+      # ---------------------- server ----------------------
       - name: Build server binary
         run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
 
@@ -95,6 +92,7 @@ jobs:
           fi
           echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
+      # ---------------------- snapshot ----------------------
       - name: Build snapshot binary
         run: cargo build -p webgal-snapshot --target ${{ matrix.target }} --release
 
@@ -119,46 +117,63 @@ jobs:
           fi
           echo "SNAPSHOT_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
-      - name: Build editor installers
-        if: runner.os != 'macOS'
+      # ---------------------- editor ----------------------
+      - name: Build editor
         shell: bash
+        working-directory: editor
         run: |
-          cd editor
-          npx tauri build --ci \
+          npm run tauri build -- --ci \
             --target ${{ matrix.target }} \
             --bundles ${{ matrix.editor-bundles }} \
             --config "{\"version\":\"${{ env.VERSION }}\"}"
 
+      - name: Package editor installer
+        shell: bash
+        run: |
           BUNDLE_ROOT="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/bundle"
           echo "Bundle root: $BUNDLE_ROOT"
           ls -R "$BUNDLE_ROOT" || true
 
           case "${{ matrix.editor-bundles }}" in
             nsis)
-              INSTALLER=$(find "$BUNDLE_ROOT/nsis" -maxdepth 1 -name '*.exe' | head -n1)
-              EXT="exe"
+              SUBDIR="nsis"
+              PATTERN='*.exe'
               ;;
             dmg)
-              INSTALLER=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -name '*.dmg' | head -n1)
-              EXT="dmg"
+              SUBDIR="dmg"
+              PATTERN='*.dmg'
               ;;
             appimage)
-              INSTALLER=$(find "$BUNDLE_ROOT/appimage" -maxdepth 1 -name '*.AppImage' | head -n1)
-              EXT="AppImage"
+              SUBDIR="appimage"
+              PATTERN='*.AppImage'
               ;;
           esac
 
+          INSTALLER=$(find "$BUNDLE_ROOT/$SUBDIR" -maxdepth 1 -type f -name "$PATTERN" | head -n1)
+
           if [ -z "$INSTALLER" ]; then
             echo "未找到编辑器安装包，bundle 目录内容:"
-            find "$BUNDLE_ROOT" -maxdepth 2 -type f 2>/dev/null || true
+            find "$BUNDLE_ROOT" -maxdepth 3 -type f 2>/dev/null || true
             exit 1
           fi
 
-          DST="editor-${{ env.VERSION }}-${{ matrix.os-label }}.$EXT"
-          cp "$INSTALLER" "$GITHUB_WORKSPACE/$DST"
-          echo "EDITOR_INSTALLER=$DST" >> $GITHUB_ENV
-          ls -l "$GITHUB_WORKSPACE/$DST" || true
+          echo "Found installer: $INSTALLER"
 
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
+            tar czf "$ARCHIVE" -C "$(dirname "$INSTALLER")" "$(basename "$INSTALLER")"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+            7z a "$ARCHIVE" "$INSTALLER" >/dev/null
+          else
+            ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+            (cd "$(dirname "$INSTALLER")" && zip -r "$GITHUB_WORKSPACE/$ARCHIVE" "$(basename "$INSTALLER")")
+          fi
+
+          echo "EDITOR_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          ls -lh "$ARCHIVE"
+
+      # ---------------------- uploads ----------------------
       - name: Upload server binary to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
@@ -175,11 +190,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload editor installer to Release (Windows & Linux only)
-        if: github.event_name == 'release' && runner.os != 'macOS'
+      - name: Upload editor archive to Release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.EDITOR_INSTALLER }}
+          files: ${{ env.EDITOR_ARCHIVE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -191,4 +206,4 @@ jobs:
           path: |
             ${{ env.SERVER_ARCHIVE }}
             ${{ env.SNAPSHOT_ARCHIVE }}
-            ${{ runner.os != 'macOS' && env.EDITOR_INSTALLER || '' }}
+            ${{ env.EDITOR_ARCHIVE }}
