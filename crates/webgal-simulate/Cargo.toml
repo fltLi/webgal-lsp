@@ -1,6 +1,6 @@
 [package]
 name = "webgal-simulate"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 readme.workspace = true
 description = "WebGAL 项目模拟执行诊断"
