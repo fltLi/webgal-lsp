@@ -3,7 +3,14 @@
 // 场景浏览器: 展示 game/scene 目录, 点击打开场景文件。
 // 支持新建场景/文件夹、重命名、删除 (联动已打开选项卡) 与"在文件管理器中打开"。
 
-import { DeleteRegular, DocumentAddRegular, FolderAddRegular, RenameRegular } from '@fluentui/react-icons';
+import {
+  ArrowClockwiseRegular,
+  DeleteRegular,
+  DocumentAddRegular,
+  FolderAddRegular,
+  OpenFolderRegular,
+  RenameRegular,
+} from '@fluentui/react-icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 
@@ -122,7 +129,7 @@ export function SceneBrowser() {
       return dn === norm || dn.startsWith(norm + '/');
     });
     const kind = deleting.isDirectory ? '目录' : '文件';
-    let msg = `确定要删除${kind}“${deleting.name}”吗？此操作不可恢复。`;
+    let msg = `确定要删除${kind}“${deleting.name}”吗？将移入回收站，可稍后恢复。`;
     if (affected.length > 0) {
       const dirty = affected.filter((d) => d.dirty).length;
       msg += `\n该${kind}下有 ${affected.length} 个已打开的场景选项卡将被关闭`;
@@ -164,26 +171,33 @@ export function SceneBrowser() {
         rootPath={`${projectPath}\\game\\scene`}
         selectedPath={activePath}
         refreshKey={refreshKey}
-        onRevealDir={(dir) => void revealItemInDir(dir)}
         onItemContextMenu={openMenu}
-        toolbarActions={(currentDir) => (
-          <>
-            <button
-              className="file-tree-icon-btn"
-              title="新建场景"
-              onClick={() => setPrompt({ mode: 'newFile', dir: currentDir })}
-            >
-              <DocumentAddRegular />
-            </button>
-            <button
-              className="file-tree-icon-btn"
-              title="新建文件夹"
-              onClick={() => setPrompt({ mode: 'newFolder', dir: currentDir })}
-            >
-              <FolderAddRegular />
-            </button>
-          </>
-        )}
+        menu={(currentDir) => [
+          {
+            key: 'newScene',
+            label: '新建场景',
+            icon: <DocumentAddRegular />,
+            onClick: () => setPrompt({ mode: 'newFile', dir: currentDir }),
+          },
+          {
+            key: 'newFolder',
+            label: '新建文件夹',
+            icon: <FolderAddRegular />,
+            onClick: () => setPrompt({ mode: 'newFolder', dir: currentDir }),
+          },
+          {
+            key: 'reveal',
+            label: '在文件管理器中打开',
+            icon: <OpenFolderRegular />,
+            onClick: () => void revealItemInDir(currentDir),
+          },
+          {
+            key: 'refresh',
+            label: '刷新当前目录',
+            icon: <ArrowClockwiseRegular />,
+            onClick: () => setRefreshKey((k) => k + 1),
+          },
+        ]}
         onOpen={(file) => {
           void openFile(file.path);
         }}
@@ -211,7 +225,7 @@ export function SceneBrowser() {
               重命名
             </button>
             <button
-              className="context-menu-item"
+              className="context-menu-item danger"
               onClick={() => {
                 setDeleting(menu.node);
                 setMenu(null);

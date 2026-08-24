@@ -37,3 +37,8 @@ export function sendPreviewCommand(request: string): Promise<void> {
 export function copyDirectory(source: string, destination: string): Promise<void> {
   return invoke<void>('copy_directory', { source, destination });
 }
+
+/** 将文件/文件夹移动到系统回收站 (可恢复删除)。 */
+export function moveToTrash(path: string): Promise<void> {
+  return invoke<void>('move_to_trash', { path });
+}

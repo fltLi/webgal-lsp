@@ -229,6 +229,29 @@ export function setupMonaco(): void {
   defineWebgalThemes();
   monaco.languages.register({ id: LANGUAGE_ID });
 
+  // WebGAL 语言配置 (对齐 packages/vscode-extension/language-configuration.json):
+  // 行注释 `;`, 括号 ()/[]/{} 的自动闭合与包围配对, 引号自动闭合 (不在字符串内)。
+  monaco.languages.setLanguageConfiguration(LANGUAGE_ID, {
+    comments: { lineComment: ';' },
+    brackets: [
+      ['{', '}'],
+      ['[', ']'],
+      ['(', ')'],
+    ],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"', notIn: ['string'] },
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+    ],
+  });
+
   monaco.languages.registerDocumentSemanticTokensProvider(LANGUAGE_ID, {
     getLegend: () => ({ tokenTypes: SEMANTIC_TOKEN_TYPES, tokenModifiers: [] }),
     provideDocumentSemanticTokens: async (model) => {

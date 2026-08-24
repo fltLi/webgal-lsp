@@ -30,6 +30,7 @@ pub fn run() {
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
             service::fs_ops::copy_directory,
+            service::fs_ops::move_to_trash,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

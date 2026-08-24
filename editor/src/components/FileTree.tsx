@@ -3,8 +3,8 @@
 // 目录浏览组件: 每次只打开一层目录 (文件夹 + 文件), 不递归扫描子目录。
 // 进入子目录后才扫描该层; 支持返回上级、在当前目录内搜索、展平当前目录。
 
-import { ArrowUpRegular, GroupListRegular, OpenFolderRegular } from '@fluentui/react-icons';
-import { useEffect, useState, type ReactNode } from 'react';
+import { ArrowUpRegular, MoreVerticalRegular } from '@fluentui/react-icons';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { fs } from '../lib/fs';
 
@@ -80,6 +80,14 @@ async function recursiveFiles(dir: string, baseRel: string): Promise<FileNode[]>
   return result;
 }
 
+export interface ToolbarMenuItem {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  danger?: boolean;
+  onClick: () => void;
+}
+
 interface FileTreeProps {
   rootPath: string;
   onOpen: (file: FileNode) => void;
@@ -88,10 +96,8 @@ interface FileTreeProps {
   assetUrl?: (rel: string) => string | undefined;
   /** 内容变更 (新建/重命名/删除) 后递增, 强制重新加载当前目录 */
   refreshKey?: number;
-  /** 工具栏末尾附加按钮, 接收当前绝对目录 (用于新建场景/文件夹等) */
-  toolbarActions?: (currentDir: string) => ReactNode;
-  /** 提供时在工具栏显示"在文件管理器中打开"图标按钮 */
-  onRevealDir?: (dir: string) => void;
+  /** 工具栏右侧下拉菜单项 (返回上级按钮与展平按钮独立保留在工具栏上) */
+  menu?: (currentDir: string) => ToolbarMenuItem[];
   /** 列表项右键菜单回调 (文件与文件夹均触发) */
   onItemContextMenu?: (node: FileNode, e: React.MouseEvent) => void;
   /** 自定义工具栏与列表的摆放方式; 缺省时工具栏在列表上方 (上下堆叠) */
@@ -105,8 +111,7 @@ export function FileTree({
   excludeTop,
   assetUrl,
   refreshKey = 0,
-  toolbarActions,
-  onRevealDir,
+  menu,
   onItemContextMenu,
   header,
 }: FileTreeProps) {
@@ -237,6 +242,37 @@ export function FileTree({
     );
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  // 关闭下拉菜单: 点击遮罩 / Esc / 窗口变化
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => {
+      setMenuOpen(false);
+      setMenuPos(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+    };
+  }, [menuOpen]);
+
+  const openToolbarMenu = () => {
+    const rect = menuBtnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = Math.max(0, Math.min(rect.right - 170, window.innerWidth - 180));
+    const y = Math.min(rect.bottom + 4, window.innerHeight - 160);
+    setMenuPos({ x, y });
+    setMenuOpen(true);
+  };
+
   const toolbar = (
     <div className="file-tree-toolbar">
       <button className="file-tree-icon-btn" title="返回上级" disabled={currentRel === ''} onClick={goUp}>
@@ -253,21 +289,52 @@ export function FileTree({
         onChange={(e) => setQuery(e.target.value)}
       />
       <button
-        className={`file-tree-icon-btn${flat ? ' active' : ''}`}
+        className={`file-tree-flatten-btn${flat ? ' active' : ''}`}
         title="展平当前目录"
         onClick={() => {
           setQuery('');
           setFlat((v) => !v);
         }}
       >
-        <GroupListRegular />
+        展平
       </button>
-      {onRevealDir ? (
-        <button className="file-tree-icon-btn" title="在文件管理器中打开" onClick={() => onRevealDir(currentAbs)}>
-          <OpenFolderRegular />
+      {menu ? (
+        <button ref={menuBtnRef} className="file-tree-icon-btn" title="更多操作" onClick={openToolbarMenu}>
+          <MoreVerticalRegular />
         </button>
       ) : null}
-      {toolbarActions ? toolbarActions(currentAbs) : null}
+      {menuOpen && menu ? (
+        <>
+          <div
+            className="context-menu-backdrop"
+            onClick={() => {
+              setMenuOpen(false);
+              setMenuPos(null);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuOpen(false);
+              setMenuPos(null);
+            }}
+          />
+          <div className="context-menu" style={{ left: menuPos?.x ?? 0, top: menuPos?.y ?? 0 }}>
+            {menu(currentAbs).map((item) => (
+              <button
+                key={item.key}
+                className={`context-menu-item${item.danger ? ' danger' : ''}`}
+                onClick={() => {
+                  item.onClick();
+                  setMenuOpen(false);
+                  setMenuPos(null);
+                }}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 

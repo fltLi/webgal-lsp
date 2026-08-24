@@ -7,8 +7,9 @@
 // 主题切换统一由顶栏/欢迎页的按钮完成; 预览开关在预览面板工具栏上。
 
 import { open } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button, Input, Switch } from '@fluentui/react-components';
-import { FolderOpenRegular } from '@fluentui/react-icons';
+import { DocumentRegular, FolderOpenRegular, GlobeRegular, PersonRegular } from '@fluentui/react-icons';
 import { useEffect, useState } from 'react';
 
 import { useAppStore, type SettingsCategory } from '../state/store';
@@ -19,6 +20,14 @@ const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'general', label: '通用' },
   { id: 'editor', label: '编辑' },
   { id: 'template', label: '模板' },
+  { id: 'about', label: '关于' },
+];
+
+// 关于页链接 (仓库 / 作者 / 许可证)
+const ABOUT_LINKS: { label: string; icon: JSX.Element; url: string }[] = [
+  { label: 'GitHub 仓库', icon: <GlobeRegular />, url: 'https://github.com/fltLi/webgal-lsp' },
+  { label: '作者 fltLi', icon: <PersonRegular />, url: 'https://github.com/fltLi' },
+  { label: '许可证 MPL-2.0', icon: <DocumentRegular />, url: 'https://www.mozilla.org/MPL/2.0/' },
 ];
 
 export function SettingsDialog() {
@@ -139,6 +148,20 @@ export function SettingsDialog() {
             {category === 'template' && (
               <div className="settings-group">
                 <TemplateManager />
+              </div>
+            )}
+            {category === 'about' && (
+              <div className="settings-group">
+                <h3 className="settings-group-title">关于</h3>
+                <div className="settings-link-list">
+                  {ABOUT_LINKS.map((link) => (
+                    <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
+                      {link.icon}
+                      {link.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="prompt-hint">WebGAL Ink — 轻量级 WebGAL 脚本编辑器</p>
               </div>
             )}
           </div>

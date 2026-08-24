@@ -4,7 +4,7 @@
 //
 // iframe 保持 16:9 横向画布: 引擎在竖屏窗口下会把画面旋转 90°, 因此必须保证宽大于高。
 
-import { ArrowClockwiseRegular, SendRegular } from '@fluentui/react-icons';
+import { ArrowClockwiseRegular, OpenRegular } from '@fluentui/react-icons';
 import { Button, Switch } from '@fluentui/react-components';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState } from 'react';
@@ -96,7 +96,7 @@ export function PreviewPanel() {
         />
         <Button icon={<ArrowClockwiseRegular />} appearance="subtle" title="刷新预览" onClick={() => void reload()} />
         <Button
-          icon={<SendRegular />}
+          icon={<OpenRegular />}
           appearance="subtle"
           title="在浏览器中打开预览"
           disabled={!frame}

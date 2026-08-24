@@ -3,6 +3,7 @@
 // 场景文件/文件夹操作: 新建、重命名、删除。
 // 磁盘操作成功后, 同步迁移/关闭已打开的场景选项卡、Monaco model 与 LSP 状态。
 
+import { moveToTrash } from './commands/server';
 import { fs } from './lib/fs';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
@@ -64,9 +65,9 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
   }
 }
 
-/** 删除文件/文件夹 (递归), 并关闭受影响的开场景选项卡。 */
+/** 删除文件/文件夹 (移动至系统回收站), 并关闭受影响的开场景选项卡。 */
 export async function deletePath(path: string): Promise<void> {
-  await fs.remove(path, true); // 磁盘失败则直接抛出, 不关闭选项卡
+  await moveToTrash(path); // 磁盘失败则直接抛出, 不关闭选项卡
 
   const store = useAppStore.getState();
   const norm = path.replace(/\\/g, '/').toLowerCase();

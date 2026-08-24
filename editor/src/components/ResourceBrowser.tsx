@@ -4,6 +4,7 @@
 // 布局: 顶部全宽工具栏 (返回上级/搜索/展平/文件管理器) + 左侧资源列表 + 右侧预览。
 // 缩略图与媒体均通过预览服务器的 overlay 站点 URL 加载。
 
+import { ArrowClockwiseRegular, OpenFolderRegular } from '@fluentui/react-icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 
@@ -20,6 +21,7 @@ export function ResourceBrowser() {
   const [selected, setSelected] = useState<FileNode | null>(null);
   const [textPreview, setTextPreview] = useState<string | null>(null);
   const [detectedKind, setDetectedKind] = useState<FileKind | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // 确保预览服务器与 overlay 站点可用, 以构建资源 URL
   useEffect(() => {
@@ -90,8 +92,22 @@ export function ResourceBrowser() {
         excludeTop={(name) => name === 'scene'}
         selectedPath={selected?.path ?? null}
         assetUrl={assetUrl}
-        onRevealDir={(dir) => void revealItemInDir(dir)}
+        refreshKey={refreshKey}
         onOpen={(file) => setSelected(file)}
+        menu={(currentDir) => [
+          {
+            key: 'reveal',
+            label: '在文件管理器中打开',
+            icon: <OpenFolderRegular />,
+            onClick: () => void revealItemInDir(currentDir),
+          },
+          {
+            key: 'refresh',
+            label: '刷新当前目录',
+            icon: <ArrowClockwiseRegular />,
+            onClick: () => setRefreshKey((k) => k + 1),
+          },
+        ]}
         header={(toolbar, list) => (
           <>
             {toolbar}

@@ -29,7 +29,7 @@ export interface LspDiagnostic {
 
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
-export type SettingsCategory = 'general' | 'editor' | 'template';
+export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
 
 export interface StageSnapshot {
   sceneName: string;

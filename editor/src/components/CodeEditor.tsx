@@ -86,7 +86,8 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
         // 先落盘再同步: 引擎按场景名重新 fetch, 必须保证磁盘内容是最新
         // (否则 sync 早于自动保存, 引擎会取到上一版内容)
         const docState = useAppStore.getState().documents.find((d) => d.path === path);
-        if (docState?.dirty) await saveDoc();
+        // 仅在开启自动保存时才落盘; 关闭时预览只反映最近一次已保存的内容
+        if (docState?.dirty && useAppStore.getState().settings.autoSave) await saveDoc();
         const position = editor.getPosition();
         if (position) void previewClient.syncScene(path, position.lineNumber);
       }, 150);
