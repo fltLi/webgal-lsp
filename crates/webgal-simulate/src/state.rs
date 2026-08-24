@@ -15,7 +15,7 @@ use serde_json::Value;
 use webgal_language_core::{resource::Config, sentence::*};
 
 use crate::{
-    DiagnosticKind, ProjectView, SentenceLocation,
+    DiagnosticKind, PrimaryDiagnostic, ProjectView, SentenceLocation,
     expression::evaluate_with_context,
     scene::Project,
     state::{effect::*, stage::*},
@@ -113,10 +113,12 @@ impl State {
     pub fn push_sentence_deltas<'a, P: ProjectView<'a>>(
         &mut self,
         sentence: &Sentence,
+        primary: &PrimarySentence<'a>,
         project: &Project<'a, P>,
-        diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
+        diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
     ) {
-        let delta = EffectList::from_sentence(sentence, &self.variables, project, diagnostics);
+        let delta =
+            EffectList::from_sentence(sentence, primary, &self.variables, project, diagnostics);
         if !delta.is_empty() {
             self.pending_deltas.push(delta);
         }

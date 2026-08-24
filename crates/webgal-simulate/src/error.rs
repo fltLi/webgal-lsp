@@ -1,3 +1,5 @@
+use std::{fmt, ops};
+
 use derive_more::{Deref, Into, IntoIterator};
 #[cfg(feature = "lsp")]
 use lsp_types::{Diagnostic as LspDiagnostic, *};
@@ -11,10 +13,12 @@ use webgal_language_core::sentence::PrimarySentence;
 pub struct DiagnosticList(pub(crate) Vec<(String, Vec<Diagnostic>)>);
 
 /// 模拟执行诊断错误信息
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Error)]
-#[error("第 {} 行: {detail}", .line + 1)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deref, Error)]
+#[error("第 {} 行, 位置 {}..{}: {detail}", .line + 1, .span.start, .span.end)]
 pub struct Diagnostic {
     pub line: usize,
+    pub span: ops::Range<usize>,
+    #[deref]
     #[source]
     pub detail: DiagnosticKind,
 }
@@ -31,22 +35,16 @@ impl Diagnostic {
     }
 
     /// 转换为 LSP 诊断信息
-    ///
-    /// # Arguments
-    /// * `f` - 传入行号, 获得原始语句借用.
     #[cfg(feature = "lsp")]
-    pub fn to_lsp_diagnostic<'a, 'b: 'a, F>(&self, f: F) -> LspDiagnostic
-    where
-        F: FnOnce(usize) -> &'a PrimarySentence<'b>,
-    {
+    pub fn to_lsp_diagnostic(&self) -> LspDiagnostic {
         let span = Range {
             start: Position {
                 line: self.line as u32,
-                character: 0,
+                character: self.span.start as u32,
             },
             end: Position {
                 line: self.line as u32,
-                character: f(self.line).len() as u32,
+                character: self.span.end as u32,
             },
         };
 
@@ -104,8 +102,42 @@ pub enum DiagnosticKind {
 }
 
 impl DiagnosticKind {
+    /// 诊断错误码
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::UndefinedSymbol(..) => "WG008",
+            Self::ExpressionError(..) => "WG009",
+            Self::ConstantCondition(..) => "WG010",
+            Self::Unused => "WG011",
+            Self::RedundantEffect(_) => "WG012",
+            Self::OverriddenEffect(_) => "WG013",
+            Self::WaitAtEndOfChain => "WG014",
+            Self::Stopped(_) => "WG015",
+            Self::DialogueTooLong(_) => "WG016",
+        }
+    }
+
+    /// 诊断错误级别
+    pub fn level(&self) -> DiagnosticLevel {
+        match self {
+            Self::UndefinedSymbol(..) => DiagnosticLevel::Error,
+            Self::ExpressionError(..) => DiagnosticLevel::Error,
+            Self::ConstantCondition(..) => DiagnosticLevel::Warning,
+            Self::Unused => DiagnosticLevel::Warning,
+            Self::RedundantEffect(_) => DiagnosticLevel::Warning,
+            Self::OverriddenEffect(_) => DiagnosticLevel::Warning,
+            Self::WaitAtEndOfChain => DiagnosticLevel::Warning,
+            Self::Stopped(_) => DiagnosticLevel::Hint,
+            Self::DialogueTooLong(_) => DiagnosticLevel::Warning,
+        }
+    }
+
     pub(crate) fn prevents_unused_check(&self) -> bool {
         matches!(self, Self::Stopped(reason) if reason.prevents_unused_check())
+    }
+
+    pub(crate) fn into_primary_diagnostic(self, span: DiagnosticLocation) -> PrimaryDiagnostic {
+        PrimaryDiagnostic { span, detail: self }
     }
 }
 
@@ -148,38 +180,6 @@ pub enum SymbolKind {
     Sound,
 }
 
-impl DiagnosticKind {
-    /// 诊断错误码
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::UndefinedSymbol(..) => "WG008",
-            Self::ExpressionError(..) => "WG009",
-            Self::ConstantCondition(..) => "WG010",
-            Self::Unused => "WG011",
-            Self::RedundantEffect(_) => "WG012",
-            Self::OverriddenEffect(_) => "WG013",
-            Self::WaitAtEndOfChain => "WG014",
-            Self::Stopped(_) => "WG015",
-            Self::DialogueTooLong(_) => "WG016",
-        }
-    }
-
-    /// 诊断错误级别
-    pub fn level(&self) -> DiagnosticLevel {
-        match self {
-            Self::UndefinedSymbol(..) => DiagnosticLevel::Error,
-            Self::ExpressionError(..) => DiagnosticLevel::Error,
-            Self::ConstantCondition(..) => DiagnosticLevel::Warning,
-            Self::Unused => DiagnosticLevel::Warning,
-            Self::RedundantEffect(_) => DiagnosticLevel::Warning,
-            Self::OverriddenEffect(_) => DiagnosticLevel::Warning,
-            Self::WaitAtEndOfChain => DiagnosticLevel::Warning,
-            Self::Stopped(_) => DiagnosticLevel::Hint,
-            Self::DialogueTooLong(_) => DiagnosticLevel::Warning,
-        }
-    }
-}
-
 /// 模拟执行诊断错误级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiagnosticLevel {
@@ -198,5 +198,61 @@ impl From<DiagnosticLevel> for DiagnosticSeverity {
             DiagnosticLevel::Info => Self::INFORMATION,
             DiagnosticLevel::Hint => Self::HINT,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deref, Error)]
+pub(crate) struct PrimaryDiagnostic {
+    pub span: DiagnosticLocation,
+    #[deref]
+    #[source]
+    pub detail: DiagnosticKind,
+}
+
+impl PrimaryDiagnostic {
+    pub fn into_diagnostic(self, line: usize, primary: &PrimarySentence) -> Diagnostic {
+        Diagnostic {
+            line,
+            span: self.span.to_span(primary),
+            detail: self.detail,
+        }
+    }
+}
+
+impl fmt::Display for PrimaryDiagnostic {
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
+        unimplemented!("内部诊断表示不需要输出")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum DiagnosticLocation {
+    Command,
+    Content,
+    ArgumentName(&'static str),
+    ArgumentValue(&'static str),
+    #[allow(dead_code)]
+    Comment,
+    Sentence,
+    #[allow(dead_code)]
+    Custom(ops::Range<usize>),
+}
+
+impl DiagnosticLocation {
+    pub fn to_span(&self, primary: &PrimarySentence) -> ops::Range<usize> {
+        match self {
+            Self::Command => Some(primary.get_span(primary.command)),
+            Self::Content => primary.content.map(|content| primary.get_span(content)),
+            Self::ArgumentName(name) => primary
+                .get_argument(name)
+                .map(|(index, _)| primary.get_span(primary.arguments[index].0)),
+            Self::ArgumentValue(name) => primary
+                .get_argument(name)
+                .and_then(|(_, value)| Some(primary.get_span(value?))),
+            Self::Comment => Some(primary.get_span(primary.comment)),
+            Self::Sentence => None,
+            Self::Custom(span) => Some(span.clone()),
+        }
+        .unwrap_or_else(|| 0..primary.len())
     }
 }

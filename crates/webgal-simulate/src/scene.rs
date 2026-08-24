@@ -12,28 +12,26 @@ use getset::{CopyGetters, Getters};
 use webgal_language_core::{
     element::{AnimationList, Forward},
     resource::Config,
-    sentence::{Sentence, SentenceExt},
+    sentence::{Scene, Sentence as SentenceKind, SentenceExt, SentenceInfo as Sentence},
 };
 
 use crate::{
-    Diagnostic, DiagnosticKind, DiagnosticList, MAX_CHECKPOINT_VISITS, START_SCENE,
-    expression::evaluate_constantly, state::ExecutionHash,
+    Diagnostic, DiagnosticKind, DiagnosticList, DiagnosticLocation, MAX_CHECKPOINT_VISITS,
+    PrimaryDiagnostic, START_SCENE, expression::evaluate_constantly, state::ExecutionHash,
 };
 
 // -------- project --------
 
 /// WebGAL 项目简单只读视图
 pub trait ProjectView<'a>: Send + Sync {
-    type Scene: IntoIterator<Item = &'a Sentence> + Send;
-
     /// 读取配置
     fn get_config(&self) -> &'a Config;
 
     /// 读取场景
-    fn get_scene(&self, path: &str) -> Option<Self::Scene>;
+    fn get_scene(&self, path: &str) -> Option<&'a Scene>;
 
     /// 遍历场景
-    fn iter_scenes(&self) -> impl Iterator<Item = (String, Self::Scene)> + Send;
+    fn iter_scenes(&self) -> impl Iterator<Item = (String, &'a Scene)> + Send;
 
     /// 读取动画资源
     fn get_animation(&self, name: &str) -> Option<&'a AnimationList>;
@@ -49,7 +47,7 @@ pub struct Project<'a, P: ProjectView<'a>> {
     #[getset(get = "pub")]
     config: &'a Config,
     #[getset(get = "pub")]
-    scenes: HashMap<String, Scene<'a>>,
+    scenes: HashMap<String, SceneInfo<'a>>,
 }
 
 impl<'a, P: ProjectView<'a>> Project<'a, P> {
@@ -57,7 +55,7 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
         let config = view.get_config();
         let scenes = view
             .iter_scenes()
-            .map(|(path, sentences)| (path, Scene::from_iter(sentences)))
+            .map(|(path, scene)| (path, SceneInfo::from_iter(scene.sentences())))
             .collect();
 
         Self {
@@ -76,13 +74,13 @@ impl<'a, P: ProjectView<'a>> Project<'a, P> {
     /// * 当操作前已存在非正常退出的诊断时, 为了避免误报, 将不提供死代码诊断.
     pub fn check_unused(&self) -> Option<usize> {
         // 避免出错中断造成的死代码误报
-        let suppressed = self.scenes.values().any(Scene::prevents_unused_check);
+        let suppressed = self.scenes.values().any(SceneInfo::prevents_unused_check);
         if suppressed {
             return None;
         }
 
         // 检查死代码
-        let total_unused = self.scenes.values().map(Scene::check_unused).sum();
+        let total_unused = self.scenes.values().map(SceneInfo::check_unused).sum();
         Some(total_unused)
     }
 
@@ -113,9 +111,9 @@ impl<'a, P: ProjectView<'a>> From<P> for Project<'a, P> {
 
 /// 场景信息 (Simulate)
 #[derive(Debug, Default, From, Into, Deref, DerefMut)]
-pub struct Scene<'a>(Vec<SentenceInfo<'a>>);
+pub struct SceneInfo<'a>(Vec<SentenceInfo<'a>>);
 
-impl<'a> Scene<'a> {
+impl<'a> SceneInfo<'a> {
     fn check_unused(&self) -> usize {
         self.iter()
             .map(|sentence| sentence.check_unused() as usize)
@@ -135,8 +133,8 @@ impl<'a> Scene<'a> {
     }
 }
 
-impl<'a> FromIterator<&'a Sentence> for Scene<'a> {
-    fn from_iter<I: IntoIterator<Item = &'a Sentence>>(iter: I) -> Self {
+impl<'a> FromIterator<&'a Sentence<'a>> for SceneInfo<'a> {
+    fn from_iter<I: IntoIterator<Item = &'a Sentence<'a>>>(iter: I) -> Self {
         let mut sentences: Vec<_> = iter.into_iter().map(SentenceInfo::new).collect();
 
         // 在场景开头设立检查点
@@ -176,7 +174,7 @@ impl fmt::Display for SentenceLocation {
 #[derive(Debug, Getters, CopyGetters)]
 pub struct SentenceInfo<'a> {
     #[getset(get = "pub")]
-    sentence: &'a Sentence,
+    sentence: &'a Sentence<'a>,
     // 语句信息
     #[getset(get_copy = "pub")]
     forward: Forward,
@@ -184,7 +182,7 @@ pub struct SentenceInfo<'a> {
     condition: Option<&'a str>,
     // 诊断结果
     #[getset(get = "pub")]
-    diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
+    diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
     // 遍历信息
     visited: Cell<bool>,
     executions: Option<RefCell<BTreeSet<ExecutionHash>>>,
@@ -199,8 +197,8 @@ impl<'a> SentenceInfo<'a> {
         // 判断语句是否为检查点
         let is_checkpoint = condition.is_some()
             || matches!(
-                sentence,
-                Sentence::Label(_) | Sentence::SetVar(_) | Sentence::GetUserInput(_)
+                sentence.sentence,
+                SentenceKind::Label(_) | SentenceKind::SetVar(_) | SentenceKind::GetUserInput(_)
             );
         let executions = is_checkpoint.then(|| RefCell::new(BTreeSet::new()));
 
@@ -208,10 +206,10 @@ impl<'a> SentenceInfo<'a> {
         if let Some(condition) = condition
             && let Some(value) = evaluate_constantly(condition)
         {
-            diagnostics.push(DiagnosticKind::ConstantCondition(
-                condition.to_string(),
-                value.to_string(),
-            ));
+            diagnostics.push(PrimaryDiagnostic {
+                span: DiagnosticLocation::ArgumentValue("when"),
+                detail: DiagnosticKind::ConstantCondition(condition.to_string(), value.to_string()),
+            });
         }
 
         Self {
@@ -256,9 +254,13 @@ impl<'a> SentenceInfo<'a> {
     }
 
     fn check_unused(&self) -> bool {
-        let is_unused = !self.is_visited() && !matches!(self.sentence, Sentence::Comment(_));
+        let is_unused =
+            !self.is_visited() && !matches!(self.sentence.sentence, SentenceKind::Comment(_));
         if is_unused {
-            self.push_diagnostic(DiagnosticKind::Unused);
+            self.push_diagnostic(PrimaryDiagnostic {
+                span: DiagnosticLocation::Sentence,
+                detail: DiagnosticKind::Unused,
+            });
         }
         is_unused
     }
@@ -267,10 +269,10 @@ impl<'a> SentenceInfo<'a> {
         self.diagnostics
             .borrow()
             .iter()
-            .any(DiagnosticKind::prevents_unused_check)
+            .any(|diagnostic| diagnostic.prevents_unused_check())
     }
 
-    pub fn push_diagnostic(&self, diagnostic: DiagnosticKind) {
+    pub(crate) fn push_diagnostic(&self, diagnostic: PrimaryDiagnostic) {
         self.diagnostics.borrow_mut().push(diagnostic);
     }
 
@@ -278,13 +280,13 @@ impl<'a> SentenceInfo<'a> {
         let mut diagnostics = Rc::try_unwrap(self.diagnostics).unwrap().into_inner();
 
         // 诊断去重
-        diagnostics.sort();
+        diagnostics.sort_by(|a, b| a.cmp(b));
         diagnostics.dedup();
 
         // 附加诊断行号
         diagnostics
             .into_iter()
-            .map(|detail| Diagnostic { line, detail })
+            .map(|diagnostic| diagnostic.into_diagnostic(line, &self.sentence.primary))
             .collect()
     }
 }

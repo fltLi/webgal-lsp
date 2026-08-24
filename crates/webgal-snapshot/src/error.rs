@@ -4,6 +4,7 @@
 
 use std::{fmt, io, path::PathBuf, result};
 
+use derive_more::Deref;
 use thiserror::Error;
 use webgal_language_core::sentence;
 use zip::result::ZipError;
@@ -16,12 +17,13 @@ pub type Result<T> = result::Result<T, Error>;
 /// # Notes
 /// * `path` 为出错文件的绝对路径, 无关联路径时 (如构建期错误) 为 `None`.
 /// * `line` 仅在语句解析出错时提供, 表示出错语句在场景中的行号 (从 1 开始).
-#[derive(Debug, Error)]
+#[derive(Debug, Deref, Error)]
 pub struct Error {
     /// 出错文件路径 (绝对路径, 可能不存在)
     pub path: Option<PathBuf>,
     /// 出错行号 (可选)
     pub line: Option<usize>,
+    #[deref]
     #[source]
     pub detail: ErrorKind,
 }

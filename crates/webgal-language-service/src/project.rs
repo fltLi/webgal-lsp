@@ -1,14 +1,9 @@
 use std::result;
-#[cfg(feature = "simulate-diagnose")]
-use std::{iter::Map, slice::Iter};
 
 use getset::Getters;
 use path_tree::{Entry, Folder, Node, canonicalize};
 #[cfg(feature = "simulate-diagnose")]
-use webgal_language_core::{
-    element::AnimationList,
-    sentence::{Sentence, SentenceInfo},
-};
+use webgal_language_core::element::AnimationList;
 use webgal_language_core::{
     resource::{Config, ResourceInfo, ResourceKind},
     sentence::Scene,
@@ -194,37 +189,19 @@ impl Project {
 
 #[cfg(feature = "simulate-diagnose")]
 impl<'a> ProjectView<'a> for &'a Project {
-    type Scene = Map<Iter<'a, SentenceInfo<'a>>, fn(&'a SentenceInfo<'a>) -> &'a Sentence>;
-
     fn get_config(&self) -> &'a Config {
         self.config()
     }
 
-    fn get_scene(&self, path: &str) -> Option<Self::Scene> {
-        Some(
-            self.resource()
-                .scene
-                .get(path)?
-                .as_item()?
-                .sentences()
-                .iter()
-                .map(|sentence| &sentence.sentence),
-        )
+    fn get_scene(&self, path: &str) -> Option<&'a Scene> {
+        self.resource().scene.get(path)?.as_item()
     }
 
-    fn iter_scenes(&self) -> impl Iterator<Item = (String, Self::Scene)> + Send {
-        self.resource().scene.iter_recursively().filter_map(
-            |(path, scene)| -> Option<(_, Self::Scene)> {
-                Some((
-                    path,
-                    scene
-                        .as_item()?
-                        .sentences()
-                        .iter()
-                        .map(|sentence| &sentence.sentence),
-                ))
-            },
-        )
+    fn iter_scenes(&self) -> impl Iterator<Item = (String, &'a Scene)> + Send {
+        self.resource()
+            .scene
+            .iter_recursively()
+            .filter_map(|(path, scene)| Some((path, scene.as_item()?)))
     }
 
     fn get_animation(&self, name: &str) -> Option<&'a AnimationList> {

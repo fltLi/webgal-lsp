@@ -5963,6 +5963,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "count",
+ "derive_more",
  "getset",
  "json-language-service",
  "lsp-types",
@@ -6011,6 +6012,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "console",
+ "derive_more",
  "indicatif",
  "serde_json",
  "tempfile",

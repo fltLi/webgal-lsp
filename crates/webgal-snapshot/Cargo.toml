@@ -13,6 +13,8 @@ repository.workspace = true
 webgal-language-core.workspace = true
 
 thiserror.workspace = true
+
+derive_more.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 

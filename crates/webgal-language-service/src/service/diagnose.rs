@@ -59,7 +59,7 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
                     Some((path, scene, diagnostics))
                 })
                 .collect();
-            diagnostics.par_sort_unstable_by(|(a, ..), (b, ..)| a.cmp(b));
+            diagnostics.sort_by(|(a, ..), (b, ..)| a.cmp(b));
             diagnostics
         },
         // 模拟执行
@@ -70,28 +70,12 @@ pub fn diagnose_project(project: &Project) -> Vec<(String, &Scene, Vec<Diagnosti
                 .map(|(path, diagnostics)| {
                     let diagnostics = diagnostics
                         .into_iter()
-                        .filter_map(|diagnostic| {
-                            let sentence = &project
-                                .resource()
-                                .scene
-                                .get(&path)
-                                .unwrap()
-                                .as_item()
-                                .unwrap()
-                                .sentences()[diagnostic.line];
-
-                            (!sentence.contains_nolint(diagnostic.code())).then(|| {
-                                diagnostic.to_lsp_diagnostic(|index| {
-                                    debug_assert_eq!(index, diagnostic.line);
-                                    &sentence.primary
-                                })
-                            })
-                        })
+                        .map(|diagnostic| diagnostic.to_lsp_diagnostic())
                         .collect();
                     (path, diagnostics)
                 })
                 .collect();
-            diagnostics.par_sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+            diagnostics.sort_by(|(a, _), (b, _)| a.cmp(b));
             diagnostics
         },
     );

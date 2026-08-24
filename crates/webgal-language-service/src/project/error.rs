@@ -1,5 +1,6 @@
 use std::result;
 
+use derive_more::Deref;
 use thiserror::Error;
 use webgal_language_core::resource::ResourceKind;
 
@@ -7,11 +8,12 @@ use webgal_language_core::resource::ResourceKind;
 pub type Result<T> = result::Result<T, Error>;
 
 /// 项目管理错误信息
-#[derive(Debug, Error)]
+#[derive(Debug, Deref, Error)]
 #[error("访问 {kind} 资源 `{path}` 出错: {detail}")]
 pub struct Error {
     pub path: String,
     pub kind: ResourceKind,
+    #[deref]
     #[source]
     pub detail: ErrorKind,
 }

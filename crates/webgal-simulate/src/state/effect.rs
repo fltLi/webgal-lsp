@@ -11,11 +11,14 @@ use std::{
 use serde_json::Value;
 use webgal_language_core::{
     dispatch_sentence,
-    element::{ObjectId, TokenSplit},
+    element::{FigureId, FigureSide, ObjectId, TokenSplit},
     sentence::*,
 };
 
-use crate::{DiagnosticKind, ProjectView, SymbolKind, scene::Project, state::stage::*};
+use crate::{
+    DiagnosticKind, DiagnosticLocation, PrimaryDiagnostic, ProjectView, SymbolKind, scene::Project,
+    state::stage::*,
+};
 
 // TODO: 检查 Transform 合并有效性
 
@@ -24,19 +27,25 @@ use crate::{DiagnosticKind, ProjectView, SymbolKind, scene::Project, state::stag
 /// 一条语句可能产生多个原子效果, 这些效果组合在一起构成一个逻辑上的变换单元
 #[derive(Debug, Clone)]
 pub struct EffectList {
-    effects: Vec<StageEffect>,
-    diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
+    effects: Vec<(DiagnosticLocation, StageEffect)>,
+    diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
 }
 
 impl EffectList {
     pub fn from_sentence<'a, P: ProjectView<'a>>(
         sentence: &Sentence,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        diagnostics: Rc<RefCell<Vec<DiagnosticKind>>>,
+        diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
     ) -> Self {
-        let effects =
-            StageEffect::from_sentence(sentence, variables, project, &mut diagnostics.borrow_mut());
+        let effects = StageEffect::from_sentence(
+            sentence,
+            primary,
+            variables,
+            project,
+            &mut diagnostics.borrow_mut(),
+        );
         Self {
             effects,
             diagnostics,
@@ -49,8 +58,8 @@ impl EffectList {
 
     pub fn apply_to_stage(self, prev_stage: &Stage, next_stage: &mut Stage) {
         let mut diagnostics = self.diagnostics.borrow_mut();
-        for effect in self.effects {
-            effect.apply_to_stage(prev_stage, next_stage, &mut diagnostics);
+        for (span, effect) in self.effects {
+            effect.apply_to_stage(prev_stage, next_stage, span, &mut diagnostics);
         }
     }
 }
@@ -97,11 +106,12 @@ enum StageEffect {
 impl StageEffect {
     fn from_sentence<'a, P: ProjectView<'a>>(
         sentence: &Sentence,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) -> Vec<Self> {
-        sentence.to_effects(variables, project, diagnostics)
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
+    ) -> Vec<(DiagnosticLocation, Self)> {
+        sentence.to_effects(primary, variables, project, diagnostics)
     }
 
     /// 将单个舞台变换效果应用到目标状态, 同时返回诊断结果
@@ -109,8 +119,13 @@ impl StageEffect {
         self,
         prev_stage: &Stage,
         next_stage: &mut Stage,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        span: DiagnosticLocation,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
+        let mut diagnose = |diagnostic: DiagnosticKind| {
+            diagnostics.push(diagnostic.into_primary_diagnostic(span.clone()))
+        };
+
         match self {
             // 对话
             Self::SetDialogueSpeaker(speaker) => {
@@ -118,19 +133,19 @@ impl StageEffect {
                     // 进入连续执行块后状态所属分类已更新, 现在要判定该状态是否更新
                     if speaker == textbox.speaker {
                         // 状态在同一连续执行块内发生重复更新, 应当诊断为重复警告
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置对话者为 `{speaker}`",
                         )));
                     } else if speaker == prev_stage.textbox.speaker {
                         // 状态在同一连续执行块内多次更新且最终换回进入连续执行块前的状态, 应诊断为重复警告
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置对话者为 `{speaker}` (原来是 `{}`, 现在还原到了进入连续执行块前的状态)",
                             textbox.speaker,
                         )));
                         textbox.speaker = speaker;
                     } else if textbox.speaker != prev_stage.textbox.speaker {
                         // 状态在同一连续执行块内多次更新, 应当诊断为重复且覆盖警告
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置对话者为 `{speaker}` (原来是 `{}`)",
                             textbox.speaker,
                         )));
@@ -148,18 +163,18 @@ impl StageEffect {
                 if let Some(textbox) = Rc::get_mut(&mut next_stage.textbox) {
                     if content == textbox.content {
                         if !content.is_empty() {
-                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                            diagnose(DiagnosticKind::RedundantEffect(format!(
                                 "设置对话内容为 `{content}`",
                             )));
                         }
                     } else if content == prev_stage.textbox.content {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置对话内容为 `{content}` (原来是 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             textbox.content,
                         )));
                         textbox.content = content;
                     } else if textbox.content != prev_stage.textbox.content {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置对话内容为 `{content}` (原来是 `{}`)",
                             textbox.content,
                         )));
@@ -172,7 +187,7 @@ impl StageEffect {
                 }
 
                 // 检查对话长度
-                validate_dialogue_length(&next_stage.textbox.content, diagnostics);
+                validate_dialogue_length(&next_stage.textbox.content, &mut diagnose);
             }
 
             Self::AddDialogueContent(content) => {
@@ -181,18 +196,18 @@ impl StageEffect {
                 if let Some(textbox) = Rc::get_mut(&mut next_stage.textbox) {
                     if content == textbox.content {
                         if !content.is_empty() {
-                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                            diagnose(DiagnosticKind::RedundantEffect(format!(
                                 "追加对话内容为 `{content}`",
                             )));
                         }
                     } else if content == prev_stage.textbox.content {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "追加对话内容为 `{content}` (原来是 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             textbox.content,
                         )));
                         textbox.content = content;
                     } else if textbox.content != prev_stage.textbox.content {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "追加对话内容为 `{content}` (原来是 `{}`)",
                             textbox.content,
                         )));
@@ -205,30 +220,30 @@ impl StageEffect {
                 }
 
                 // 检查对话长度
-                validate_dialogue_length(&next_stage.textbox.content, diagnostics);
+                validate_dialogue_length(&next_stage.textbox.content, &mut diagnose);
             }
 
             Self::SetDialogueFigure(id) => {
                 // 校验立绘是否存在
                 if !next_stage.figures.contains_key(&id) {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
             Self::SetTextboxVisibility(visible) => {
                 if let Some(textbox) = Rc::get_mut(&mut next_stage.textbox) {
                     if visible == textbox.visible {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置对话框可见性为 `{visible}`",
                         )));
                     } else if visible == prev_stage.textbox.visible {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置对话框可见性为 `{visible}` (原来是 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             textbox.visible,
                         )));
                         textbox.visible = visible;
                     } else if textbox.visible != prev_stage.textbox.visible {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置对话框可见性为 `{visible}` (原来是 `{}`)",
                             textbox.visible,
                         )));
@@ -245,7 +260,7 @@ impl StageEffect {
             Self::SetBackground(path) => {
                 if let Some(ref mut background) = next_stage.background {
                     if path == background.path {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景为 `{path}`",
                         )));
                     } else if prev_stage
@@ -253,7 +268,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|background| path == background.path)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景为 `{path}` (原来为 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             background.path,
                         )));
@@ -263,7 +278,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|prev_background| !Rc::ptr_eq(background, prev_background))
                     {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置背景为 `{path}` (原来是 `{}`)",
                             background.path,
                         )));
@@ -277,7 +292,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|background| path == background.path)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景为 `{path}` (原来为空, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
@@ -288,13 +303,13 @@ impl StageEffect {
             Self::RemoveBackground => {
                 if let Some(background) = next_stage.background.take() {
                     if prev_stage.background.is_none() {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景为空 (原来为 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             background.path,
                         )));
                     }
                 } else {
-                    diagnostics.push(DiagnosticKind::RedundantEffect(
+                    diagnose(DiagnosticKind::RedundantEffect(
                         "设置背景为空 (原来为空)".to_string(),
                     ));
                 }
@@ -302,7 +317,7 @@ impl StageEffect {
 
             Self::SetBackgroundTransform => {
                 if next_stage.background.is_none() {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(
+                    diagnose(DiagnosticKind::UndefinedSymbol(
                         SymbolKind::Background,
                         "bg-main".to_string(),
                     ));
@@ -316,7 +331,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|next_exit| *exit == *next_exit)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景退场动画为 `{exit}`",
                         )));
                     } else if prev_stage
@@ -330,13 +345,13 @@ impl StageEffect {
                                     .is_some_and(|prev_exit| *exit == *prev_exit)
                         })
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景退场动画为 `{exit}` (还原到了进入连续执行块前的状态)",
                         )));
                     }
                     Rc::make_mut(background).exit = Some(exit);
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(
+                    diagnose(DiagnosticKind::UndefinedSymbol(
                         SymbolKind::Background,
                         "bg-main".to_string(),
                     ));
@@ -348,14 +363,14 @@ impl StageEffect {
                 Entry::Occupied(mut o) => {
                     if path == o.get().path {
                         if Rc::get_mut(o.get_mut()).is_some() {
-                            diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                            diagnose(DiagnosticKind::RedundantEffect(format!(
                                 "设置立绘 `{id}` 为 `{path}`",
                             )));
                         }
                     } else if let Some(figure) = prev_stage.figures.get(&id)
                         && path == figure.path
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘 `{id}` 为 `{path}` (原来为 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             o.get().path,
                         )));
@@ -365,9 +380,9 @@ impl StageEffect {
                     }
                 }
                 Entry::Vacant(v) if prev_stage.figures.contains_key(&id) => {
-                    diagnostics.push(DiagnosticKind::RedundantEffect(format!(
-                            "设置立绘 `{id}` 为 `{path}` (原来为空, 建议移除上文无意义的立绘退场, 改为直接切换)",
-                        )));
+                    diagnose(DiagnosticKind::RedundantEffect(format!(
+                        "设置立绘 `{id}` 为 `{path}` (原来为空, 建议移除上文无意义的立绘退场, 改为直接切换)",
+                    )));
                     v.insert(Rc::new(Figure::new(path)));
                 }
                 Entry::Vacant(v) => {
@@ -379,25 +394,25 @@ impl StageEffect {
                 if let Some(figure) = next_stage.figures.remove(&id) {
                     if let Some(prev_figure) = prev_stage.figures.get(&id) {
                         if figure.path != prev_figure.path {
-                            diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                            diagnose(DiagnosticKind::OverriddenEffect(format!(
                                 "设置立绘 `{id}` 为空 (原来为 `{}`)",
                                 figure.path,
                             )));
                         }
                     } else {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘 `{id}` 为空 (原来为 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             figure.path,
                         )));
                     }
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
             Self::SetFigureTransform(id) => {
                 if !next_stage.figures.contains_key(&id) {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
@@ -408,7 +423,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|next_exit| *exit == *next_exit)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘退场动画为 `{exit}`",
                         )));
                     } else if prev_stage.figures.get(&id).is_some_and(|prev_figure| {
@@ -418,13 +433,13 @@ impl StageEffect {
                                 .as_ref()
                                 .is_some_and(|prev_exit| *exit == *prev_exit)
                     }) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘退场动画为 `{exit}` (还原到了进入连续执行块前的状态)",
                         )));
                     }
                     Rc::make_mut(figure).exit = Some(exit);
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
@@ -435,7 +450,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|next_motion| *motion == *next_motion)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘动作为 `{motion}`",
                         )));
                     } else if prev_stage.figures.get(&id).is_some_and(|prev_figure| {
@@ -445,13 +460,13 @@ impl StageEffect {
                                 .as_ref()
                                 .is_some_and(|prev_motion| *motion == *prev_motion)
                     }) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘动作为 `{motion}` (还原到了进入连续执行块前的状态)",
                         )));
                     }
                     Rc::make_mut(figure).motion = Some(motion);
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
@@ -462,7 +477,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|next_expression| *expression == *next_expression)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘 Live2D 表情为 `{expression}`",
                         )));
                     } else if prev_stage.figures.get(&id).is_some_and(|prev_figure| {
@@ -472,13 +487,13 @@ impl StageEffect {
                                 .as_ref()
                                 .is_some_and(|prev_expression| *expression == *prev_expression)
                     }) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置立绘 Live2D 表情为 `{expression}` (还原到了进入连续执行块前的状态)",
                         )));
                     }
                     Rc::make_mut(figure).expression = Some(expression);
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Figure, id));
                 }
             }
 
@@ -486,11 +501,11 @@ impl StageEffect {
             Self::SetBgm(path) => {
                 if let Some(ref mut bgm) = next_stage.bgm {
                     if path == **bgm {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景音乐为 `{path}`",
                         )));
                     } else if prev_stage.bgm.as_ref().is_some_and(|bgm| path == **bgm) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景音乐为 `{path}` (原来为 `{bgm}`, 但现在还原到了进入连续执行块前的状态)",
                         )));
                         *bgm = Rc::new(path);
@@ -499,7 +514,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|prev_bgm| !Rc::ptr_eq(bgm, prev_bgm))
                     {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置背景音乐为 `{path}` (原来是 `{bgm}`)",
                         )));
                         *bgm = Rc::new(path);
@@ -508,7 +523,7 @@ impl StageEffect {
                     }
                 } else {
                     if prev_stage.bgm.as_ref().is_some_and(|bgm| path == **bgm) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景音乐为 `{path}` (原来为空, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
@@ -519,12 +534,12 @@ impl StageEffect {
             Self::RemoveBgm => {
                 if let Some(bgm) = next_stage.bgm.take() {
                     if prev_stage.bgm.is_none() {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置背景音乐为空 (原来为 `{bgm}`, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
                 } else {
-                    diagnostics.push(DiagnosticKind::RedundantEffect(
+                    diagnose(DiagnosticKind::RedundantEffect(
                         "设置背景音乐为空 (原来为空)".to_string(),
                     ));
                 }
@@ -534,19 +549,19 @@ impl StageEffect {
             Self::SetLoopingSound(id, path) => match next_stage.sounds.entry(id.clone()) {
                 Entry::Occupied(mut o) => {
                     if path == **o.get() {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置效果音 `{id}` 为 `{path}`",
                         )));
                     } else if let Some(prev_sound) = prev_stage.sounds.get(&id)
                         && path == **prev_sound
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置效果音 `{id}` 为 `{path}` (原来为 `{}`, 但现在还原到了进入连续执行块前的状态)",
                             **o.get(),
                         )));
                         o.insert(Rc::new(path));
                     } else {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置效果音 `{id}` 为 `{path}` (原来为 `{}`)",
                             **o.get(),
                         )));
@@ -557,7 +572,7 @@ impl StageEffect {
                     if let Some(prev_sound) = prev_stage.sounds.get(&id)
                         && path == **prev_sound
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置效果音 `{id}` 为 `{path}` (原来为空, 现在还原到了进入连续执行块前的状态)",
                         )));
                     }
@@ -568,18 +583,18 @@ impl StageEffect {
             Self::RemoveLoopingSound(id) => {
                 if let Some(sound) = next_stage.sounds.remove(&id) {
                     if !prev_stage.sounds.contains_key(&id) {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置效果音 `{id}` 为空 (原来为 `{sound}`, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
                 } else {
-                    diagnostics.push(DiagnosticKind::UndefinedSymbol(SymbolKind::Sound, id));
+                    diagnose(DiagnosticKind::UndefinedSymbol(SymbolKind::Sound, id));
                 }
             }
 
             Self::RemoveAllLoopingSound => {
                 if !next_stage.sounds.is_empty() && prev_stage.sounds.is_empty() {
-                    diagnostics.push(DiagnosticKind::RedundantEffect(
+                    diagnose(DiagnosticKind::RedundantEffect(
                         "清空效果音 (还原到了进入连续执行块前的状态)".to_string(),
                     ));
                 }
@@ -590,7 +605,7 @@ impl StageEffect {
             Self::SetStagePixiEffect(pixi) => {
                 if let Some(ref mut next_pixi) = next_stage.pixi {
                     if pixi == **next_pixi {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置舞台 Pixi 特效为 `{pixi}`",
                         )));
                     } else if prev_stage
@@ -598,7 +613,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|prev_pixi| pixi == **prev_pixi)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置舞台 Pixi 特效为 `{pixi}` (原来为 `{next_pixi}`, 但现在还原到了进入连续执行块前的状态)",
                         )));
                         *next_pixi = Rc::new(pixi);
@@ -607,7 +622,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|prev_pixi| !Rc::ptr_eq(next_pixi, prev_pixi))
                     {
-                        diagnostics.push(DiagnosticKind::OverriddenEffect(format!(
+                        diagnose(DiagnosticKind::OverriddenEffect(format!(
                             "设置舞台 Pixi 特效为 `{pixi}` (原来是 `{next_pixi}`)",
                         )));
                         *next_pixi = Rc::new(pixi);
@@ -620,7 +635,7 @@ impl StageEffect {
                         .as_ref()
                         .is_some_and(|prev_pixi| pixi == **prev_pixi)
                     {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置舞台 Pixi 特效为 `{pixi}` (原来为空, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
@@ -631,12 +646,12 @@ impl StageEffect {
             Self::RemoveStagePixiEffect => {
                 if let Some(pixi) = next_stage.pixi.take() {
                     if prev_stage.pixi.is_none() {
-                        diagnostics.push(DiagnosticKind::RedundantEffect(format!(
+                        diagnose(DiagnosticKind::RedundantEffect(format!(
                             "设置舞台 Pixi 特效为空 (原来为 `{pixi}`, 但现在还原到了进入连续执行块前的状态)",
                         )));
                     }
                 } else {
-                    diagnostics.push(DiagnosticKind::RedundantEffect(
+                    diagnose(DiagnosticKind::RedundantEffect(
                         "设置舞台 Pixi 特效为空 (原来为空)".to_string(),
                     ));
                 }
@@ -652,12 +667,13 @@ trait ToEffects {
     /// 此函数为 [`Self::extend_effects`] 的封装, 若要实现相关功能请重载其.
     fn to_effects<'a, P: ProjectView<'a>>(
         &self,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) -> Vec<StageEffect> {
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
+    ) -> Vec<(DiagnosticLocation, StageEffect)> {
         let mut effects = Vec::new();
-        self.extend_effects(variables, project, &mut effects, diagnostics);
+        self.extend_effects(primary, variables, project, &mut effects, diagnostics);
         effects
     }
 
@@ -665,10 +681,11 @@ trait ToEffects {
     #[allow(unused_variables)]
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         Default::default()
     }
@@ -677,12 +694,13 @@ trait ToEffects {
 impl ToEffects for Sentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        dispatch_sentence!(self.extend_effects(variables, project, effects, diagnostics))
+        dispatch_sentence!(self.extend_effects(primary, variables, project, effects, diagnostics))
     }
 }
 
@@ -693,35 +711,66 @@ impl ToEffects for Sentence {
 impl ToEffects for SaySentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
+        let (speaker_span, content_span) = if primary.content.is_some() {
+            (DiagnosticLocation::Command, DiagnosticLocation::Content)
+        } else {
+            (
+                DiagnosticLocation::ArgumentValue("speaker"),
+                DiagnosticLocation::Command,
+            )
+        };
+
         if let Some(speaker) = &self.speaker {
-            effects.push(StageEffect::SetDialogueSpeaker(
-                interpolate_or_record(speaker, variables, diagnostics).to_string(),
+            effects.push((
+                speaker_span.clone(),
+                StageEffect::SetDialogueSpeaker(
+                    interpolate_or_record(speaker, variables, speaker_span, diagnostics)
+                        .to_string(),
+                ),
             ));
         }
 
         let content = itertools::intersperse(
             self.content.iter().map(|text| {
                 TokenSplit::new(text)
-                    .map(|token| interpolate_or_record(token.text, variables, diagnostics))
+                    .map(|token| {
+                        interpolate_or_record(
+                            token.text,
+                            variables,
+                            content_span.clone(),
+                            diagnostics,
+                        )
+                    })
                     .collect()
             }),
             "|".to_string(),
         )
         .collect();
         if self.concat {
-            effects.push(StageEffect::AddDialogueContent(content));
+            effects.push((content_span, StageEffect::AddDialogueContent(content)));
         } else {
-            effects.push(StageEffect::SetDialogueContent(content));
+            effects.push((content_span, StageEffect::SetDialogueContent(content)));
         }
 
         if let Some(figure) = &self.figure {
-            effects.push(StageEffect::SetDialogueFigure(
-                interpolate_or_record(figure.get_id(), variables, diagnostics).to_string(),
+            let span = match figure {
+                FigureId::Id(_) => DiagnosticLocation::ArgumentValue("figureId"),
+                FigureId::Side(side) => {
+                    DiagnosticLocation::ArgumentName(argument_name_of_figure_side(*side))
+                }
+            };
+            effects.push((
+                span.clone(),
+                StageEffect::SetDialogueFigure(
+                    interpolate_or_record(figure.get_id(), variables, span, diagnostics)
+                        .to_string(),
+                ),
             ));
         }
     }
@@ -730,17 +779,19 @@ impl ToEffects for SaySentence {
 impl ToEffects for ChangeBackgroundSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
-        variables: &HashMap<String, Value>,
+        _primary: &PrimarySentence<'a>,
+        _variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        _diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         if let Some(path) = &self.background {
-            effects.push(StageEffect::SetBackground(
-                interpolate_or_record(path, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::SetBackground(path.to_string()),
             ))
         } else {
-            effects.push(StageEffect::RemoveBackground);
+            effects.push((DiagnosticLocation::Content, StageEffect::RemoveBackground));
             return;
         }
 
@@ -750,8 +801,9 @@ impl ToEffects for ChangeBackgroundSentence {
         //     )));
         // }
         if let Some(exit) = &self.exit {
-            effects.push(StageEffect::SetBackgroundExitAnimation(
-                interpolate_or_record(exit, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::ArgumentValue("exit"),
+                StageEffect::SetBackgroundExitAnimation(exit.to_string()),
             ));
         }
     }
@@ -760,21 +812,35 @@ impl ToEffects for ChangeBackgroundSentence {
 impl ToEffects for ChangeFigureSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         let id_raw = self.get_id();
-        let id = interpolate_or_record(&id_raw, variables, diagnostics);
+        let id = interpolate_or_record(
+            &id_raw,
+            variables,
+            match id_raw {
+                FigureId::Id(_) => DiagnosticLocation::ArgumentValue("id"),
+                FigureId::Side(side) => {
+                    DiagnosticLocation::ArgumentName(argument_name_of_figure_side(side))
+                }
+            },
+            diagnostics,
+        );
 
         if let Some(path) = &self.figure {
-            effects.push(StageEffect::SetFigure(
-                id.to_string(),
-                interpolate_or_record(path, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::SetFigure(id.to_string(), path.to_string()),
             ));
         } else {
-            effects.push(StageEffect::RemoveFigure(id.to_string()));
+            effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::RemoveFigure(id.to_string()),
+            ));
             return;
         }
 
@@ -785,22 +851,22 @@ impl ToEffects for ChangeFigureSentence {
         //     ));
         // }
         if let Some(exit) = &self.exit {
-            effects.push(StageEffect::SetFigureExitAnimation(
-                id.to_string(),
-                interpolate_or_record(exit, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::ArgumentValue("exit"),
+                StageEffect::SetFigureExitAnimation(id.to_string(), exit.to_string()),
             ));
         }
 
         if let Some(motion) = &self.motion {
-            effects.push(StageEffect::SetFigureMotion(
-                id.to_string(),
-                interpolate_or_record(motion, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::ArgumentValue("motion"),
+                StageEffect::SetFigureMotion(id.to_string(), motion.to_string()),
             ));
         }
         if let Some(expression) = &self.expression {
-            effects.push(StageEffect::SetFigureExpression(
-                id.to_string(),
-                interpolate_or_record(expression, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::ArgumentValue("expression"),
+                StageEffect::SetFigureExpression(id.to_string(), expression.to_string()),
             ));
         }
     }
@@ -809,58 +875,57 @@ impl ToEffects for ChangeFigureSentence {
 impl ToEffects for BgmSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
-        variables: &HashMap<String, Value>,
+        _primary: &PrimarySentence<'a>,
+        _variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        _diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         if let Some(path) = &self.bgm {
-            effects.push(StageEffect::SetBgm(
-                interpolate_or_record(path, variables, diagnostics).to_string(),
+            effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::SetBgm(path.to_string()),
             ));
         } else {
-            effects.push(StageEffect::RemoveBgm);
+            effects.push((DiagnosticLocation::Content, StageEffect::RemoveBgm));
         }
     }
 }
 
-impl ToEffects for PlayVideoSentence {
-    fn extend_effects<'a, P: ProjectView<'a>>(
-        &self,
-        variables: &HashMap<String, Value>,
-        _project: &Project<'a, P>,
-        _effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
-    ) {
-        interpolate_or_record(&self.video, variables, diagnostics);
-    }
-}
+impl ToEffects for PlayVideoSentence {}
 
 impl ToEffects for PlayEffectSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        let id = self
-            .id
-            .as_ref()
-            .map(|id| interpolate_or_record(id, variables, diagnostics));
-        let path = self
-            .vocal
-            .as_ref()
-            .map(|path| interpolate_or_record(path, variables, diagnostics));
+        let id = self.id.as_ref().map(|id| {
+            interpolate_or_record(
+                id,
+                variables,
+                DiagnosticLocation::ArgumentValue("id"),
+                diagnostics,
+            )
+        });
 
-        match (id, path) {
-            (Some(id), Some(path)) => effects.push(StageEffect::SetLoopingSound(
-                id.to_string(),
-                path.to_string(),
+        match (id, &self.vocal) {
+            (Some(id), Some(path)) => effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::SetLoopingSound(id.to_string(), path.to_string()),
             )),
-            (Some(id), None) => effects.push(StageEffect::RemoveLoopingSound(id.to_string())),
+            (Some(id), None) => effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::RemoveLoopingSound(id.to_string()),
+            )),
             (None, Some(_path)) => {}
-            (None, None) => effects.push(StageEffect::RemoveAllLoopingSound),
+            (None, None) => effects.push((
+                DiagnosticLocation::Content,
+                StageEffect::RemoveAllLoopingSound,
+            )),
         }
     }
 }
@@ -870,10 +935,11 @@ impl ToEffects for PlayEffectSentence {
 impl ToEffects for SetAnimationSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         let id = match &self.target {
             Some(v) => v,
@@ -886,8 +952,13 @@ impl ToEffects for SetAnimationSentence {
         // };
 
         // effects.push(make_transform_effect(transform, id, variables, diagnostics));
-        if let Some(effect) = make_transform_effect(id, variables, diagnostics) {
-            effects.push(effect);
+        if let Some(effect) = make_transform_effect(
+            id,
+            variables,
+            DiagnosticLocation::ArgumentValue("target"),
+            diagnostics,
+        ) {
+            effects.push((DiagnosticLocation::Content, effect));
         }
     }
 }
@@ -897,10 +968,11 @@ impl ToEffects for SetComplexAnimationSentence {}
 impl ToEffects for SetTransformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         let id = match &self.target {
             Some(v) => v,
@@ -913,8 +985,13 @@ impl ToEffects for SetTransformSentence {
         // }
 
         // effects.push(make_transform_effect(transform, id, variables, diagnostics));
-        if let Some(effect) = make_transform_effect(id, variables, diagnostics) {
-            effects.push(effect);
+        if let Some(effect) = make_transform_effect(
+            id,
+            variables,
+            DiagnosticLocation::ArgumentValue("target"),
+            diagnostics,
+        ) {
+            effects.push((DiagnosticLocation::Content, effect));
         }
     }
 }
@@ -922,10 +999,11 @@ impl ToEffects for SetTransformSentence {
 impl ToEffects for SetTempAnimationSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         let id = match &self.target {
             Some(v) => v,
@@ -935,8 +1013,13 @@ impl ToEffects for SetTempAnimationSentence {
         // let transform = Box::new(merge_animations(&self.animation, self.write_default));
 
         // effects.push(make_transform_effect(transform, id, variables, diagnostics));
-        if let Some(effect) = make_transform_effect(id, variables, diagnostics) {
-            effects.push(effect);
+        if let Some(effect) = make_transform_effect(
+            id,
+            variables,
+            DiagnosticLocation::ArgumentValue("target"),
+            diagnostics,
+        ) {
+            effects.push((DiagnosticLocation::Content, effect));
         }
     }
 }
@@ -944,10 +1027,11 @@ impl ToEffects for SetTempAnimationSentence {
 impl ToEffects for SetTransitionSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         let id = match &self.target {
             Some(v) => v,
@@ -955,15 +1039,24 @@ impl ToEffects for SetTransitionSentence {
         };
 
         if let Some(exit) = &self.exit {
-            let exit = interpolate_or_record(exit, variables, diagnostics);
             match id {
                 ObjectId::Stage => {}
-                ObjectId::Background => {
-                    effects.push(StageEffect::SetBackgroundExitAnimation(exit.to_string()))
-                }
-                ObjectId::Figure(id) => effects.push(StageEffect::SetFigureExitAnimation(
-                    interpolate_or_record(id, variables, diagnostics).to_string(),
-                    exit.to_string(),
+                ObjectId::Background => effects.push((
+                    DiagnosticLocation::ArgumentValue("exit"),
+                    StageEffect::SetBackgroundExitAnimation(exit.to_string()),
+                )),
+                ObjectId::Figure(id) => effects.push((
+                    DiagnosticLocation::ArgumentValue("exit"),
+                    StageEffect::SetFigureExitAnimation(
+                        interpolate_or_record(
+                            id,
+                            variables,
+                            DiagnosticLocation::ArgumentValue("exit"),
+                            diagnostics,
+                        )
+                        .to_string(),
+                        exit.to_string(),
+                    ),
                 )),
             }
         }
@@ -975,13 +1068,15 @@ impl ToEffects for SetTransitionSentence {
 impl ToEffects for PixiPerformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
-        variables: &HashMap<String, Value>,
+        _primary: &PrimarySentence<'a>,
+        _variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        _diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        effects.push(StageEffect::SetStagePixiEffect(
-            interpolate_or_record(&self.effect, variables, diagnostics).to_string(),
+        effects.push((
+            DiagnosticLocation::Content,
+            StageEffect::SetStagePixiEffect(self.effect.clone()),
         ));
     }
 }
@@ -989,25 +1084,30 @@ impl ToEffects for PixiPerformSentence {
 impl ToEffects for PixiInitSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         _variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        _diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        _diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        effects.push(StageEffect::RemoveStagePixiEffect);
+        effects.push((
+            DiagnosticLocation::Content,
+            StageEffect::RemoveStagePixiEffect,
+        ));
     }
 }
 
 impl ToEffects for IntroSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        _effects: &mut Vec<StageEffect>,
-        diagnostics: &mut Vec<DiagnosticKind>,
+        _effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
         for text in &self.content {
-            interpolate_or_record(text, variables, diagnostics);
+            interpolate_or_record(text, variables, DiagnosticLocation::Content, diagnostics);
         }
     }
 }
@@ -1017,12 +1117,16 @@ impl ToEffects for MiniAvatarSentence {}
 impl ToEffects for SetTextboxSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
+        _primary: &PrimarySentence<'a>,
         _variables: &HashMap<String, Value>,
         _project: &Project<'a, P>,
-        effects: &mut Vec<StageEffect>,
-        _diagnostics: &mut Vec<DiagnosticKind>,
+        effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
+        _diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        effects.push(StageEffect::SetTextboxVisibility(self.show));
+        effects.push((
+            DiagnosticLocation::Content,
+            StageEffect::SetTextboxVisibility(self.show),
+        ));
     }
 }
 
@@ -1121,10 +1225,11 @@ fn interpolate<'a>(
 fn interpolate_or_record<'a>(
     input: &'a str,
     variables: &HashMap<String, Value>,
-    diagnostics: &mut Vec<DiagnosticKind>,
+    span: DiagnosticLocation,
+    diagnostics: &mut Vec<PrimaryDiagnostic>,
 ) -> Cow<'a, str> {
     interpolate(input, variables).unwrap_or_else(|error| {
-        diagnostics.push(error);
+        diagnostics.push(error.into_primary_diagnostic(span));
         Cow::Borrowed(input)
     })
 }
@@ -1133,7 +1238,7 @@ fn interpolate_or_record<'a>(
 //     transform: Box<Transform>,
 //     id: &ObjectId,
 //     variables: &HashMap<String, Value>,
-//     diagnostics: &mut Vec<DiagnosticKind>,
+//     diagnostics: &mut Vec<PrimaryDiagnostic>,
 // ) -> StageEffect {
 //     match id {
 //         ObjectId::Stage => StageEffect::SetStageTransform(transform),
@@ -1147,12 +1252,13 @@ fn interpolate_or_record<'a>(
 fn make_transform_effect(
     id: &ObjectId,
     variables: &HashMap<String, Value>,
-    diagnostics: &mut Vec<DiagnosticKind>,
+    span: DiagnosticLocation,
+    diagnostics: &mut Vec<PrimaryDiagnostic>,
 ) -> Option<StageEffect> {
     match id {
         ObjectId::Background => Some(StageEffect::SetBackgroundTransform),
         ObjectId::Figure(id) => Some(StageEffect::SetFigureTransform(
-            interpolate_or_record(id, variables, diagnostics).to_string(),
+            interpolate_or_record(id, variables, span, diagnostics).to_string(),
         )),
         ObjectId::Stage => None,
     }
@@ -1176,12 +1282,27 @@ fn make_transform_effect(
 /// * `|` 视为换行符.
 /// * 每 30 个逻辑字符数发生一次自动换行.
 /// * 最大行数为 2.
-fn validate_dialogue_length(content: &str, diagnostics: &mut Vec<DiagnosticKind>) {
+fn validate_dialogue_length<F>(content: &str, f: F)
+where
+    F: FnOnce(DiagnosticKind),
+{
     let total_lines = content
         .split('|')
         .map(|line| line.chars().count().div_ceil(30))
         .sum();
     if total_lines > 2 {
-        diagnostics.push(DiagnosticKind::DialogueTooLong(total_lines));
+        f(DiagnosticKind::DialogueTooLong(total_lines));
+    }
+}
+
+fn argument_name_of_figure_side(side: FigureSide) -> &'static str {
+    match side {
+        FigureSide::Center => "center",
+        FigureSide::Left => "left",
+        FigureSide::Left13 => "left13",
+        FigureSide::Left14 => "left14",
+        FigureSide::Right => "right",
+        FigureSide::Right13 => "right13",
+        FigureSide::Right14 => "right14",
     }
 }

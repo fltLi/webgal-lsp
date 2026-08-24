@@ -6,10 +6,12 @@ use derive_more::From;
 use serde_json::Value;
 use webgal_language_core::{
     element::Forward,
-    sentence::{GetUserInputSentence, Sentence},
+    sentence::{GetUserInputSentence, Sentence as SentenceKind},
 };
 
-use crate::{DiagnosticKind, DiagnosticList, StopReason, SymbolKind, scene::*, state::*};
+use crate::{
+    DiagnosticKind, DiagnosticList, DiagnosticLocation, StopReason, SymbolKind, scene::*, state::*,
+};
 
 /// 模拟执行入口场景
 pub const START_SCENE: &str = "start.txt";
@@ -49,7 +51,7 @@ pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
 struct Simulator<'a, 'b, P: ProjectView<'a>> {
     // 读取
     project: &'b Project<'a, P>,
-    scene: &'b Scene<'a>,
+    scene: &'b SceneInfo<'a>,
     last_sentence: Option<&'b SentenceInfo<'a>>,
     // 状态
     location: SentenceLocation,
@@ -87,7 +89,9 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             self.state
                 .evaluate_expression_as_bool(condition)
                 .unwrap_or_else(|error| {
-                    sentence.push_diagnostic(error);
+                    sentence.push_diagnostic(
+                        error.into_primary_diagnostic(DiagnosticLocation::ArgumentValue("when")),
+                    );
                     false
                 })
         });
@@ -98,13 +102,17 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
 
         // 尝试注册执行上下文状态到检查点
         if !sentence.register_execution(|| self.state.hash_execution()) {
-            sentence.push_diagnostic(DiagnosticKind::Stopped(StopReason::Checkpoint));
+            sentence.push_diagnostic(
+                DiagnosticKind::Stopped(StopReason::Checkpoint)
+                    .into_primary_diagnostic(DiagnosticLocation::Command),
+            );
             return StepOutcome::Halt;
         }
 
         // 计算舞台状态增量
         self.state.push_sentence_deltas(
             sentence.sentence(),
+            &sentence.sentence().primary,
             self.project,
             sentence.diagnostics().clone(),
         );
@@ -120,18 +128,21 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
         self.last_sentence = Some(sentence);
 
         // 针对不同语句执行不同补充策略
-        match sentence.sentence() {
+        match &sentence.sentence().sentence {
             // 调用场景
-            Sentence::CallScene(s) => {
+            SentenceKind::CallScene(s) => {
                 // 获取跳转目标
                 let next_scene_name = &s.scene;
                 let next_scene = match self.project.scenes().get(next_scene_name) {
                     Some(v) => v,
                     None => {
-                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
-                            SymbolKind::Scene,
-                            next_scene_name.clone(),
-                        ));
+                        sentence.push_diagnostic(
+                            DiagnosticKind::UndefinedSymbol(
+                                SymbolKind::Scene,
+                                next_scene_name.clone(),
+                            )
+                            .into_primary_diagnostic(DiagnosticLocation::Content),
+                        );
                         return StepOutcome::Halt;
                     }
                 };
@@ -147,16 +158,19 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 切换场景
-            Sentence::ChangeScene(s) => {
+            SentenceKind::ChangeScene(s) => {
                 // 获取跳转目标
                 let next_scene_name = &s.scene;
                 let next_scene = match self.project.scenes().get(next_scene_name) {
                     Some(v) => v,
                     None => {
-                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
-                            SymbolKind::Scene,
-                            next_scene_name.clone(),
-                        ));
+                        sentence.push_diagnostic(
+                            DiagnosticKind::UndefinedSymbol(
+                                SymbolKind::Scene,
+                                next_scene_name.clone(),
+                            )
+                            .into_primary_diagnostic(DiagnosticLocation::Content),
+                        );
                         return StepOutcome::Halt;
                     }
                 };
@@ -171,7 +185,7 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 分支选择
-            Sentence::Choose(s) => {
+            SentenceKind::Choose(s) => {
                 s.choices
                     .iter()
                     .filter_map(|choice| {
@@ -188,7 +202,11 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                                 self.state
                                     .evaluate_expression_as_bool(condition)
                                     .unwrap_or_else(|error| {
-                                        sentence.push_diagnostic(error);
+                                        sentence.push_diagnostic(
+                                            error.into_primary_diagnostic(
+                                                DiagnosticLocation::Content,
+                                            ),
+                                        );
                                         false
                                     })
                             });
@@ -206,10 +224,13 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                             match self.state.labels().get(target) {
                                 Some(location) => location.clone(),
                                 None => {
-                                    sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
-                                        SymbolKind::Label,
-                                        target.clone(),
-                                    ));
+                                    sentence.push_diagnostic(
+                                        DiagnosticKind::UndefinedSymbol(
+                                            SymbolKind::Label,
+                                            target.clone(),
+                                        )
+                                        .into_primary_diagnostic(DiagnosticLocation::Content),
+                                    );
                                     return None;
                                 }
                             }
@@ -219,10 +240,13 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                         let next_scene = match self.project.scenes().get(&location.scene) {
                             Some(v) => v,
                             None => {
-                                sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
-                                    SymbolKind::Scene,
-                                    location.scene,
-                                ));
+                                sentence.push_diagnostic(
+                                    DiagnosticKind::UndefinedSymbol(
+                                        SymbolKind::Scene,
+                                        location.scene,
+                                    )
+                                    .into_primary_diagnostic(DiagnosticLocation::Content),
+                                );
                                 return None;
                             }
                         };
@@ -238,15 +262,15 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 跳转标签
-            Sentence::JumpLabel(s) => {
+            SentenceKind::JumpLabel(s) => {
                 // 获取跳转目标
                 let location = match self.state.labels().get(&s.label) {
                     Some(location) => location.clone(),
                     None => {
-                        sentence.push_diagnostic(DiagnosticKind::UndefinedSymbol(
-                            SymbolKind::Label,
-                            s.label.clone(),
-                        ));
+                        sentence.push_diagnostic(
+                            DiagnosticKind::UndefinedSymbol(SymbolKind::Label, s.label.clone())
+                                .into_primary_diagnostic(DiagnosticLocation::Content),
+                        );
                         return StepOutcome::Halt;
                     }
                 };
@@ -259,7 +283,7 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 用户输入
-            Sentence::GetUserInput(s) => {
+            SentenceKind::GetUserInput(s) => {
                 // 收集代入值
                 let values: Vec<_> = match &**s {
                     GetUserInputSentence { lint_values, .. } if !lint_values.is_empty() => {
@@ -270,9 +294,10 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                         ..
                     } => vec![value],
                     _ => {
-                        sentence.push_diagnostic(DiagnosticKind::Stopped(
-                            StopReason::MissingUserInputValue,
-                        ));
+                        sentence.push_diagnostic(
+                            DiagnosticKind::Stopped(StopReason::MissingUserInputValue)
+                                .into_primary_diagnostic(DiagnosticLocation::Command),
+                        );
                         return StepOutcome::Halt;
                     }
                 };
@@ -292,14 +317,16 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 设置变量
-            Sentence::SetVar(s) => {
+            SentenceKind::SetVar(s) => {
                 let (variable, expression) = &s.expression;
 
                 // 计算新值
                 let value = match self.state.evaluate_expression(expression) {
                     Ok(v) => v,
                     Err(error) => {
-                        sentence.push_diagnostic(error);
+                        sentence.push_diagnostic(
+                            error.into_primary_diagnostic(DiagnosticLocation::Content),
+                        );
                         return StepOutcome::Halt;
                     }
                 };
@@ -310,18 +337,24 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 等待语句
-            Sentence::Wait(_) => {
+            SentenceKind::Wait(_) => {
                 // 检查连续执行是否被 wait 语句打断
                 if delta_applied {
-                    sentence.push_diagnostic(DiagnosticKind::WaitAtEndOfChain);
+                    sentence.push_diagnostic(
+                        DiagnosticKind::WaitAtEndOfChain
+                            .into_primary_diagnostic(DiagnosticLocation::Command),
+                    );
                 }
 
                 self.into()
             }
 
             // 结束游戏
-            Sentence::End(_) => {
-                sentence.push_diagnostic(DiagnosticKind::Stopped(StopReason::NormalTermination));
+            SentenceKind::End(_) => {
+                sentence.push_diagnostic(
+                    DiagnosticKind::Stopped(StopReason::NormalTermination)
+                        .into_primary_diagnostic(DiagnosticLocation::Command),
+                );
                 StepOutcome::Halt
             }
 
@@ -342,8 +375,10 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             // 正常结束
             None => {
                 if let Some(sentence) = self.last_sentence {
-                    sentence
-                        .push_diagnostic(DiagnosticKind::Stopped(StopReason::NormalTermination));
+                    sentence.push_diagnostic(
+                        DiagnosticKind::Stopped(StopReason::NormalTermination)
+                            .into_primary_diagnostic(DiagnosticLocation::Command),
+                    );
                 }
                 None
             }
