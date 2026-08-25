@@ -1,8 +1,10 @@
 use std::{
     borrow::Cow,
     fmt::{self, Write},
+    str::FromStr,
 };
 
+use expression::Expression;
 use regex::Regex;
 #[cfg(feature = "serde")]
 use serde::Serialize;
@@ -18,7 +20,7 @@ use crate::{
 // -------- 常规演出 --------
 
 /// 普通对话语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct SaySentence {
     pub content: Vec<String>,
@@ -30,11 +32,11 @@ pub struct SaySentence {
     // 控制
     pub concat: bool,
     pub notend: bool,
-    pub when: Option<String>,
+    pub when: Option<Expression>,
 }
 
 /// 切换背景语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "changeBg", validate = Self::validate)]
 pub struct ChangeBackgroundSentence {
@@ -60,12 +62,12 @@ pub struct ChangeBackgroundSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 切换立绘语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "changeFigure",
@@ -125,8 +127,8 @@ pub struct ChangeFigureSentence {
     pub exit_duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 impl ChangeFigureSentence {
@@ -139,7 +141,7 @@ impl ChangeFigureSentence {
 }
 
 /// 背景音乐语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "bgm",
@@ -160,12 +162,12 @@ pub struct BgmSentence {
     #[sentence(require = ["unlockname"])]
     pub series: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 播放视频语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "playVideo",
@@ -181,12 +183,12 @@ pub struct PlayVideoSentence {
     // 控制
     #[sentence(rename = "skipOff")]
     pub skip_off: bool,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 效果声音语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "playEffect",
@@ -203,14 +205,14 @@ pub struct PlayEffectSentence {
     // 效果
     pub volume: Option<u32>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 舞台对象控制 --------
 
 /// 调用动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setAnimation")]
 pub struct SetAnimationSentence {
@@ -225,12 +227,12 @@ pub struct SetAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 复杂动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setComplexAnimation")]
 pub struct SetComplexAnimationSentence {
@@ -244,12 +246,12 @@ pub struct SetComplexAnimationSentence {
     pub duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 单段动画语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setTransform", validate = Self::validate)]
 pub struct SetTransformSentence {
@@ -267,12 +269,12 @@ pub struct SetTransformSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 多段动画语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "setTempAnimation", validate = Self::validate)]
 pub struct SetTempAnimationSentence {
@@ -287,12 +289,12 @@ pub struct SetTempAnimationSentence {
     pub sustain: Sustain,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 进出场动画语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setTransition",
@@ -309,14 +311,14 @@ pub struct SetTransitionSentence {
     #[sentence(resource = animation_resource_of)]
     pub exit: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 特殊演出 --------
 
 /// 使用特效语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "pixiPerform",
@@ -330,12 +332,12 @@ pub struct PixiPerformSentence {
     #[sentence(content)]
     pub effect: String,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 清除特效语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "pixiInit",
@@ -347,12 +349,12 @@ pub struct PixiPerformSentence {
 )]
 pub struct PixiInitSentence {
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 全屏文字语句
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "intro",
@@ -391,12 +393,12 @@ pub struct IntroSentence {
     pub hold: bool,
     #[sentence(rename = "userForward")]
     pub user_forward: bool,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 角落头像语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "miniAvatar",
@@ -410,12 +412,12 @@ pub struct MiniAvatarSentence {
     #[sentence(content, resource = Figure)]
     pub avatar: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 文本显示语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setTextbox",
@@ -429,12 +431,12 @@ pub struct SetTextboxSentence {
     #[sentence(content, serialize_with = display_show, deserialize_with = parse_show)]
     pub show: bool,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 电影模式语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "filmMode",
@@ -448,14 +450,14 @@ pub struct FilmModeSentence {
     #[sentence(content, serialize_with = display_enable, deserialize_with = parse_enable)]
     pub enable: bool,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 场景与分支 --------
 
 /// 调用场景语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "callScene",
@@ -469,12 +471,12 @@ pub struct CallSceneSentence {
     #[sentence(content, resource = Scene)]
     pub scene: String,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 切换场景语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "changeScene",
@@ -488,12 +490,12 @@ pub struct ChangeSceneSentence {
     #[sentence(content, resource = Scene)]
     pub scene: String,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 分支选择语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "choose",
@@ -515,12 +517,12 @@ pub struct ChooseSentence {
     // 控制
     #[sentence(rename = "defaultChoice")]
     pub default_choice: Option<u8>,
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 标签语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "label",
@@ -534,12 +536,12 @@ pub struct LabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 跳转标签语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "jumpLabel",
@@ -553,14 +555,14 @@ pub struct JumpLabelSentence {
     #[sentence(content)]
     pub label: String,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 鉴赏 --------
 
 /// 鉴赏图片语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "unlockCg",
@@ -578,12 +580,12 @@ pub struct UnlockCgSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 鉴赏音乐语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "unlockBgm",
@@ -601,14 +603,14 @@ pub struct UnlockBgmSentence {
     #[sentence(require = ["name"])]
     pub series: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 游戏控制 --------
 
 /// 获取输入语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "getUserInput",
@@ -637,8 +639,8 @@ pub struct GetUserInputSentence {
     #[sentence(rename = "ruleButtonText", require = ["rule"])]
     pub rule_button_text: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
     #[sentence(
         rename = "lintValues",
         default,
@@ -649,7 +651,7 @@ pub struct GetUserInputSentence {
 }
 
 /// 设置变量语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "setVar",
@@ -659,21 +661,21 @@ pub struct GetUserInputSentence {
         "continue": "语句自带同步执行效果",
     }
 )]
-pub struct SetVarSentence {
+pub struct SetVariableSentence {
     #[sentence(
         content,
         serialize_with = display_set_variable,
         deserialize_with = parse_set_variable,
     )]
-    pub expression: (String, String),
+    pub expression: (String, Expression),
     pub global: bool,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 显示变量语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "showVars",
@@ -683,14 +685,14 @@ pub struct SetVarSentence {
         "continue": "语句自带连续执行效果",
     }
 )]
-pub struct ShowVarsSentence {
+pub struct ShowVariablesSentence {
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 等待语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "wait",
@@ -704,12 +706,12 @@ pub struct WaitSentence {
     #[sentence(content)]
     pub duration: u32,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 应用样式语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "applyStyle",
@@ -727,12 +729,12 @@ pub struct ApplyStyleSentence {
     )]
     pub applications: Vec<(String, String)>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 调用 Steam 语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "callSteam",
@@ -746,12 +748,12 @@ pub struct CallSteamSentence {
     #[sentence(rename = "achivementId")]
     pub achivement_id: Option<String>,
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 /// 结束游戏语句
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(
     command = "end",
@@ -763,14 +765,14 @@ pub struct CallSteamSentence {
 )]
 pub struct EndSentence {
     // 控制
-    #[sentence(condition)]
-    pub when: Option<String>,
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
 }
 
 // -------- 空白注释 --------
 
 /// 空白注释语句
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq, Copy, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 #[sentence(command = "", forward = Next)]
 pub struct CommentSentence {} // 单元结构体暂时不可用
@@ -965,8 +967,8 @@ impl SentenceExt for SaySentence {
         }
     }
 
-    fn condition(&self) -> Option<&str> {
-        self.when.as_deref()
+    fn condition(&self) -> Option<&Expression> {
+        self.when.as_ref()
     }
 
     fn resources(&self) -> Vec<(ResourceKind, Cow<'_, str>)> {
@@ -1064,7 +1066,15 @@ impl FromPrimary for SaySentence {
                         errors.push(Error::ArgumentRepeated(i));
                         continue;
                     }
-                    when = Some(value.unwrap_or("true").to_string());
+                    when = Some(
+                        value
+                            .unwrap_or("true")
+                            .parse::<Expression>()
+                            .unwrap_or_else(|error| {
+                                errors.push(Error::ArgumentType(i, error.into()));
+                                Expression::default()
+                            }),
+                    );
                 }
                 "next" | "continue" => {
                     errors.push(Error::ArgumentObsolete(i, "控制的演出时序无意义"));
@@ -1190,6 +1200,13 @@ fn display_text(text: &[String], f: &mut fmt::Formatter) -> fmt::Result {
     write_joined(f, text.iter(), "|")
 }
 
+fn parse_expression(expression: &str) -> (Expression, Option<anyhow::Error>) {
+    match Expression::from_str(expression) {
+        Ok(expression) => (expression.simplify(), None),
+        Err(error) => (Expression::default(), Some(error.into())),
+    }
+}
+
 fn parse_color_css_rgba(s: &str) -> (Color, Option<anyhow::Error>) {
     match Color::from_str_rgba(s) {
         Some(color) => (color, None),
@@ -1220,7 +1237,19 @@ fn display_enable(enable: &bool, f: &mut fmt::Formatter) -> fmt::Result {
 }
 
 fn parse_choices(choices: &str) -> (Vec<Choice>, Option<anyhow::Error>) {
-    (ChoiceSplit::new(choices).map(Choice::from).collect(), None)
+    let mut error = None;
+    let choices = ChoiceSplit::new(choices)
+        .filter_map(|choice| match Choice::try_from(choice) {
+            Ok(choice) => Some(choice),
+            Err(parse_error) => {
+                error.get_or_insert_with(|| {
+                    anyhow::anyhow!("分支选项表达式解析失败: {parse_error}")
+                });
+                None
+            }
+        })
+        .collect();
+    (choices, error)
 }
 
 fn display_choices(choices: &[Choice], f: &mut fmt::Formatter) -> fmt::Result {
@@ -1238,20 +1267,29 @@ fn display_lint_values(values: &[String], f: &mut fmt::Formatter) -> fmt::Result
     write!(f, "{values:?}")
 }
 
-fn parse_set_variable(expression: &str) -> ((String, String), Option<anyhow::Error>) {
-    match expression.split_once('=') {
-        Some((variable, expression)) => ((variable.to_string(), expression.to_string()), None),
-        None => (
-            Default::default(),
-            Some(anyhow::anyhow!(
-                "变量设置语句应为 `variable=expression` 的格式"
-            )),
+fn parse_set_variable(expression: &str) -> ((String, Expression), Option<anyhow::Error>) {
+    let (variable, expression) = match expression.split_once('=') {
+        Some(v) => v,
+        None => {
+            return (
+                Default::default(),
+                Some(anyhow::anyhow!(
+                    "变量设置语句应为 `variable=expression` 的格式"
+                )),
+            );
+        }
+    };
+    match Expression::from_str(expression) {
+        Ok(expression) => ((variable.to_string(), expression.simplify()), None),
+        Err(error) => (
+            (variable.to_string(), Expression::default()),
+            Some(error.into()),
         ),
     }
 }
 
 fn display_set_variable(
-    (variable, expression): &(String, String),
+    (variable, expression): &(String, Expression),
     f: &mut fmt::Formatter,
 ) -> fmt::Result {
     write!(f, "{variable}={expression}")
@@ -1338,6 +1376,11 @@ mod tests {
     use crate::{sentence::Sentence, util::split_once_escaped};
 
     use super::*;
+
+    /// 解析表达式辅助函数
+    fn expr(source: &str) -> Expression {
+        Expression::from_str(source).unwrap()
+    }
 
     #[test]
     fn roundtrip() {
@@ -1624,13 +1667,13 @@ mod tests {
             Sentence::Choose(choose) => {
                 assert_eq!(choose.choices.len(), 2);
                 let c1 = &choose.choices[0];
-                assert_eq!(c1.show, Some("show".to_string()));
-                assert_eq!(c1.enable, Some("enable".to_string()));
+                assert_eq!(c1.show, Some(expr("show")));
+                assert_eq!(c1.enable, Some(expr("enable")));
                 assert_eq!(c1.prompt, "go");
                 assert_eq!(c1.target, Some("scene_a".to_string()));
                 let c2 = &choose.choices[1];
-                assert_eq!(c2.show, Some("hide".to_string()));
-                assert_eq!(c2.enable, Some("disabled".to_string()));
+                assert_eq!(c2.show, Some(expr("hide")));
+                assert_eq!(c2.enable, Some(expr("disabled")));
                 assert_eq!(c2.prompt, "stay");
                 assert_eq!(c2.target, Some("scene_b".to_string()));
                 let serialized = choose.to_string();

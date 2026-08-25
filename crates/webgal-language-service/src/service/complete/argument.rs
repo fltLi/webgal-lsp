@@ -1435,7 +1435,7 @@ impl Complete for GetUserInputSentence {
     }
 }
 
-impl Complete for SetVarSentence {
+impl Complete for SetVariableSentence {
     fn complete_argument_name(
         &self,
         input: &str,
@@ -1451,7 +1451,7 @@ impl Complete for SetVarSentence {
     }
 }
 
-impl Complete for ShowVarsSentence {
+impl Complete for ShowVariablesSentence {
     fn complete_argument_name(
         &self,
         input: &str,

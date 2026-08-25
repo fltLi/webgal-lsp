@@ -5,7 +5,6 @@ use derive_more::{Deref, Into, IntoIterator};
 use lsp_types::{Diagnostic as LspDiagnostic, *};
 use strum::Display;
 use thiserror::Error;
-#[cfg(feature = "lsp")]
 use webgal_language_core::sentence::PrimarySentence;
 
 /// 模拟执行诊断错误信息 (多场景)

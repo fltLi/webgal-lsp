@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, iter};
 
 use derive_more::From;
-use serde_json::Value;
+use expression::Value;
 use webgal_language_core::{
     element::Forward,
     sentence::{GetUserInputSentence, Sentence as SentenceKind},
@@ -197,7 +197,7 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                         // 检查选项是否启用
                         let disabled = iter::once(&choice.show)
                             .chain(iter::once(&choice.enable))
-                            .filter_map(|v| v.as_deref())
+                            .filter_map(|v| v.as_ref())
                             .any(|condition| {
                                 self.state
                                     .evaluate_expression_as_bool(condition)
@@ -317,7 +317,7 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
             }
 
             // 设置变量
-            SentenceKind::SetVar(s) => {
+            SentenceKind::SetVariable(s) => {
                 let (variable, expression) = &s.expression;
 
                 // 计算新值

@@ -14,6 +14,7 @@ default = []
 serde = []   # 数据模型 Serialize 派生
 
 [dependencies]
+expression.workspace = true
 path-tree.workspace = true
 json-language-service.workspace = true
 

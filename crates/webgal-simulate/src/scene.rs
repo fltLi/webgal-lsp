@@ -8,6 +8,7 @@ use std::{
 };
 
 use derive_more::{Deref, DerefMut, From, Into};
+use expression::{EmptyContext, Expression};
 use getset::{CopyGetters, Getters};
 use webgal_language_core::{
     element::{AnimationList, Forward},
@@ -17,7 +18,7 @@ use webgal_language_core::{
 
 use crate::{
     Diagnostic, DiagnosticKind, DiagnosticList, DiagnosticLocation, MAX_CHECKPOINT_VISITS,
-    PrimaryDiagnostic, START_SCENE, expression::evaluate_constantly, state::ExecutionHash,
+    PrimaryDiagnostic, START_SCENE, state::ExecutionHash,
 };
 
 // -------- project --------
@@ -179,7 +180,7 @@ pub struct SentenceInfo<'a> {
     #[getset(get_copy = "pub")]
     forward: Forward,
     #[getset(get = "pub")]
-    condition: Option<&'a str>,
+    condition: Option<&'a Expression>,
     // 诊断结果
     #[getset(get = "pub")]
     diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
@@ -198,13 +199,15 @@ impl<'a> SentenceInfo<'a> {
         let is_checkpoint = condition.is_some()
             || matches!(
                 sentence.sentence,
-                SentenceKind::Label(_) | SentenceKind::SetVar(_) | SentenceKind::GetUserInput(_)
+                SentenceKind::Label(_)
+                    | SentenceKind::SetVariable(_)
+                    | SentenceKind::GetUserInput(_)
             );
         let executions = is_checkpoint.then(|| RefCell::new(BTreeSet::new()));
 
         // 检查条件执行表达式是否为常量
         if let Some(condition) = condition
-            && let Some(value) = evaluate_constantly(condition)
+            && let Ok(value) = condition.evaluate(&EmptyContext)
         {
             diagnostics.push(PrimaryDiagnostic {
                 span: DiagnosticLocation::ArgumentValue("when"),

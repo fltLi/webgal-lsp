@@ -8,7 +8,7 @@ use std::{
     result,
 };
 
-use serde_json::Value;
+use expression::Value;
 use webgal_language_core::{
     dispatch_sentence,
     element::{FigureId, FigureSide, ObjectId, TokenSplit},
@@ -1154,9 +1154,9 @@ impl ToEffects for UnlockBgmSentence {}
 
 impl ToEffects for GetUserInputSentence {}
 
-impl ToEffects for SetVarSentence {}
+impl ToEffects for SetVariableSentence {}
 
-impl ToEffects for ShowVarsSentence {}
+impl ToEffects for ShowVariablesSentence {}
 
 impl ToEffects for WaitSentence {}
 

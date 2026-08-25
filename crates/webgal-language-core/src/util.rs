@@ -1,21 +1,11 @@
 use std::{fmt, ops::Range};
 
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NeverError;
-
-impl fmt::Display for NeverError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("不会触发的错误")
-    }
-}
-
-#[doc(hidden)]
 #[macro_export]
 macro_rules! impl_from_str_for_from {
     ($t:ty) => {
         impl ::std::str::FromStr for $t {
-            type Err = $crate::util::NeverError;
+            type Err = ::std::convert::Infallible;
 
             fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
                 Ok(s.into())

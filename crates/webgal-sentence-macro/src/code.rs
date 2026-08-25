@@ -68,8 +68,8 @@ fn gen_forward(forward: &Either<Path, Ident>) -> TokenStream {
 
 fn gen_condition(condition: &Ident) -> TokenStream {
     quote! {
-        fn condition(&self) -> Option<&str> {
-            self.#condition.as_deref()
+        fn condition(&self) -> Option<&expression::Expression> {
+            self.#condition.as_ref()
         }
     }
 }

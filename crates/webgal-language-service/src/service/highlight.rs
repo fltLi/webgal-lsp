@@ -159,7 +159,7 @@ where
             }
             Sentence::Intro(_) => highlight_intro_content(content, shifted_push),
             Sentence::Choose(_) => highlight_choose_content(content, shifted_push),
-            Sentence::SetVar(_) => highlight_set_variable_content(content, shifted_push),
+            Sentence::SetVariable(_) => highlight_set_variable_content(content, shifted_push),
             Sentence::ApplyStyle(_) => highlight_apply_style_content(content, shifted_push),
             _ if let Some(kind) = TokenType::from_content(sentence) => f(PrimaryToken {
                 span: primary.get_span(content),
@@ -583,7 +583,7 @@ impl TokenType {
 
                 // 游戏控制
                 GetUserInput => Variable,
-                // SetVar => Regex, // 已由调用者接管
+                // SetVariable => Regex, // 已由调用者接管
                 Wait => Number,
                 // ApplyStyle => Regex, // 已由调用者接管
             }

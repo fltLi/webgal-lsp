@@ -7,22 +7,23 @@ use std::{
     mem,
     rc::Rc,
     result,
+    str::FromStr,
 };
 
 use derive_more::{Deref, Into};
+use expression::{Expression, Value};
 use getset::{Getters, MutGetters};
-use serde_json::Value;
 use webgal_language_core::{resource::Config, sentence::*};
 
 use crate::{
     DiagnosticKind, PrimaryDiagnostic, ProjectView, SentenceLocation,
-    expression::evaluate_with_context,
     scene::Project,
-    state::{effect::*, stage::*},
+    state::{effect::*, stage::*, variable::VariableTable},
 };
 
 mod effect;
 mod stage;
+mod variable;
 
 // TODO: 使用可持久化数据结构维护 [`State`] 的字段, 减少频繁拷贝的开销
 
@@ -70,7 +71,7 @@ impl State {
             .map(|config| {
                 (
                     config.name.clone(),
-                    serde_json::from_str(&config.value)
+                    Value::from_str(&config.value)
                         .unwrap_or_else(|_| Value::String(config.value.clone())),
                 )
             })
@@ -148,17 +149,22 @@ impl State {
         self.variables.insert(variable, value)
     }
 
-    /// 表达式求值 (不修改变量)
-    pub fn evaluate_expression(&self, expression: &str) -> result::Result<Value, DiagnosticKind> {
-        evaluate_with_context(expression, &self.variables).map_err(|error| {
-            DiagnosticKind::ExpressionError(expression.to_string(), error.to_string())
-        })
+    /// 表达式求值
+    pub fn evaluate_expression(
+        &self,
+        expression: &Expression,
+    ) -> result::Result<Value, DiagnosticKind> {
+        expression
+            .evaluate(&VariableTable(&self.variables))
+            .map_err(|error| {
+                DiagnosticKind::ExpressionError(expression.to_string(), error.to_string())
+            })
     }
 
-    /// 布尔表达式求值 (不修改变量)
+    /// 布尔表达式求值
     pub fn evaluate_expression_as_bool(
         &self,
-        expression: &str,
+        expression: &Expression,
     ) -> result::Result<bool, DiagnosticKind> {
         let value = self.evaluate_expression(expression)?;
         value.as_bool().ok_or_else(|| {
