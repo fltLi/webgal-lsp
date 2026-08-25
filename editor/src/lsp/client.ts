@@ -35,6 +35,8 @@ export interface LspDiagnostic {
   range: LspRange;
   severity: number;
   message: string;
+  /** 诊断错误码 (如 WG001), 服务端以字符串或数字发送 */
+  code?: number | string;
   source?: string;
 }
 

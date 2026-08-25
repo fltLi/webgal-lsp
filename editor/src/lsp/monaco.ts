@@ -134,9 +134,12 @@ function toMarker(d: LspDiagnostic): monaco.editor.IMarkerData {
         : d.severity === 4
           ? monaco.MarkerSeverity.Hint
           : monaco.MarkerSeverity.Info;
+  // 错误码 (如 WG001) 使用 Monaco 专门的 code 字段, 由编辑器渲染为独立徽标
+  const code = typeof d.code === 'string' || typeof d.code === 'number' ? String(d.code) : undefined;
   return {
     severity,
     message: d.message,
+    code,
     source: d.source,
     startLineNumber: d.range.start.line + 1,
     startColumn: d.range.start.character + 1,
