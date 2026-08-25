@@ -1483,6 +1483,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "expression"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "derive_more",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "exprimo"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
