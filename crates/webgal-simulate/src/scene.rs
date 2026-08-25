@@ -279,7 +279,8 @@ impl<'a> SentenceInfo<'a> {
     pub fn into_diagnostics(self, line: usize) -> Vec<Diagnostic> {
         let mut diagnostics = Rc::try_unwrap(self.diagnostics).unwrap().into_inner();
 
-        // 诊断去重
+        // 诊断忽略和去重
+        diagnostics.retain(|diagnostic| !self.sentence.contains_nolint(diagnostic.code()));
         diagnostics.sort_by(|a, b| a.cmp(b));
         diagnostics.dedup();
 
