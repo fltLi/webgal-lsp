@@ -92,6 +92,7 @@ pub enum Sentence {
     Choose(ChooseSentence),
     Label(LabelSentence),
     JumpLabel(JumpLabelSentence),
+    Return(ReturnSentence),
 
     // 鉴赏
     UnlockCg(UnlockCgSentence),
@@ -195,6 +196,7 @@ impl FromPrimary for Sentence {
                 "choose" => ChooseSentence,
                 "label" => LabelSentence,
                 "jumpLabel" => JumpLabelSentence,
+                "return" => ReturnSentence,
 
                 // 鉴赏
                 "unlockCg" => UnlockCgSentence,
@@ -330,6 +332,7 @@ macro_rules! dispatch_sentence {
             $crate::sentence::Sentence::Choose(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::Label(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::JumpLabel(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Return(s) => s.$method($($argument),*),
 
             // 鉴赏
             $crate::sentence::Sentence::UnlockCg(s) => s.$method($($argument),*),

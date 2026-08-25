@@ -457,21 +457,14 @@ pub struct FilmModeSentence {
 // -------- 场景与分支 --------
 
 /// 调用场景语句
-#[derive(Debug, Clone, Default, PartialEq, Sentence)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
-#[sentence(
-    command = "callScene",
-    forward = Next,
-    obsolete = {
-        "next": "语句自带同步执行效果",
-        "continue": "语句自带同步执行效果",
-    }
-)]
 pub struct CallSceneSentence {
-    #[sentence(content, resource = Scene)]
     pub scene: String,
+    // 传参
+    pub variables: Vec<(String, Expression)>,
+    pub write_return_to: Option<String>,
     // 控制
-    #[sentence(condition, deserialize_with = parse_expression)]
     pub when: Option<Expression>,
 }
 
@@ -554,6 +547,25 @@ pub struct LabelSentence {
 pub struct JumpLabelSentence {
     #[sentence(content)]
     pub label: String,
+    // 控制
+    #[sentence(condition, deserialize_with = parse_expression)]
+    pub when: Option<Expression>,
+}
+
+/// 场景返回语句
+#[derive(Debug, Clone, Default, PartialEq, Sentence)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
+#[sentence(
+    command = "return",
+    forward = Next,
+    obsolete = {
+        "next": "语句自带同步执行效果",
+        "continue": "语句自带同步执行效果",
+    }
+)]
+pub struct ReturnSentence {
+    #[sentence(content)]
+    pub value: Expression,
     // 控制
     #[sentence(condition, deserialize_with = parse_expression)]
     pub when: Option<Expression>,
@@ -668,7 +680,8 @@ pub struct SetVariableSentence {
         deserialize_with = parse_set_variable,
     )]
     pub expression: (String, Expression),
-    pub global: bool,
+    #[sentence(variant = { "local": Local, "global": Global })]
+    pub kind: VariableKind,
     // 控制
     #[sentence(condition, deserialize_with = parse_expression)]
     pub when: Option<Expression>,
@@ -952,7 +965,7 @@ impl IntroSentence {
     }
 }
 
-// -------- 对话 --------
+// -------- 普通对话 --------
 
 impl SentenceExt for SaySentence {
     fn command(&self) -> &'static str {
@@ -1160,6 +1173,111 @@ impl fmt::Display for SaySentence {
 
         if need_space_holder {
             f.write_str(" -sayPlaceHolder")?;
+        }
+        f.write_char(';')
+    }
+}
+
+// -------- 调用场景 --------
+
+impl SentenceExt for CallSceneSentence {
+    fn command(&self) -> &'static str {
+        "callScene"
+    }
+
+    fn forward(&self) -> Forward {
+        Forward::Next
+    }
+
+    fn condition(&self) -> Option<&Expression> {
+        self.when.as_ref()
+    }
+
+    fn resources(&self) -> Vec<(ResourceKind, Cow<'_, str>)> {
+        vec![(ResourceKind::Scene, Cow::Borrowed(&self.scene))]
+    }
+}
+
+impl FromPrimary for CallSceneSentence {
+    fn from_primary(primary: &PrimarySentence, errors: &mut Vec<Error>) -> Self {
+        let PrimarySentence {
+            content, arguments, ..
+        } = primary;
+
+        let mut variables: Vec<(String, Expression)> = Vec::new();
+        let mut write_return_to = None;
+        let mut when = None;
+
+        for (i, &(name, value)) in arguments.iter().enumerate() {
+            match name {
+                "writeReturnTo" => {
+                    if write_return_to.is_some() {
+                        errors.push(Error::ArgumentRepeated(i));
+                        continue;
+                    }
+                    write_return_to = Some(value.unwrap_or("true").to_string());
+                }
+                "when" => {
+                    if when.is_some() {
+                        errors.push(Error::ArgumentRepeated(i));
+                        continue;
+                    }
+                    when = Some(
+                        value
+                            .unwrap_or("true")
+                            .parse::<Expression>()
+                            .unwrap_or_else(|error| {
+                                errors.push(Error::ArgumentType(i, error.into()));
+                                Expression::default()
+                            }),
+                    );
+                }
+                "next" | "continue" => {
+                    errors.push(Error::ArgumentObsolete(i, "语句自带同步执行效果"));
+                }
+                _ => {
+                    match variables.binary_search_by(|(existing, _)| existing.as_str().cmp(name)) {
+                        Ok(_) => errors.push(Error::ArgumentRepeated(i)),
+                        Err(position) => {
+                            let value = value.unwrap_or("true");
+                            let expression = value.parse::<Expression>().unwrap_or_else(|error| {
+                                errors.push(Error::ArgumentType(i, error.into()));
+                                Expression::default()
+                            });
+                            variables.insert(position, (name.to_string(), expression));
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            scene: content.unwrap_or("").to_string(),
+            variables,
+            write_return_to,
+            when,
+        }
+    }
+}
+
+impl fmt::Display for CallSceneSentence {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let Self {
+            scene,
+            variables,
+            write_return_to,
+            when,
+        } = self;
+        write!(f, "callScene:{scene}")?;
+
+        for (name, value) in variables {
+            write!(f, " -{name}={value}")?;
+        }
+        if let Some(write_return_to) = write_return_to {
+            write!(f, " -writeReturnTo={write_return_to}")?;
+        }
+        if let Some(when) = when {
+            write!(f, " -when={when}")?;
         }
         f.write_char(';')
     }
@@ -1713,6 +1831,130 @@ mod tests {
         assert_eq!(bg_some.to_string(), "changeBg:bg.png;");
     }
 
+    // -------- call scene --------
+
+    #[test]
+    fn call_scene_basic() {
+        for (s, scene) in [("callScene:1.txt;", "1.txt"), ("callScene:;", "")] {
+            let output = Sentence::from_str(s);
+            assert!(output.errors.is_empty(), "解析出错: {:?}", output.errors);
+            match output.sentence {
+                Sentence::CallScene(call) => {
+                    assert_eq!(call.scene, scene);
+                    assert!(call.variables.is_empty());
+                    assert_eq!(call.write_return_to, None);
+                    assert_eq!(call.when, None);
+                    assert_eq!(call.to_string(), s);
+                }
+                _ => panic!("期望 CallSceneSentence"),
+            }
+        }
+    }
+
+    #[test]
+    fn call_scene_variables() {
+        // 未识别参数收集为局部变量传参并去重, 序列化按名称排序; 无值参数按 `true` 处理
+        let s = r#"callScene:2.txt -z=1 -name="小明" -fast -hp=100;"#;
+        let output = Sentence::from_str(s);
+        assert!(output.errors.is_empty(), "解析出错: {:?}", output.errors);
+        match output.sentence {
+            Sentence::CallScene(call) => {
+                assert_eq!(
+                    call.variables,
+                    vec![
+                        ("fast".to_string(), expr("true")),
+                        ("hp".to_string(), expr("100")),
+                        ("name".to_string(), expr(r#""小明""#)),
+                        ("z".to_string(), expr("1")),
+                    ]
+                );
+                assert_eq!(
+                    call.to_string(),
+                    r#"callScene:2.txt -fast=true -hp=100 -name="小明" -z=1;"#
+                );
+            }
+            _ => panic!("期望 CallSceneSentence"),
+        }
+    }
+
+    #[test]
+    fn call_scene_with_return_and_condition() {
+        let s = "callScene:3.txt -writeReturnTo=result -when=hp>0;";
+        let output = Sentence::from_str(s);
+        assert!(output.errors.is_empty(), "解析出错: {:?}", output.errors);
+        match output.sentence {
+            Sentence::CallScene(call) => {
+                assert_eq!(call.write_return_to, Some("result".to_string()));
+                assert_eq!(call.when, Some(expr("hp>0")));
+                assert_eq!(call.to_string(), s);
+            }
+            _ => panic!("期望 CallSceneSentence"),
+        }
+    }
+
+    #[test]
+    fn call_scene_invalid_variable_expression() {
+        // 表达式解析失败的传参记录错误, 并回退默认表达式
+        let s = "callScene:1.txt -hp=(;";
+        let output = Sentence::from_str(s);
+        assert!(!output.errors.is_empty());
+        assert!(
+            output
+                .errors
+                .iter()
+                .any(|e| matches!(e, Error::ArgumentType(_, _)))
+        );
+        match output.sentence {
+            Sentence::CallScene(call) => {
+                assert_eq!(
+                    call.variables,
+                    vec![("hp".to_string(), Expression::default())]
+                );
+            }
+            _ => panic!("期望 CallSceneSentence"),
+        }
+    }
+
+    #[test]
+    fn call_scene_repeated_arguments() {
+        // 重复的参数记录错误并保留首次出现; 变量重名同样去重
+        let s =
+            "callScene:1.txt -writeReturnTo=a -writeReturnTo=b -when=true -when=false -hp=1 -hp=2;";
+        let output = Sentence::from_str(s);
+        assert!(!output.errors.is_empty());
+        assert_eq!(
+            output
+                .errors
+                .iter()
+                .filter(|e| matches!(e, Error::ArgumentRepeated(_)))
+                .count(),
+            3
+        );
+        match output.sentence {
+            Sentence::CallScene(call) => {
+                assert_eq!(call.write_return_to, Some("a".to_string()));
+                assert_eq!(call.when, Some(expr("true")));
+                assert_eq!(call.variables, vec![("hp".to_string(), expr("1"))]);
+            }
+            _ => panic!("期望 CallSceneSentence"),
+        }
+    }
+
+    #[test]
+    fn call_scene_obsolete_arguments() {
+        for s in ["callScene:1.txt -next;", "callScene:1.txt -continue;"] {
+            let output = Sentence::from_str(s);
+            assert!(!output.errors.is_empty());
+            assert!(
+                output
+                    .errors
+                    .iter()
+                    .any(|e| matches!(e, Error::ArgumentObsolete(_, _))),
+                "应记录弃用错误: {s}"
+            );
+        }
+    }
+
     // -------- require --------
 
     #[test]
@@ -1912,5 +2154,17 @@ mod tests {
         let resources2 = anim2.resources();
         assert_eq!(resources2.len(), 1);
         assert_eq!(resources2[0].1, "walk.json");
+    }
+
+    #[test]
+    fn resources_call_scene() {
+        let call = CallSceneSentence {
+            scene: "1.txt".to_string(),
+            ..Default::default()
+        };
+        let resources = call.resources();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, ResourceKind::Scene);
+        assert_eq!(resources[0].1, "1.txt");
     }
 }

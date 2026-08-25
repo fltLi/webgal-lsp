@@ -7,7 +7,10 @@ use once_cell::sync::Lazy;
 use path_tree::{Folder, Node, PATH_SEPARATORS};
 use webgal_language_core::{
     dispatch_sentence,
-    element::{AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform},
+    element::{
+        AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform,
+        VariableKind,
+    },
     resource::{FigureInfo, FigureKind},
     sentence::*,
 };
@@ -1197,6 +1200,8 @@ impl Complete for CallSceneSentence {
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             ("callScene", input, position): {
+                // TODO: 查变量表提供补全
+                self.write_return_to.is_none() => ("writeReturnTo", "writeReturnTo=", ""),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1315,6 +1320,21 @@ impl Complete for JumpLabelSentence {
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             ("jumpLabel", input, position): {
+                self.when.is_none() => ("when", "when=", "条件执行"),
+            }
+        }
+    }
+}
+
+impl Complete for ReturnSentence {
+    fn complete_argument_name(
+        &self,
+        input: &str,
+        position: Position,
+        _project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        complete_argument_name_collect! {
+            ("return", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }
@@ -1444,7 +1464,8 @@ impl Complete for SetVariableSentence {
     ) -> Vec<PrimaryCompletion> {
         complete_argument_name_collect! {
             ("setVar", input, position): {
-                !self.global => ("global", "global", "全局变量"),
+                self.kind != VariableKind::Local => ("local", "local", "局部变量"),
+                self.kind != VariableKind::Global => ("global", "global", "全局变量"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
         }

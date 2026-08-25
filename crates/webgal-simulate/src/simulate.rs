@@ -1,6 +1,9 @@
 //! 模拟执行
 
-use std::{collections::VecDeque, iter};
+use std::{
+    collections::{HashMap, VecDeque},
+    iter,
+};
 
 use derive_more::From;
 use expression::Value;
@@ -18,6 +21,9 @@ pub const START_SCENE: &str = "start.txt";
 
 /// 单个检查点最大通过次数
 pub const MAX_CHECKPOINT_VISITS: usize = 32;
+
+/// 场景调用栈深度上限, 防止 callScene 无限递归
+pub const MAX_CALL_STACK_DEPTH: usize = 64;
 
 /// 模拟执行 WebGAL 项目, 提供诊断信息
 pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
@@ -147,8 +153,39 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                     }
                 };
 
-                // 压栈并执行跳转
-                self.state.call_stack_mut().push(self.location);
+                // 检查场景调用栈深度
+                if self.state.call_depth() >= MAX_CALL_STACK_DEPTH {
+                    sentence.push_diagnostic(
+                        DiagnosticKind::Stopped(StopReason::SceneStackOverflow(
+                            MAX_CALL_STACK_DEPTH,
+                        ))
+                        .into_primary_diagnostic(DiagnosticLocation::Command),
+                    );
+                    return StepOutcome::Halt;
+                }
+
+                // 在调用方作用域内求值局部变量传参
+                let mut locals = HashMap::new();
+                for (name, expression) in &s.variables {
+                    let value = match self.state.evaluate_expression(expression) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let primary = &sentence.sentence().primary;
+                            sentence.push_diagnostic(
+                                error.into_primary_diagnostic(DiagnosticLocation::Custom(
+                                    primary
+                                        .get_span(primary.get_argument(name).unwrap().1.unwrap()),
+                                )),
+                            );
+                            return StepOutcome::Halt;
+                        }
+                    };
+                    locals.insert(name.clone(), value);
+                }
+
+                // 压入调用帧 (保存调用方位置与返回值写入目标) 并切换场景
+                self.state
+                    .push_call(self.location, locals, s.write_return_to.clone());
                 self.scene = next_scene;
                 self.location = SentenceLocation {
                     scene: next_scene_name.clone(),
@@ -282,6 +319,34 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                 self.into()
             }
 
+            // 返回场景
+            SentenceKind::Return(s) => {
+                // 在被调用场景作用域内求值返回值
+                let value = match self.state.evaluate_expression(&s.value) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        sentence.push_diagnostic(
+                            error.into_primary_diagnostic(DiagnosticLocation::Content),
+                        );
+                        return StepOutcome::Halt;
+                    }
+                };
+
+                // 弹出调用帧, 写回返回值并恢复调用方场景
+                match self.state.pop_call() {
+                    Some(frame) => {
+                        if let Some(target) = &frame.write_return_to {
+                            self.state.set_variable(target.clone(), value);
+                        }
+                        self.scene = self.project.scenes().get(&frame.location.scene).unwrap();
+                        self.location = frame.location;
+                        self.into()
+                    }
+                    // 顶层场景的 return 无调用帧可弹, 忽略
+                    None => self.into(),
+                }
+            }
+
             // 用户输入
             SentenceKind::GetUserInput(s) => {
                 // 收集代入值
@@ -362,13 +427,18 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
         }
     }
 
-    /// 尝试弹出调用栈栈顶, 恢复到上一个场景位置
+    /// 尝试弹出调用帧, 恢复到上一个场景位置
     fn pop_call_stack(mut self) -> Option<Self> {
-        match self.state.call_stack_mut().pop() {
+        match self.state.pop_call() {
             // 向上跳出
-            Some(location) => {
-                self.scene = self.project.scenes().get(&location.scene).unwrap();
-                self.location = location;
+            Some(frame) => {
+                // 场景自然结束时返回值默认为空字符串
+                if let Some(target) = &frame.write_return_to {
+                    self.state
+                        .set_variable(target.clone(), Value::String(String::new()));
+                }
+                self.scene = self.project.scenes().get(&frame.location.scene).unwrap();
+                self.location = frame.location;
                 Some(self)
             }
 

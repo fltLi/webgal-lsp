@@ -147,6 +147,15 @@ impl fmt::Display for FigureId {
     }
 }
 
+/// 变量类型
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VariableKind {
+    #[default]
+    Common,
+    Local,
+    Global,
+}
+
 // -------- 样式 --------
 
 /// 字体大小

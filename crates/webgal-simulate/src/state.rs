@@ -44,38 +44,47 @@ pub struct State {
     /// 舞台状态增量仅针对舞台状态 (`stage`), 变量修改和场景跳转等操作将不会作为舞台效果加入等待.
     pending_deltas: Vec<EffectList>,
 
-    /// 变量表, 键为变量名, 值为 JSON 值
+    /// 变量表 (普通变量基底层 + 局部变量作用域栈)
     ///
     /// # Notes
     /// 设置变量的效果为立即执行, 这会导致待应用的舞台变换增量中关于其的引用过时.
     /// 为了解决这个问题, 需要在 [`StageEffect`] 构造时就从当前变量表取出需要的值.
-    variables: HashMap<String, Value>,
+    variables: VariableTable,
 
     /// 标签表, 键为标签名, 值为标签语句所在位置
     #[getset(get = "pub", get_mut = "pub")]
     labels: HashMap<String, SentenceLocation>,
 
-    /// 场景调用栈, 用于跟踪 `changeScene` 语句的跳转路径
-    #[getset(get_mut = "pub")]
-    call_stack: Vec<SentenceLocation>,
+    /// 场景调用栈, 记录 `callScene` 的调用方位置与返回值写入目标
+    ///
+    /// # Notes
+    /// 场景调用栈与局部变量作用域栈同步增减, 必须经由 [`Self::push_call`] 与 [`Self::pop_call`] 操作.
+    call_stack: Vec<CallFrame>,
+}
+
+/// 场景调用帧
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallFrame {
+    /// 调用方位置 (场景返回后恢复)
+    pub location: SentenceLocation,
+    /// 返回值写入的变量名
+    pub write_return_to: Option<String>,
 }
 
 impl State {
     /// 读取项目配置构建初始状态
     ///
     /// # Behavior
-    /// * 将所有条目视为变量插入变量表.
+    /// * 将所有条目视为普通变量插入基底层.
     pub fn from_config(config: &Config) -> Self {
-        let variables = config
-            .iter()
-            .map(|config| {
-                (
-                    config.name.clone(),
-                    Value::from_str(&config.value)
-                        .unwrap_or_else(|_| Value::String(config.value.clone())),
-                )
-            })
-            .collect();
+        let mut variables = VariableTable::default();
+        for config in config.iter() {
+            variables.set_base(
+                config.name.clone(),
+                Value::from_str(&config.value)
+                    .unwrap_or_else(|_| Value::String(config.value.clone())),
+            );
+        }
         Self {
             variables,
             ..Default::default()
@@ -88,9 +97,10 @@ impl State {
     pub fn hash_execution(&self) -> ExecutionHash {
         let mut hasher = DefaultHasher::new();
 
-        // 哈希调用栈
-        for location in &self.call_stack {
-            location.hash(&mut hasher);
+        // 哈希调用栈 (位置 + 返回值写入目标)
+        for frame in &self.call_stack {
+            frame.location.hash(&mut hasher);
+            frame.write_return_to.hash(&mut hasher);
         }
 
         // 哈希标签表 (为了保证顺序无关性, 先排序再哈希键值对)
@@ -100,11 +110,13 @@ impl State {
             label.hash(&mut hasher);
         }
 
-        // 哈希变量表 (为了保证顺序无关性, 先排序再哈希键值对)
-        let mut variables: Vec<_> = self.variables.iter().collect();
-        variables.sort_by_key(|(name, _)| name.as_str());
-        for variable in variables {
-            variable.hash(&mut hasher);
+        // 哈希变量表 (基底层 + 各层局部变量, 每层按名称排序)
+        for scope in self.variables.scopes() {
+            let mut variables: Vec<_> = scope.iter().collect();
+            variables.sort_by_key(|(name, _)| name.as_str());
+            for variable in variables {
+                variable.hash(&mut hasher);
+            }
         }
 
         ExecutionHash(hasher.finish())
@@ -144,9 +156,43 @@ impl State {
         true
     }
 
-    /// 设置变量值
+    /// 设置普通变量
     pub fn set_variable(&mut self, variable: String, value: Value) -> Option<Value> {
-        self.variables.insert(variable, value)
+        self.variables.set_base(variable, value)
+    }
+
+    /// 压入场景调用帧 (callScene)
+    ///
+    /// # Behavior
+    /// * 保存调用方位置与返回值写入目标, 并压入被调用场景的局部变量作用域.
+    pub fn push_call(
+        &mut self,
+        location: SentenceLocation,
+        locals: HashMap<String, Value>,
+        write_return_to: Option<String>,
+    ) {
+        self.call_stack.push(CallFrame {
+            location,
+            write_return_to,
+        });
+        self.variables.push_locals(locals);
+        debug_assert_eq!(self.call_stack.len(), self.variables.locals_depth());
+    }
+
+    /// 弹出场景调用帧 (return / 场景自然结束)
+    ///
+    /// # Returns
+    /// 被弹出的调用帧, 包含调用方位置与返回值写入目标.
+    pub fn pop_call(&mut self) -> Option<CallFrame> {
+        let frame = self.call_stack.pop()?;
+        self.variables.pop_locals();
+        debug_assert_eq!(self.call_stack.len(), self.variables.locals_depth());
+        Some(frame)
+    }
+
+    /// 当前场景调用栈深度
+    pub fn call_depth(&self) -> usize {
+        self.call_stack.len()
     }
 
     /// 表达式求值
@@ -154,11 +200,9 @@ impl State {
         &self,
         expression: &Expression,
     ) -> result::Result<Value, DiagnosticKind> {
-        expression
-            .evaluate(&VariableTable(&self.variables))
-            .map_err(|error| {
-                DiagnosticKind::ExpressionError(expression.to_string(), error.to_string())
-            })
+        expression.evaluate(&self.variables).map_err(|error| {
+            DiagnosticKind::ExpressionError(expression.to_string(), error.to_string())
+        })
     }
 
     /// 布尔表达式求值
@@ -181,3 +225,64 @@ impl State {
 /// 哈希指纹生成方式详见 [`State::hash_execution`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Into, Deref)]
 pub struct ExecutionHash(u64);
+
+#[cfg(test)]
+mod tests {
+    // This module is generated by AI.
+
+    use super::*;
+
+    #[test]
+    fn push_pop_call_keeps_locals_synced() {
+        let mut state = State::default();
+
+        // 压入调用帧: 局部变量在帧内可见
+        let mut locals = HashMap::new();
+        locals.insert("hp".to_string(), Value::from(100));
+        state.push_call(SentenceLocation::default(), locals, Some("ret".to_string()));
+        assert_eq!(state.call_depth(), 1);
+        assert_eq!(
+            state
+                .evaluate_expression(&Expression::from_str("hp").unwrap())
+                .unwrap(),
+            Value::from(100)
+        );
+
+        // 弹出调用帧: 局部变量消失, 帧携带返回值写入目标
+        let frame = state.pop_call().unwrap();
+        assert_eq!(frame.location, SentenceLocation::default());
+        assert_eq!(frame.write_return_to, Some("ret".to_string()));
+        assert_eq!(state.call_depth(), 0);
+        assert!(
+            state
+                .evaluate_expression(&Expression::from_str("hp").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn set_variable_writes_base_layer() {
+        let mut state = State::default();
+        let mut locals = HashMap::new();
+        locals.insert("hp".to_string(), Value::from(100));
+        state.push_call(SentenceLocation::default(), locals, None);
+
+        // setVar 写入基底层, 不影响局部变量
+        state.set_variable("hp".to_string(), Value::from(200));
+        assert_eq!(
+            state
+                .evaluate_expression(&Expression::from_str("hp").unwrap())
+                .unwrap(),
+            Value::from(100)
+        );
+
+        // 弹出后基底层值可见
+        assert!(state.pop_call().is_some());
+        assert_eq!(
+            state
+                .evaluate_expression(&Expression::from_str("hp").unwrap())
+                .unwrap(),
+            Value::from(200)
+        );
+    }
+}
