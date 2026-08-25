@@ -28,6 +28,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Tuple, TypedDict, cast
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 
@@ -43,7 +44,9 @@ BASE_PATH = "src/script-reference"
 COMMANDS_DIR = f"{BASE_PATH}/commands"
 ARGUMENTS_DIR = f"{BASE_PATH}/arguments"
 
-DOCS_BASE_URL = "https://docs.openwebgal.com/script-reference"
+DOCS_BASE_URL = "https://docs.openwebgal.com"
+COMMANDS_BASE_URL = f"{DOCS_BASE_URL}/script-reference/commands/"
+
 DEFAULT_OUTPUT = os.path.join("data", "document.json")
 
 HTTP_TIMEOUT = 30
@@ -293,6 +296,56 @@ def extract_sub_sections(section_md: str, level: int = 3) -> Dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
+# 文档链接转换 (相对 → 绝对)
+# --------------------------------------------------------------------------- #
+
+
+def convert_links_in_markdown(text: str, base_url: str) -> str:
+    """将文本中的相对链接转换为绝对链接，并处理 .md -> .html。
+
+    Args:
+        text: 原始 Markdown 文本
+        base_url: 相对链接的基准 URL (必须以 '/' 结尾)
+
+    Returns:
+        转换后的 Markdown 文本
+    """
+    link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+    def replacer(match: re.Match[str]) -> str:
+        link_text: str = match.group(1)
+        link_url: str = match.group(2)
+
+        if link_url.startswith(("http://", "https://", "#", "mailto:")):
+            return match.group(0)
+
+        abs_url = urljoin(base_url, link_url)
+        parsed = urlparse(abs_url)
+        path = parsed.path
+
+        if path.endswith(".md"):
+            path = path[:-3] + ".html"
+        else:
+            ext = os.path.splitext(path)[1]
+            if ext == "" and not path.endswith("/"):
+                path = path + ".html"
+
+        new_abs = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+        return f"[{link_text}]({new_abs})"
+
+    return link_pattern.sub(replacer, text)
+
+
+# --------------------------------------------------------------------------- #
 # 文档解析与结构化
 # --------------------------------------------------------------------------- #
 
@@ -322,8 +375,9 @@ def parse_global_parameters(commands: Dict[str, str]) -> Dict[str, str]:
 
 
 def build_document_field(content: str, link: str) -> DocumentField:
-    """根据内容和链接创建 DocumentField."""
-    return DocumentField(link=link, document=content.strip())
+    """根据内容和链接创建 DocumentField，并将内容中的相对链接转换为绝对链接。"""
+    converted = convert_links_in_markdown(content, COMMANDS_BASE_URL)
+    return DocumentField(link=link, document=converted.strip())
 
 
 def parse_sentence(
@@ -344,7 +398,7 @@ def parse_sentence(
     Returns:
         封装了 command, content, arguments 的 SentenceEntry 实例.
     """
-    command_link = f"{DOCS_BASE_URL}/commands/{stmt_name}.html"
+    command_link = f"{DOCS_BASE_URL}/script-reference/commands/{stmt_name}.html"
     command_field = build_document_field(full_md, command_link)
 
     content_md = extract_section(full_md, "语句内容", level=2)
@@ -358,7 +412,7 @@ def parse_sentence(
 
     arguments: Dict[str, DocumentField] = {}
     for p_name, p_doc in global_params.items():
-        arg_link = f"{DOCS_BASE_URL}/commands/global.html#{p_name}"
+        arg_link = f"{DOCS_BASE_URL}/script-reference/commands/global.html#{p_name}"
         arguments[p_name] = build_document_field(p_doc, arg_link)
     for p_name, p_doc in local_params.items():
         arg_link = f"{command_link}#{p_name}"
