@@ -6,6 +6,7 @@
 import { useRef, useState } from 'react';
 
 import { disposeModel } from '../lsp/monaco';
+import { disposeNovelTab } from '../novel/registry';
 import { useAppStore } from '../state/store';
 import { confirmClose } from '../unsaved';
 
@@ -18,6 +19,10 @@ export function EditorTabs() {
   const setActiveDocument = useAppStore((s) => s.setActiveDocument);
   const closeDocument = useAppStore((s) => s.closeDocument);
   const moveDocument = useAppStore((s) => s.moveDocument);
+  const novelTabs = useAppStore((s) => s.novelTabs);
+  const activeNovelId = useAppStore((s) => s.activeNovelId);
+  const setActiveNovel = useAppStore((s) => s.setActiveNovel);
+  const closeNovelTab = useAppStore((s) => s.closeNovelTab);
 
   const containerRef = useRef<HTMLDivElement>(null);
   // 拖拽过程中的临时状态 (非渲染状态放 ref, 避免频繁重渲染)
@@ -71,7 +76,7 @@ export function EditorTabs() {
     setDropIndex(null);
   };
 
-  if (documents.length === 0) return null;
+  if (documents.length === 0 && novelTabs.length === 0) return null;
 
   return (
     <div className="editor-tabs" role="tablist" ref={containerRef}>
@@ -106,6 +111,29 @@ export function EditorTabs() {
                 },
                 d.path // 只检查当前选项卡的未保存状态
               );
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {novelTabs.map((t) => (
+        <div
+          key={t.id}
+          role="tab"
+          aria-selected={t.id === activeNovelId}
+          className={`editor-tab novel${t.id === activeNovelId ? ' active' : ''}`}
+          onClick={() => setActiveNovel(t.id)}
+          title={t.title}
+        >
+          <span className="editor-tab-name novel-dot">✎ {t.title}</span>
+          <button
+            className="editor-tab-close"
+            title="关闭"
+            onClick={(e) => {
+              e.stopPropagation();
+              disposeNovelTab(t.id);
+              closeNovelTab(t.id);
             }}
           >
             ×

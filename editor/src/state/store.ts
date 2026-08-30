@@ -29,6 +29,12 @@ export interface LspDiagnostic {
   source?: string;
 }
 
+/** 文本预处理选项卡 (轻量描述; 实际会话与编辑器由组件实例管理)。 */
+export interface NovelTab {
+  id: string;
+  title: string;
+}
+
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
@@ -49,6 +55,9 @@ interface AppStore {
 
   documents: OpenDocument[];
   activePath: string | null;
+
+  novelTabs: NovelTab[];
+  activeNovelId: string | null;
 
   lspStatus: LspStatus;
   lspError: string | null;
@@ -80,6 +89,9 @@ interface AppStore {
   updateDocument: (path: string, patch: Partial<OpenDocument>) => void;
   /** 将文档移动到指定位置 (选项卡拖拽排序) */
   moveDocument: (path: string, toIndex: number) => void;
+  openNovelTab: (tab: NovelTab) => void;
+  closeNovelTab: (id: string) => void;
+  setActiveNovel: (id: string) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (
@@ -102,6 +114,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
   documents: [],
   activePath: null,
+
+  novelTabs: [],
+  activeNovelId: null,
 
   lspStatus: 'disconnected',
   lspError: null,
@@ -140,6 +155,8 @@ export const useAppStore = create<AppStore>((set) => ({
         projectName: null,
         documents: [],
         activePath: null,
+        novelTabs: [],
+        activeNovelId: null,
         diagnostics: {},
         previewSiteId: null,
         previewReady: false,
@@ -159,7 +176,7 @@ export const useAppStore = create<AppStore>((set) => ({
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return { documents, activePath: doc.path };
+      return { documents, activePath: doc.path, activeNovelId: null };
     }),
   closeDocument: (path) =>
     set((s) => {
@@ -169,7 +186,20 @@ export const useAppStore = create<AppStore>((set) => ({
       delete diagnostics[path];
       return { documents, activePath, diagnostics };
     }),
-  setActiveDocument: (path) => set({ activePath: path }),
+  setActiveDocument: (path) => set({ activePath: path, activeNovelId: null }),
+  openNovelTab: (tab) =>
+    set((s) => {
+      const exists = s.novelTabs.some((t) => t.id === tab.id);
+      const novelTabs = exists ? s.novelTabs : [...s.novelTabs, tab];
+      return { novelTabs, activeNovelId: tab.id, activePath: null };
+    }),
+  closeNovelTab: (id) =>
+    set((s) => {
+      const novelTabs = s.novelTabs.filter((t) => t.id !== id);
+      const activeNovelId = s.activeNovelId === id ? null : s.activeNovelId;
+      return { novelTabs, activeNovelId };
+    }),
+  setActiveNovel: (id) => set({ activeNovelId: id, activePath: null }),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),

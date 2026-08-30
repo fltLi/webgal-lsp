@@ -10,6 +10,9 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
+    "paths": {
+      "webgal-novel-preprocess": ["../packages/webgal-novel-preprocess/src/index.ts"]
+    },
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",

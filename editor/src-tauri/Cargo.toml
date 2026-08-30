@@ -14,7 +14,9 @@ name = "webgal_ink_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+webgal-language-core.workspace = true
 webgal-language-server.workspace = true
+webgal-language-service.workspace = true
 webgal-snapshot.workspace = true
 
 serde.workspace = true

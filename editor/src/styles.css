@@ -1397,3 +1397,180 @@ body.resizing {
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--app-muted);
 }
+
+/* -------- 文本预处理选项卡 -------- */
+.editor-tab.novel .novel-dot {
+  color: var(--app-accent);
+}
+
+.preprocess-tab {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.preprocess-editor {
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.preprocess-panel {
+  flex: 0 0 auto;
+  max-height: 42%;
+  overflow: hidden;
+  padding: 10px 14px;
+  background: var(--app-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preprocess-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.preprocess-step-idx {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-accent);
+  white-space: nowrap;
+}
+
+.preprocess-step-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preprocess-step-desc {
+  color: var(--app-muted);
+  font-size: 13px;
+}
+
+.preprocess-tips {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.preprocess-warnings {
+  margin: 0;
+  padding-left: 18px;
+  color: #b4540a;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+[data-theme='dark'] .preprocess-warnings {
+  color: #e0a16a;
+}
+
+.preprocess-characters {
+  border-top: 1px solid var(--app-border);
+  padding-top: 8px;
+  /* 人物面板自身的滚动容器 */
+  min-height: 0;
+  max-height: 224px;
+  overflow-y: auto;
+}
+
+.preprocess-characters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 8px;
+}
+
+.preprocess-character {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-bg);
+  white-space: nowrap;
+}
+
+.preprocess-character-key {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--app-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preprocess-character-name {
+  flex: 0 0 auto;
+  width: 96px; /* 约 6 个汉字 */
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-panel);
+  color: var(--app-fg);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.preprocess-character-id {
+  flex: 0 0 auto;
+  width: 76px; /* 约 6 个英文/数字 */
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-panel);
+  color: var(--app-fg);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.preprocess-character-remove {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.preprocess-character-remove:hover {
+  color: var(--app-fg);
+  background: var(--app-hover);
+}
+
+.preprocess-character-add {
+  border: 1px dashed var(--app-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.preprocess-character-add:hover {
+  color: var(--app-accent);
+  border-color: var(--app-accent);
+}
+
+.preprocess-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preprocess-actions-spacer {
+  flex: 1;
+}
