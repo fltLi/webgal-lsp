@@ -1,0 +1,29 @@
+{
+  "name": "webgal-novel-preprocess",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WebGAL 小说文本预处理核心: 将无格式小说文本转换为原始 WebGAL 脚本的纯逻辑库",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "lint": "eslint src test --ext .ts",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^3.0.0"
+  }
+}

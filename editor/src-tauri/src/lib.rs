@@ -23,6 +23,8 @@ pub fn run() {
         .manage(Mutex::new(PreviewState::new()))
         .invoke_handler(tauri::generate_handler![
             service::lsp::start_server,
+            service::highlight::semantic_token_types,
+            service::highlight::highlight_scene,
             service::preview::start_preview_server,
             service::preview::add_static_site,
             service::preview::set_active_preview_session,

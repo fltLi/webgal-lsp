@@ -7,15 +7,17 @@ import { save } from '@tauri-apps/plugin-dialog';
 import {
   ArchiveRegular,
   ArrowLeftRegular,
+  DocumentTextRegular,
   PanelLeftContractRegular,
   PanelLeftExpandRegular,
   SettingsRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { closeProject } from '../project';
+import { PreprocessTab } from '../novel/PreprocessTab';
 import { useAppStore } from '../state/store';
 import { confirmClose } from '../unsaved';
 import { CodeEditor } from './CodeEditor';
@@ -32,6 +34,8 @@ export function EditorPage() {
   const projectName = useAppStore((s) => s.projectName);
   const documents = useAppStore((s) => s.documents);
   const activePath = useAppStore((s) => s.activePath);
+  const activeNovelId = useAppStore((s) => s.activeNovelId);
+  const openNovelTab = useAppStore((s) => s.openNovelTab);
   const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
@@ -42,6 +46,7 @@ export function EditorPage() {
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
+  const novelSeq = useRef(0);
 
   const MIN_SIDEBAR = 280;
   const MAX_SIDEBAR = 760;
@@ -75,6 +80,13 @@ export function EditorPage() {
     confirmClose(() => void pickSnapshotLocation(), undefined, '生成快照前是否保存未保存的更改？');
   };
 
+  /** 打开一个新的文本预处理选项卡 (非单例; id 全局唯一, 避免重挂载后计数器重置冲突)。 */
+  const startNovelPreprocess = () => {
+    novelSeq.current += 1;
+    const id = `novel-${Date.now().toString(36)}-${novelSeq.current}`;
+    openNovelTab({ id, title: `文本预处理 ${novelSeq.current}` });
+  };
+
   /** 选择输出压缩包位置 (默认: 项目目录/<项目名>.zip)。 */
   const pickSnapshotLocation = async () => {
     if (!projectPath || !projectName) return;
@@ -100,6 +112,7 @@ export function EditorPage() {
 
         <span className="top-bar-spacer" />
 
+        <Button appearance="subtle" icon={<DocumentTextRegular />} title="文本预处理" onClick={startNovelPreprocess} />
         <Button appearance="subtle" icon={<ArchiveRegular />} title="生成快照" onClick={startSnapshot} />
         <Button
           appearance="subtle"
@@ -170,7 +183,9 @@ export function EditorPage() {
         <div className="editor-workspace">
           <EditorTabs />
           <div className="editor-area">
-            {activeDoc ? (
+            {activeNovelId ? (
+              <PreprocessTab id={activeNovelId} />
+            ) : activeDoc ? (
               <CodeEditor doc={activeDoc} />
             ) : (
               <div className="editor-empty">从左侧选择或打开一个场景开始编辑</div>

@@ -6024,7 +6024,9 @@ dependencies = [
  "tower-http 0.5.2",
  "tower-lsp",
  "trash",
+ "webgal-language-core",
  "webgal-language-server",
+ "webgal-language-service",
  "webgal-snapshot",
  "ws_stream_tungstenite",
 ]

@@ -8,6 +8,7 @@ import { pushRecentProject } from './lib/settings';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
 import { disposeModel } from './lsp/monaco';
+import { disposeAllNovelTabs } from './novel/registry';
 import { previewClient } from './preview/client';
 import { useAppStore } from './state/store';
 
@@ -57,6 +58,7 @@ export async function openProject(path: string): Promise<void> {
 
   // 关闭旧项目的所有文档与 model
   disposeAllModels();
+  disposeAllNovelTabs();
   store.setProject(path);
   store.updateSettings(pushRecentProject(store.settings, path));
   previewClient.resetSite();
@@ -69,6 +71,7 @@ export function closeProject(): void {
     lspClient.changeWorkspaceFolders([], [store.projectPath]);
   }
   disposeAllModels();
+  disposeAllNovelTabs();
   store.setProject(null);
   previewClient.resetSite();
 }

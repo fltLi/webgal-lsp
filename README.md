@@ -14,6 +14,7 @@ WebGAL 语言基础设施。
 - **悬浮文档**：悬停查看语句、参数的详细说明 -> [详细说明](#documentation-license)
 - **代码编辑**：提供轻量级编辑器，集成上述语言服务 -> [详细说明](#webgal-ink-编辑器)
 - **快照打包**：生成 WebGAL 项目精简压缩包，便于归档和传播
+- **文本处理**：将小说转换为原始脚本（智能识别对话与断句、分配对话者）
 
 [^1]: 实验性功能，后续将逐步完善和稳定。
 
@@ -42,6 +43,7 @@ cargo build -p webgal-language-server
 语言服务器支持两种通信模式，根据客户端类型选择：
 
 - **:computer: stdio 模式（默认）**：适用于 VS Code 等桌面客户端。
+
   ```bash
   cargo run -p webgal-language-server
   ```
@@ -61,6 +63,7 @@ cargo build -p webgal-language-server
 - **诊断调优**：`--diagnostic-delay <MS>`（批处理延迟，默认 500ms），`--diagnostic-timeout <MS>`（生成超时，默认 10000ms）
 
 示例：
+
 ```bash
 cargo run -p webgal-language-server -- --log-level debug --disable-hover --disable-complete --diagnostic-delay 300
 ```
@@ -78,7 +81,8 @@ cargo run -p webgal-language-server -- --log-level debug --disable-hover --disab
 - 多标签场景编辑、自动保存、最近项目；
 - **内置 LSP**：语义高亮、自动补全、诊断、格式化、悬浮文档等；
 - **实时预览**、资源浏览、深浅色主题与编辑器设置；
-- **快照打包**：一键生成精简压缩包，并可实时查看进度。
+- **快照打包**：一键生成精简压缩包，并可实时查看进度；
+- **文本预处理**：将无格式小说转换为 WebGAL 脚本，支持对话识别、断句与说话者分配。
 
 ---
 
