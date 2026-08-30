@@ -463,6 +463,10 @@ body.resizing {
   color: var(--app-fg);
 }
 
+.status-lines {
+  color: var(--app-fg);
+}
+
 .lsp-status.lsp-ready {
   color: #107c10;
 }

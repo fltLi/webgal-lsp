@@ -91,19 +91,34 @@ export function PreprocessTab({ id }: { id: string }) {
     sessionRef.current = sess;
     setSession(sess);
 
+    // 状态栏光标位置同步。
+    const cursorSub = editor.onDidChangeCursorPosition((e) => {
+      useAppStore.getState().setCursor({ line: e.position.lineNumber, column: e.position.column });
+    });
+
     return () => {
       // 仅解绑宿主并销毁编辑器; 会话与 model 保留在注册表。
+      cursorSub.dispose();
       releaseSession(id);
       editor.dispose();
       sessionRef.current = null;
       modelRef.current = null;
       setSession(null);
+      useAppStore.getState().setNovelStats(null);
+      useAppStore.getState().setCursor(null);
     };
   }, [id]);
 
   useEffect(() => {
     if (!session) return;
-    return session.subscribe(() => force());
+    const update = () => {
+      const st = session.getState();
+      // 状态栏字符/行数统计 (文本随会话状态实时变化)。
+      useAppStore.getState().setNovelStats({ chars: st.text.length, lines: st.text.split('\n').length });
+      force();
+    };
+    update();
+    return session.subscribe(update);
   }, [session]);
 
   const state = session ? session.getState() : EMPTY_STATE;

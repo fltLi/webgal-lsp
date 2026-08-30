@@ -58,6 +58,8 @@ interface AppStore {
 
   novelTabs: NovelTab[];
   activeNovelId: string | null;
+  /** 活动文本预处理选项卡的编辑器统计 (供状态栏显示; null 表示无活动预处理选项卡)。 */
+  novelStats: { chars: number; lines: number } | null;
 
   lspStatus: LspStatus;
   lspError: string | null;
@@ -92,6 +94,7 @@ interface AppStore {
   openNovelTab: (tab: NovelTab) => void;
   closeNovelTab: (id: string) => void;
   setActiveNovel: (id: string) => void;
+  setNovelStats: (stats: { chars: number; lines: number } | null) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (
@@ -117,6 +120,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   novelTabs: [],
   activeNovelId: null,
+  novelStats: null,
 
   lspStatus: 'disconnected',
   lspError: null,
@@ -200,6 +204,7 @@ export const useAppStore = create<AppStore>((set) => ({
       return { novelTabs, activeNovelId };
     }),
   setActiveNovel: (id) => set({ activeNovelId: id, activePath: null }),
+  setNovelStats: (stats) => set({ novelStats: stats }),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),
