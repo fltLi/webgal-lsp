@@ -26,9 +26,9 @@ pub trait EvaluationContext {
 /// 空上下文, 不提供任何变量或函数
 ///
 /// 用于无上下文求值, 表达式只能使用字面量与运算符.
-pub struct EmptyContext;
+pub struct EmptyEvaluationContext;
 
-impl EvaluationContext for EmptyContext {
+impl EvaluationContext for EmptyEvaluationContext {
     fn get_variable(&self, _name: &str) -> Option<Value> {
         None
     }

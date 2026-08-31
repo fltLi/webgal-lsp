@@ -8,7 +8,7 @@ use std::{
 };
 
 use derive_more::{Deref, DerefMut, From, Into};
-use expression::{EmptyContext, Expression};
+use expression::{EmptyEvaluationContext, Expression};
 use getset::{CopyGetters, Getters};
 use webgal_language_core::{
     element::{AnimationList, Forward},
@@ -207,7 +207,7 @@ impl<'a> SentenceInfo<'a> {
 
         // 检查条件执行表达式是否为常量
         if let Some(condition) = condition
-            && let Ok(value) = condition.evaluate(&EmptyContext)
+            && let Ok(value) = condition.evaluate(&EmptyEvaluationContext)
         {
             diagnostics.push(PrimaryDiagnostic {
                 span: DiagnosticLocation::ArgumentValue("when"),

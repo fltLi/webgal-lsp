@@ -17,7 +17,7 @@ use std::{fmt, str::FromStr};
 
 use crate::{
     error::{EvaluationError, ParseError, ParseErrorKind},
-    evaluate::{EmptyContext, EvaluationContext, evaluate_ast},
+    evaluate::{EmptyEvaluationContext, EvaluationContext, evaluate_ast},
     value::{Number, Value, ValueKind},
 };
 
@@ -742,6 +742,33 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// 类型推断上下文
+///
+/// 变量与函数的类型全部由调用者提供, 供 [`Expression::infer_type`] 使用.
+/// 未收录的变量或函数返回 `None`, 视为类型未知.
+pub trait TypeContext {
+    /// 变量类型, 未知时返回 `None`
+    fn type_of_variable(&self, name: &str) -> Option<ValueKind>;
+
+    /// 函数返回类型, 未知时返回 `None`
+    fn type_of_function(&self, name: &str) -> Option<ValueKind>;
+}
+
+/// 空类型上下文, 不提供任何变量或函数的类型
+///
+/// 用于无上下文类型推断, 表达式中引用变量或调用函数时返回 `None`.
+pub struct EmptyTypeContext;
+
+impl TypeContext for EmptyTypeContext {
+    fn type_of_variable(&self, _name: &str) -> Option<ValueKind> {
+        None
+    }
+
+    fn type_of_function(&self, _name: &str) -> Option<ValueKind> {
+        None
+    }
+}
+
 /// 已解析的表达式
 ///
 /// 解析一次后可多次求值, 适合对同一表达式使用不同上下文.
@@ -786,10 +813,24 @@ impl Expression {
 
     /// 推断表达式结果类型
     ///
-    /// 基于语法树静态推断, 不求值. 无法确定时 (如包含变量引用, 函数调用或类型不匹配)
-    /// 返回 `None`.
-    pub fn infer_type(&self) -> Option<ValueKind> {
-        infer_expr_type(&self.ast)
+    /// 基于语法树静态推断, 不求值. 变量与函数的类型由 [`TypeContext`] 提供,
+    /// 未收录或无法确定时 (如类型不匹配) 返回 `None`.
+    pub fn infer_type(&self, context: &dyn TypeContext) -> Option<ValueKind> {
+        infer_expr_type(&self.ast, context)
+    }
+
+    /// 收集表达式引用的变量名
+    ///
+    /// 按语法树遍历顺序返回, 同一变量可能出现多次. 不含函数名.
+    pub fn variables(&self) -> Vec<&str> {
+        collect_names(&self.ast, NameKind::Variable)
+    }
+
+    /// 收集表达式调用的函数名
+    ///
+    /// 按语法树遍历顺序返回, 同一函数可能出现多次.
+    pub fn functions(&self) -> Vec<&str> {
+        collect_names(&self.ast, NameKind::Function)
     }
 
     /// 化简表达式, 返回新的简化表达式
@@ -804,17 +845,18 @@ impl Expression {
 }
 
 /// 推断表达式子树的类型
-fn infer_expr_type(expression: &Expr) -> Option<ValueKind> {
+fn infer_expr_type(expression: &Expr, context: &dyn TypeContext) -> Option<ValueKind> {
     match expression {
         Expr::Number(_) => Some(ValueKind::Number),
         Expr::Bool(_) => Some(ValueKind::Bool),
         Expr::Str(_) => Some(ValueKind::String),
-        // 变量与函数的结果类型未知
-        Expr::Var(_) | Expr::Call(..) => None,
+        // 变量与函数的结果类型由上下文提供
+        Expr::Var(name) => context.type_of_variable(name),
+        Expr::Call(name, _) => context.type_of_function(name),
         Expr::Unary(operator, inner) => match operator {
             // 逻辑非按真值判断, 结果恒为布尔
             UnOp::Not => Some(ValueKind::Bool),
-            UnOp::Neg | UnOp::Pos => match infer_expr_type(inner) {
+            UnOp::Neg | UnOp::Pos => match infer_expr_type(inner, context) {
                 Some(ValueKind::Number) => Some(ValueKind::Number),
                 _ => None,
             },
@@ -822,8 +864,8 @@ fn infer_expr_type(expression: &Expr) -> Option<ValueKind> {
         // 逻辑与 / 或结果恒为布尔
         Expr::Logical(..) => Some(ValueKind::Bool),
         Expr::Binary(operator, lhs, rhs) => {
-            let lhs = infer_expr_type(lhs);
-            let rhs = infer_expr_type(rhs);
+            let lhs = infer_expr_type(lhs, context);
+            let rhs = infer_expr_type(rhs, context);
             match operator {
                 BinOp::Add => match (lhs, rhs) {
                     (Some(ValueKind::Number), Some(ValueKind::Number)) => Some(ValueKind::Number),
@@ -851,11 +893,64 @@ fn infer_expr_type(expression: &Expr) -> Option<ValueKind> {
             }
         }
         Expr::Ternary(_, then_branch, else_branch) => {
-            match (infer_expr_type(then_branch), infer_expr_type(else_branch)) {
+            match (
+                infer_expr_type(then_branch, context),
+                infer_expr_type(else_branch, context),
+            ) {
                 (Some(then_type), Some(else_type)) if then_type == else_type => Some(then_type),
                 _ => None,
             }
         }
+    }
+}
+
+/// 收集的名称种类
+#[derive(Clone, Copy)]
+enum NameKind {
+    /// 变量引用 (`Expr::Var`)
+    Variable,
+    /// 函数调用 (`Expr::Call` 的调用名)
+    Function,
+}
+
+/// 收集表达式中的变量或函数名 (按遍历顺序, 可重复)
+fn collect_names(expression: &Expr, kind: NameKind) -> Vec<&str> {
+    let mut names = Vec::new();
+    collect_names_in(expression, kind, &mut names);
+    names
+}
+
+/// 递归收集名称到指定容器
+fn collect_names_in<'a>(expression: &'a Expr, kind: NameKind, out: &mut Vec<&'a str>) {
+    match expression {
+        Expr::Var(name) => {
+            if matches!(kind, NameKind::Variable) {
+                out.push(name);
+            }
+        }
+        Expr::Call(name, arguments) => {
+            if matches!(kind, NameKind::Function) {
+                out.push(name);
+            }
+            for argument in arguments {
+                collect_names_in(argument, kind, out);
+            }
+        }
+        Expr::Unary(_, inner) => collect_names_in(inner, kind, out),
+        Expr::Binary(_, lhs, rhs) => {
+            collect_names_in(lhs, kind, out);
+            collect_names_in(rhs, kind, out);
+        }
+        Expr::Logical(_, lhs, rhs) => {
+            collect_names_in(lhs, kind, out);
+            collect_names_in(rhs, kind, out);
+        }
+        Expr::Ternary(condition, then_branch, else_branch) => {
+            collect_names_in(condition, kind, out);
+            collect_names_in(then_branch, kind, out);
+            collect_names_in(else_branch, kind, out);
+        }
+        Expr::Number(_) | Expr::Bool(_) | Expr::Str(_) => {}
     }
 }
 
@@ -915,7 +1010,7 @@ fn simplify_keep(expression: Expr) -> Expr {
 ///
 /// 依赖求值器的短路语义: `false && a` 等无需求值变量的分支仍可折叠.
 fn try_fold(expression: &Expr) -> Option<Expr> {
-    evaluate_ast(expression, &EmptyContext, 0)
+    evaluate_ast(expression, &EmptyEvaluationContext, 0)
         .ok()
         .map(literal_expr)
 }
@@ -1396,9 +1491,15 @@ mod tests {
         let expression = Expression::default();
         assert_eq!(expression.simplify().to_string(), "0");
         assert_eq!(
-            expression.simplify().evaluate(&EmptyContext).unwrap(),
+            expression
+                .simplify()
+                .evaluate(&EmptyEvaluationContext)
+                .unwrap(),
             Value::from(0)
         );
-        assert_eq!(expression.evaluate(&EmptyContext).unwrap(), Value::from(0));
+        assert_eq!(
+            expression.evaluate(&EmptyEvaluationContext).unwrap(),
+            Value::from(0)
+        );
     }
 }

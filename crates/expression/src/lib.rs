@@ -20,8 +20,8 @@
 use std::str::FromStr;
 
 pub use error::{Error, EvaluationError, ParseError, ParseErrorKind, Result};
-pub use evaluate::{EmptyContext, EvaluationContext};
-pub use parse::Expression;
+pub use evaluate::{EmptyEvaluationContext, EvaluationContext};
+pub use parse::{EmptyTypeContext, Expression, TypeContext};
 pub use value::{Number, Value, ValueKind};
 
 mod error;
@@ -79,6 +79,6 @@ pub fn evaluate(source: &str, context: &dyn EvaluationContext) -> Result<Value> 
 pub fn evaluate_constantly(source: &str) -> Option<Value> {
     Expression::from_str(source)
         .ok()?
-        .evaluate(&EmptyContext)
+        .evaluate(&EmptyEvaluationContext)
         .ok()
 }

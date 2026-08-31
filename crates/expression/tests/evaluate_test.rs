@@ -233,7 +233,13 @@ fn evaluate_without_context() {
 
 #[test]
 fn infer_result_type() {
-    let infer = |source: &str| Expression::from_str(source).unwrap().infer_type();
+    use expression::{EmptyTypeContext, TypeContext};
+
+    let infer = |source: &str| {
+        Expression::from_str(source)
+            .unwrap()
+            .infer_type(&EmptyTypeContext)
+    };
     assert_eq!(infer("1 + 2"), Some(ValueKind::Number));
     assert_eq!(infer("-5"), Some(ValueKind::Number));
     assert_eq!(infer("1 + \"x\""), Some(ValueKind::String));
@@ -253,6 +259,58 @@ fn infer_result_type() {
     assert_eq!(infer("1 + true"), None);
     assert_eq!(infer("1 == \"1\""), None);
     assert_eq!(infer("random(1, 2, 3)"), None);
+
+    // 提供变量与函数类型后可完成推断
+    struct Context;
+    impl TypeContext for Context {
+        fn type_of_variable(&self, name: &str) -> Option<ValueKind> {
+            match name {
+                "hp" => Some(ValueKind::Number),
+                "name" => Some(ValueKind::String),
+                _ => None,
+            }
+        }
+        fn type_of_function(&self, name: &str) -> Option<ValueKind> {
+            match name {
+                "random" => Some(ValueKind::Number),
+                _ => None,
+            }
+        }
+    }
+    let infer = |source: &str| Expression::from_str(source).unwrap().infer_type(&Context);
+    assert_eq!(infer("hp"), Some(ValueKind::Number));
+    assert_eq!(infer("-hp"), Some(ValueKind::Number));
+    assert_eq!(infer("hp + 1"), Some(ValueKind::Number));
+    assert_eq!(infer("name + \"先生\""), Some(ValueKind::String));
+    assert_eq!(infer("hp == 1"), Some(ValueKind::Bool));
+    assert_eq!(infer("random(1, 2, 3)"), Some(ValueKind::Number));
+    assert_eq!(infer("random(1, 2, 3) + 1"), Some(ValueKind::Number));
+    // 未收录的类型仍无法确定
+    assert_eq!(infer("missing"), None);
+    assert_eq!(infer("missing + 1"), None);
+}
+
+// -------- 表达式属性 --------
+
+#[test]
+fn expression_variables_and_functions() {
+    let expression =
+        Expression::from_str("hp + damage * 2 > random(1, 10) ? max(score, hp) : name").unwrap();
+    assert_eq!(
+        expression.variables(),
+        vec!["hp", "damage", "score", "hp", "name"]
+    );
+    assert_eq!(expression.functions(), vec!["random", "max"]);
+
+    // 函数名不是变量, 实参中的变量仍是变量
+    let call = Expression::from_str("random(score, hp)").unwrap();
+    assert_eq!(call.variables(), vec!["score", "hp"]);
+    assert_eq!(call.functions(), vec!["random"]);
+
+    // 无变量 / 无函数
+    let literal = Expression::from_str("1 + 2").unwrap();
+    assert!(literal.variables().is_empty());
+    assert!(literal.functions().is_empty());
 }
 
 // -------- 表达式属性 --------

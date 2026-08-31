@@ -1,11 +1,11 @@
 //! 舞台状态变换
 
-use std::{borrow::Cow, cell::RefCell, collections::hash_map::Entry, rc::Rc, result};
+use std::{borrow::Cow, cell::RefCell, collections::hash_map::Entry, rc::Rc};
 
-use expression::Value;
+use expression::{EvaluationContext, Value};
 use webgal_language_core::{
     dispatch_sentence,
-    element::{FigureId, FigureSide, ObjectId, TokenSplit},
+    element::{FigureId, FigureSide, ObjectId, TokenSplit, interpolate},
     sentence::*,
 };
 
@@ -1171,51 +1171,6 @@ impl ToEffects for CommentSentence {}
 
 /// 字符串变量插值
 ///
-/// # Returns
-/// 插值结果字符串.
-/// 若无插值调用, 则返回原始字符串引用.
-///
-/// # Errors
-/// 变量不存在时, 返回 [`DiagnosticKind::UndefinedSymbol`] 错误.
-///
-/// # Behavior
-/// * 贪心匹配 `{` 和 `}`, 尝试替换变量.
-/// * 匹配内容直接视为变量名, 不处理转义, 空白字符移除, 表达式求值等.
-fn interpolate<'a>(
-    input: &'a str,
-    variables: &VariableTable,
-) -> result::Result<Cow<'a, str>, DiagnosticKind> {
-    if !input.contains('{') {
-        return Ok(Cow::Borrowed(input));
-    }
-
-    let mut start = 0;
-    let mut result = String::with_capacity(input.len());
-
-    while start < input.len()
-        && let Some(idx) = input[start..].find('{')
-        && let Some(len) = input[start + idx..].find('}')
-    {
-        let variable = &input[start + idx + 1..start + idx + len];
-        let value = variables.get(variable).ok_or_else(|| {
-            DiagnosticKind::UndefinedSymbol(SymbolKind::Variable, variable.to_string())
-        })?;
-
-        result.push_str(&input[start..start + idx]);
-        match value {
-            Value::String(s) => result.push_str(s),
-            value => result.push_str(&value.to_string()),
-        }
-
-        start += idx + len + 1;
-    }
-
-    result.push_str(&input[start..]);
-    Ok(Cow::Owned(result))
-}
-
-/// 字符串变量插值
-///
 /// # Behavior
 /// * 插值策略详见 [`interpolate`].
 /// * 插值失败时, 将记录诊断并返回原始值的引用.
@@ -1225,8 +1180,20 @@ fn interpolate_or_record<'a>(
     span: DiagnosticLocation,
     diagnostics: &mut Vec<PrimaryDiagnostic>,
 ) -> Cow<'a, str> {
-    interpolate(input, variables).unwrap_or_else(|error| {
-        diagnostics.push(error.into_primary_diagnostic(span));
+    interpolate(input, |name| {
+        variables
+            .get_variable(name)
+            .map(|value| match value {
+                Value::String(s) => s,
+                value => value.to_string(),
+            })
+            .map(Cow::Owned)
+    })
+    .unwrap_or_else(|name| {
+        diagnostics.push(PrimaryDiagnostic {
+            span,
+            detail: DiagnosticKind::UndefinedSymbol(SymbolKind::Variable, name.to_string()),
+        });
         Cow::Borrowed(input)
     })
 }
