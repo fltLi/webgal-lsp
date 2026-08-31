@@ -5841,6 +5841,7 @@ dependencies = [
  "anyhow",
  "count",
  "derive_more",
+ "expression",
  "getset",
  "json-language-service",
  "lsp-types",
