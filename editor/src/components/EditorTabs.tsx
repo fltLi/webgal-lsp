@@ -5,10 +5,13 @@
 
 import { useRef, useState } from 'react';
 
+import { ArrowSwapRegular, DocumentTextRegular } from '@fluentui/react-icons';
+
 import { disposeModel } from '../lsp/monaco';
 import { disposeNovelTab } from '../novel/registry';
 import { useAppStore } from '../state/store';
 import { confirmClose } from '../unsaved';
+import { FileBadges } from './FileBadges';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
 const DRAG_THRESHOLD = 6;
@@ -23,6 +26,10 @@ export function EditorTabs() {
   const activeNovelId = useAppStore((s) => s.activeNovelId);
   const setActiveNovel = useAppStore((s) => s.setActiveNovel);
   const closeNovelTab = useAppStore((s) => s.closeNovelTab);
+  const diffTabs = useAppStore((s) => s.diffTabs);
+  const activeDiffId = useAppStore((s) => s.activeDiffId);
+  const setActiveDiff = useAppStore((s) => s.setActiveDiff);
+  const closeDiffTab = useAppStore((s) => s.closeDiffTab);
 
   const containerRef = useRef<HTMLDivElement>(null);
   // 拖拽过程中的临时状态 (非渲染状态放 ref, 避免频繁重渲染)
@@ -76,7 +83,7 @@ export function EditorTabs() {
     setDropIndex(null);
   };
 
-  if (documents.length === 0 && novelTabs.length === 0) return null;
+  if (documents.length === 0 && novelTabs.length === 0 && diffTabs.length === 0) return null;
 
   return (
     <div className="editor-tabs" role="tablist" ref={containerRef}>
@@ -98,6 +105,7 @@ export function EditorTabs() {
           <span className="editor-tab-name">
             {d.dirty ? <span className="dirty-dot">●</span> : null}
             {d.name}
+            <FileBadges path={d.path} />
           </span>
           <button
             className="editor-tab-close"
@@ -126,7 +134,12 @@ export function EditorTabs() {
           onClick={() => setActiveNovel(t.id)}
           title={t.title}
         >
-          <span className="editor-tab-name novel-dot">✎ {t.title}</span>
+          <span className="editor-tab-name">
+            <span className="editor-tab-icon">
+              <DocumentTextRegular />
+            </span>
+            {t.title}
+          </span>
           <button
             className="editor-tab-close"
             title="关闭"
@@ -134,6 +147,33 @@ export function EditorTabs() {
               e.stopPropagation();
               disposeNovelTab(t.id);
               closeNovelTab(t.id);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {diffTabs.map((t) => (
+        <div
+          key={t.id}
+          role="tab"
+          aria-selected={t.id === activeDiffId}
+          className={`editor-tab diff${t.id === activeDiffId ? ' active' : ''}`}
+          onClick={() => setActiveDiff(t.id)}
+          title={t.file}
+        >
+          <span className="editor-tab-name">
+            <span className="editor-tab-icon">
+              <ArrowSwapRegular />
+            </span>
+            {t.title}
+          </span>
+          <button
+            className="editor-tab-close"
+            title="关闭"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDiffTab(t.id);
             }}
           >
             ×

@@ -82,16 +82,23 @@ impl ProgressReporter for EventReporter {
     }
 
     fn on_scan_error(&self, error: &Error) -> bool {
-        let _ = self.channel.send(SnapshotEvent::ScanError { message: error.to_string() });
+        let _ = self.channel.send(SnapshotEvent::ScanError {
+            message: error.to_string(),
+        });
         false
     }
 
     fn on_scan_complete(&self, count: usize, total_size: u64) {
-        let _ = self.channel.send(SnapshotEvent::ScanComplete { count, total_size });
+        let _ = self
+            .channel
+            .send(SnapshotEvent::ScanComplete { count, total_size });
     }
 
     fn on_pack_start(&self, files: &[PathBuf], total_size: u64) {
-        let _ = self.channel.send(SnapshotEvent::PackStart { count: files.len(), total_size });
+        let _ = self.channel.send(SnapshotEvent::PackStart {
+            count: files.len(),
+            total_size,
+        });
     }
 
     fn on_pack_file(
@@ -110,12 +117,16 @@ impl ProgressReporter for EventReporter {
     }
 
     fn on_pack_error(&self, error: &Error) -> bool {
-        let _ = self.channel.send(SnapshotEvent::PackError { message: error.to_string() });
+        let _ = self.channel.send(SnapshotEvent::PackError {
+            message: error.to_string(),
+        });
         false
     }
 
     fn on_pack_complete(&self, final_size: u64) {
-        let _ = self.channel.send(SnapshotEvent::PackComplete { final_size });
+        let _ = self
+            .channel
+            .send(SnapshotEvent::PackComplete { final_size });
     }
 }
 

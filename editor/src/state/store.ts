@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 
+import type { GitStatus } from '../commands/git';
 import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
 
@@ -35,6 +36,18 @@ export interface NovelTab {
   title: string;
 }
 
+/** 只读差异选项卡 (git 差异比较)。 */
+export interface DiffTab {
+  id: string;
+  title: string;
+  /** 仓库相对路径 (正斜杠) */
+  file: string;
+  /** 差异来源: 暂存 / 未暂存 / 历史提交 */
+  kind: 'staged' | 'unstaged' | 'commit';
+  /** kind 为 commit 时的提交 id */
+  commitId?: string;
+}
+
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
@@ -60,6 +73,11 @@ interface AppStore {
   activeNovelId: string | null;
   /** 活动文本预处理选项卡的编辑器统计 (供状态栏显示; null 表示无活动预处理选项卡)。 */
   novelStats: { chars: number; lines: number } | null;
+
+  /** git 仓库状态 (null 表示尚未加载)。 */
+  gitStatus: GitStatus | null;
+  diffTabs: DiffTab[];
+  activeDiffId: string | null;
 
   lspStatus: LspStatus;
   lspError: string | null;
@@ -95,6 +113,10 @@ interface AppStore {
   closeNovelTab: (id: string) => void;
   setActiveNovel: (id: string) => void;
   setNovelStats: (stats: { chars: number; lines: number } | null) => void;
+  setGitStatus: (status: GitStatus | null) => void;
+  openDiffTab: (tab: DiffTab) => void;
+  closeDiffTab: (id: string) => void;
+  setActiveDiff: (id: string) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (
@@ -121,6 +143,10 @@ export const useAppStore = create<AppStore>((set) => ({
   novelTabs: [],
   activeNovelId: null,
   novelStats: null,
+
+  gitStatus: null,
+  diffTabs: [],
+  activeDiffId: null,
 
   lspStatus: 'disconnected',
   lspError: null,
@@ -161,6 +187,9 @@ export const useAppStore = create<AppStore>((set) => ({
         activePath: null,
         novelTabs: [],
         activeNovelId: null,
+        gitStatus: null,
+        diffTabs: [],
+        activeDiffId: null,
         diagnostics: {},
         previewSiteId: null,
         previewReady: false,
@@ -180,31 +209,63 @@ export const useAppStore = create<AppStore>((set) => ({
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return { documents, activePath: doc.path, activeNovelId: null };
+      return { documents, activePath: doc.path, activeNovelId: null, activeDiffId: null };
     }),
   closeDocument: (path) =>
     set((s) => {
       const documents = s.documents.filter((d) => d.path !== path);
-      const activePath = s.activePath === path ? (documents[documents.length - 1]?.path ?? null) : s.activePath;
       const diagnostics = { ...s.diagnostics };
       delete diagnostics[path];
-      return { documents, activePath, diagnostics };
+      if (s.activePath !== path) return { documents, diagnostics };
+      // 关闭的是活动文档: 优先切到最后一个文档, 否则回退到预处理/差异选项卡
+      if (documents.length > 0) {
+        return { documents, diagnostics, activePath: documents[documents.length - 1].path };
+      }
+      const novel = s.novelTabs[s.novelTabs.length - 1];
+      if (novel) return { documents, diagnostics, activePath: null, activeNovelId: novel.id };
+      const diff = s.diffTabs[s.diffTabs.length - 1];
+      if (diff) return { documents, diagnostics, activePath: null, activeDiffId: diff.id };
+      return { documents, diagnostics, activePath: null };
     }),
-  setActiveDocument: (path) => set({ activePath: path, activeNovelId: null }),
+  setActiveDocument: (path) => set({ activePath: path, activeNovelId: null, activeDiffId: null }),
   openNovelTab: (tab) =>
     set((s) => {
       const exists = s.novelTabs.some((t) => t.id === tab.id);
       const novelTabs = exists ? s.novelTabs : [...s.novelTabs, tab];
-      return { novelTabs, activeNovelId: tab.id, activePath: null };
+      return { novelTabs, activeNovelId: tab.id, activePath: null, activeDiffId: null };
     }),
   closeNovelTab: (id) =>
     set((s) => {
       const novelTabs = s.novelTabs.filter((t) => t.id !== id);
-      const activeNovelId = s.activeNovelId === id ? null : s.activeNovelId;
-      return { novelTabs, activeNovelId };
+      if (s.activeNovelId !== id) return { novelTabs };
+      if (novelTabs.length > 0) return { novelTabs, activeNovelId: novelTabs[novelTabs.length - 1].id };
+      const doc = s.documents[s.documents.length - 1];
+      if (doc) return { novelTabs, activeNovelId: null, activePath: doc.path };
+      const diff = s.diffTabs[s.diffTabs.length - 1];
+      if (diff) return { novelTabs, activeNovelId: null, activeDiffId: diff.id };
+      return { novelTabs, activeNovelId: null };
     }),
-  setActiveNovel: (id) => set({ activeNovelId: id, activePath: null }),
+  setActiveNovel: (id) => set({ activeNovelId: id, activePath: null, activeDiffId: null }),
   setNovelStats: (stats) => set({ novelStats: stats }),
+  setGitStatus: (status) => set({ gitStatus: status }),
+  openDiffTab: (tab) =>
+    set((s) => {
+      const exists = s.diffTabs.some((t) => t.id === tab.id);
+      const diffTabs = exists ? s.diffTabs : [...s.diffTabs, tab];
+      return { diffTabs, activeDiffId: tab.id, activePath: null, activeNovelId: null };
+    }),
+  closeDiffTab: (id) =>
+    set((s) => {
+      const diffTabs = s.diffTabs.filter((t) => t.id !== id);
+      if (s.activeDiffId !== id) return { diffTabs };
+      if (diffTabs.length > 0) return { diffTabs, activeDiffId: diffTabs[diffTabs.length - 1].id };
+      const doc = s.documents[s.documents.length - 1];
+      if (doc) return { diffTabs, activeDiffId: null, activePath: doc.path };
+      const novel = s.novelTabs[s.novelTabs.length - 1];
+      if (novel) return { diffTabs, activeDiffId: null, activeNovelId: novel.id };
+      return { diffTabs, activeDiffId: null };
+    }),
+  setActiveDiff: (id) => set({ activeDiffId: id, activePath: null, activeNovelId: null }),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),

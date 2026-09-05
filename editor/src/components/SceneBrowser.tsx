@@ -18,6 +18,7 @@ import { createFile, createFolder, deletePath, ensureSceneExtension, renamePath,
 import { fs } from '../lib/fs';
 import { openFile } from '../project';
 import { useAppStore } from '../state/store';
+import { FileBadges } from './FileBadges';
 import { FileTree, type FileNode } from './FileTree';
 import { ConfirmDialog, NameInputDialog } from './SceneFileDialogs';
 
@@ -172,6 +173,7 @@ export function SceneBrowser() {
         selectedPath={activePath}
         refreshKey={refreshKey}
         onItemContextMenu={openMenu}
+        badge={(node) => <FileBadges path={node.path} />}
         menu={(currentDir) => [
           {
             key: 'newScene',
