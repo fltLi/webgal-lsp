@@ -53,6 +53,7 @@ tower-http = "=0.5.2"
 tower-lsp = "=0.20.0"
 lsp-types = "=0.94.1"
 futures-util = "0.3"
+
 async-tungstenite = "0.28"
 ws_stream_tungstenite = { version = "0.14", features = ["tokio_io"] }
 tokio = "1.53"

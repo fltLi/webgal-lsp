@@ -100,6 +100,8 @@ interface FileTreeProps {
   menu?: (currentDir: string) => ToolbarMenuItem[];
   /** 列表项右键菜单回调 (文件与文件夹均触发) */
   onItemContextMenu?: (node: FileNode, e: React.MouseEvent) => void;
+  /** 文件行右侧附加徽标 (如 git 更改类型 / 诊断数) */
+  badge?: (node: FileNode) => ReactNode;
   /** 自定义工具栏与列表的摆放方式; 缺省时工具栏在列表上方 (上下堆叠) */
   header?: (toolbar: ReactNode, list: ReactNode) => ReactNode;
 }
@@ -113,6 +115,7 @@ export function FileTree({
   refreshKey = 0,
   menu,
   onItemContextMenu,
+  badge,
   header,
 }: FileTreeProps) {
   const [currentRel, setCurrentRel] = useState('');
@@ -238,6 +241,7 @@ export function FileTree({
         <span className="resource-name" title={displayText}>
           {middleEllipsis(displayText, 30)}
         </span>
+        {badge ? badge(node) : null}
       </button>
     );
   };

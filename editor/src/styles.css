@@ -426,6 +426,11 @@ body.resizing {
 }
 
 .code-editor {
+  position: relative;
+  height: 100%;
+}
+
+.code-editor-host {
   height: 100%;
 }
 
@@ -1402,9 +1407,17 @@ body.resizing {
   background-color: var(--app-muted);
 }
 
-/* -------- 文本预处理选项卡 -------- */
-.editor-tab.novel .novel-dot {
-  color: var(--app-accent);
+/* -------- 选项卡图标 (场景 / 文本预处理 / 差异统一) -------- */
+.editor-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--app-muted);
+  flex: 0 0 auto;
+}
+
+.editor-tab-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .preprocess-tab {
@@ -1577,4 +1590,457 @@ body.resizing {
 
 .preprocess-actions-spacer {
   flex: 1;
+}
+
+/* -------- git 版本管理 -------- */
+
+/* 更改类型着色 */
+.git-M {
+  color: #0a66c2;
+  background: rgba(10, 102, 194, 0.14);
+}
+.git-A,
+.git-U {
+  color: #1a7f37;
+  background: rgba(26, 127, 55, 0.14);
+}
+.git-R {
+  color: #8250df;
+  background: rgba(130, 80, 223, 0.14);
+}
+.git-D {
+  color: #d1242f;
+  background: rgba(209, 36, 47, 0.14);
+}
+.git-T {
+  color: #bc4c00;
+  background: rgba(188, 76, 0, 0.14);
+}
+
+[data-theme='dark'] .git-M {
+  color: #4a9eff;
+  background: rgba(74, 158, 255, 0.18);
+}
+[data-theme='dark'] .git-A,
+[data-theme='dark'] .git-U {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.18);
+}
+[data-theme='dark'] .git-R {
+  color: #a371f7;
+  background: rgba(163, 113, 247, 0.18);
+}
+[data-theme='dark'] .git-D {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.18);
+}
+[data-theme='dark'] .git-T {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.18);
+}
+
+/* 仓库页 */
+.repository {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.repository-init {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  color: var(--app-fg);
+}
+
+.repository-init p {
+  margin: 0;
+  color: var(--app-muted);
+}
+
+.repository-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--app-border);
+  flex: 0 0 auto;
+}
+
+.repository-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--app-muted);
+}
+
+.repository-header-spacer {
+  flex: 1;
+}
+
+.repository-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--app-border);
+  flex: 0 0 auto;
+}
+
+.commit-editor {
+  width: 100%;
+  min-height: 56px;
+  max-height: 160px;
+  resize: none;
+  overflow: hidden;
+}
+
+.repository-commit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.repository-lists {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.repository-section {
+  padding: 8px 0;
+}
+
+.repository-section-title {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.repository-empty-list {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.gitignore-editor {
+  width: 100%;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}
+
+/* git 文件条目 */
+.git-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--app-fg);
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  flex: 0 0 auto;
+}
+
+.git-file-item:hover {
+  background: var(--app-hover);
+}
+
+.git-file-status {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.git-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-stats {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.git-add {
+  color: #1a7f37;
+  font-style: normal;
+}
+
+.git-del {
+  color: #d1242f;
+  font-style: normal;
+}
+
+[data-theme='dark'] .git-add {
+  color: #3fb950;
+}
+[data-theme='dark'] .git-del {
+  color: #f85149;
+}
+
+/* 文件徽标 (场景/资源浏览 + 选项卡) */
+.file-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.file-badges .git-file-status {
+  background: transparent;
+  width: auto;
+  height: auto;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.diag-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.diag-error {
+  color: #d1242f;
+}
+
+.diag-warn {
+  color: #bc4c00;
+}
+
+[data-theme='dark'] .diag-error {
+  color: #f85149;
+}
+
+[data-theme='dark'] .diag-warn {
+  color: #d29922;
+}
+
+/* 历史对话框 */
+.history-surface {
+  width: 720px;
+  height: 560px;
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.history-header-spacer {
+  flex: 1;
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  margin-top: 8px;
+}
+
+.git-commit {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.git-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.git-commit-row:hover {
+  background: var(--app-hover);
+}
+
+.git-commit-toggle {
+  width: 18px;
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  text-align: center;
+}
+
+.git-commit-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-commit-time {
+  color: var(--app-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.git-commit-detail {
+  display: flex;
+  gap: 12px;
+  padding: 8px 4px 12px 26px;
+}
+
+.git-commit-detail-info {
+  flex: 0 0 40%;
+  min-width: 0;
+}
+
+.git-commit-message {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--app-fg);
+}
+
+.git-commit-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--app-muted);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.git-commit-detail-files {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--app-border);
+  padding-left: 8px;
+}
+
+.history-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 差异编辑器 */
+.git-diff-editor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.git-diff-editor-host {
+  width: 100%;
+  height: 100%;
+}
+
+.git-diff-editor-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-muted);
+  background: var(--app-bg);
+}
+
+/* 编辑器行内差异标记 */
+.git-gutter-added {
+  width: 3px !important;
+  margin-left: 3px;
+  background: #1a7f37;
+}
+
+[data-theme='dark'] .git-gutter-added {
+  background: #3fb950;
+}
+
+.git-gutter-modified {
+  width: 3px !important;
+  margin-left: 3px;
+  background: #0a66c2;
+}
+
+[data-theme='dark'] .git-gutter-modified {
+  background: #4a9eff;
+}
+
+.git-gutter-deleted {
+  width: 3px !important;
+  margin-left: 3px;
+  background: #d1242f;
+}
+
+[data-theme='dark'] .git-gutter-deleted {
+  background: #f85149;
+}
+
+/* 编辑器内联差异 (view zone, 插入在两行之间) */
+.inline-diff-zone {
+  background: var(--app-bg);
+  border-top: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
+  overflow: hidden;
+  user-select: text;
+}
+
+.inline-diff-zone-del,
+.inline-diff-zone-add {
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.inline-diff-zone-del {
+  background: rgba(209, 36, 47, 0.18);
+  color: #d1242f;
+}
+
+.inline-diff-zone-add {
+  background: rgba(26, 127, 55, 0.18);
+  color: #1a7f37;
+}
+
+[data-theme='dark'] .inline-diff-zone-del {
+  background: rgba(248, 81, 73, 0.18);
+  color: #f85149;
+}
+
+[data-theme='dark'] .inline-diff-zone-add {
+  background: rgba(63, 185, 80, 0.18);
+  color: #3fb950;
 }

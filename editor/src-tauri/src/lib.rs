@@ -22,6 +22,26 @@ pub fn run() {
         .manage(LspState::default())
         .manage(Mutex::new(PreviewState::new()))
         .invoke_handler(tauri::generate_handler![
+            service::fs::copy_directory,
+            service::fs::move_to_trash,
+            service::git::git_status,
+            service::git::git_init,
+            service::git::git_set_identity,
+            service::git::git_stage,
+            service::git::git_stage_all,
+            service::git::git_unstage,
+            service::git::git_unstage_all,
+            service::git::git_discard,
+            service::git::git_discard_all,
+            service::git::git_commit,
+            service::git::git_log,
+            service::git::git_commit_files,
+            service::git::git_diff,
+            service::git::git_commit_diff,
+            service::git::git_restore,
+            service::git::git_restore_all,
+            service::git::git_file_changes,
+            service::git::git_file_region,
             service::lsp::start_server,
             service::highlight::semantic_token_types,
             service::highlight::highlight_scene,
@@ -31,8 +51,6 @@ pub fn run() {
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
-            service::fs_ops::copy_directory,
-            service::fs_ops::move_to_trash,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

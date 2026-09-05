@@ -14,16 +14,19 @@ import {
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 
+import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
 import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
 import { useAppStore } from '../state/store';
 import { confirmClose } from '../unsaved';
 import { CodeEditor } from './CodeEditor';
 import { EditorTabs } from './EditorTabs';
+import { GitDiffEditor } from './GitDiffEditor';
 import { PreviewPanel } from './PreviewPanel';
 import { ProjectTab } from './ProjectTab';
+import { RepositoryTab } from './RepositoryTab';
 import { ResourceBrowser } from './ResourceBrowser';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
@@ -36,17 +39,31 @@ export function EditorPage() {
   const activePath = useAppStore((s) => s.activePath);
   const activeNovelId = useAppStore((s) => s.activeNovelId);
   const openNovelTab = useAppStore((s) => s.openNovelTab);
+  const activeDiffId = useAppStore((s) => s.activeDiffId);
+  const diffTabs = useAppStore((s) => s.diffTabs);
   const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsCategory = useAppStore((s) => s.setSettingsCategory);
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project'>('scenes');
+  const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project' | 'repository'>('scenes');
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
   const novelSeq = useRef(0);
+
+  const activeDiff = diffTabs.find((t) => t.id === activeDiffId) ?? null;
+
+  // 项目打开时: 拉取 git 状态并监听文件变化防抖刷新
+  useEffect(() => {
+    if (!projectPath) return;
+    void refreshGitStatus(projectPath);
+    void startGitWatcher(projectPath);
+    return () => {
+      void stopGitWatcher();
+    };
+  }, [projectPath]);
 
   const MIN_SIDEBAR = 280;
   const MAX_SIDEBAR = 760;
@@ -142,6 +159,12 @@ export function EditorPage() {
                 <button className={sidebarTab === 'project' ? 'active' : ''} onClick={() => setSidebarTab('project')}>
                   项目
                 </button>
+                <button
+                  className={sidebarTab === 'repository' ? 'active' : ''}
+                  onClick={() => setSidebarTab('repository')}
+                >
+                  仓库
+                </button>
                 <button className={sidebarTab === 'scenes' ? 'active' : ''} onClick={() => setSidebarTab('scenes')}>
                   场景
                 </button>
@@ -160,6 +183,8 @@ export function EditorPage() {
                   <SceneBrowser />
                 ) : sidebarTab === 'resources' ? (
                   <ResourceBrowser />
+                ) : sidebarTab === 'repository' ? (
+                  <RepositoryTab />
                 ) : (
                   <ProjectTab />
                 )}
@@ -183,7 +208,9 @@ export function EditorPage() {
         <div className="editor-workspace">
           <EditorTabs />
           <div className="editor-area">
-            {activeNovelId ? (
+            {activeDiff ? (
+              <GitDiffEditor tab={activeDiff} />
+            ) : activeNovelId ? (
               <PreprocessTab id={activeNovelId} />
             ) : activeDoc ? (
               <CodeEditor doc={activeDoc} />
