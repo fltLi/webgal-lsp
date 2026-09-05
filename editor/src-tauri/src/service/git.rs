@@ -1007,7 +1007,7 @@ pub async fn git_file_region(
                 rows: block.rows,
                 anchor: block.anchor,
             };
-            if best.as_ref().map_or(true, |(d, _)| dist < *d) {
+            if best.as_ref().is_none_or(|(d, _)| dist < *d) {
                 best = Some((dist, region));
             }
         }
