@@ -3,25 +3,23 @@
 // 打开只读差异选项卡的辅助函数。
 
 import { useAppStore } from '../state/store';
+import { makeDiffTab } from '../tabs/model';
 
-let seq = 0;
-
-/** 打开一个只读差异选项卡 (非单例)。 */
+/** 打开一个只读差异选项卡 (同一文件的暂存/未暂存/历史差异各自独立)。 */
 export function openGitDiff(
   file: string,
   kind: 'staged' | 'unstaged' | 'commit',
   commitId?: string,
   title?: string
 ): void {
-  seq += 1;
-  const id = `diff-${Date.now().toString(36)}-${seq}`;
   const base = file.split('/').pop() ?? file;
   const source = kind === 'staged' ? '暂存' : kind === 'commit' ? (commitId ?? '').slice(0, 7) : '更改';
-  useAppStore.getState().openDiffTab({
-    id,
-    file,
-    kind,
-    commitId,
-    title: title ?? `${base} (${source})`,
-  });
+  useAppStore.getState().openTab(
+    makeDiffTab({
+      file,
+      diffKind: kind,
+      commitId,
+      title: title ?? `${base} (${source})`,
+    })
+  );
 }

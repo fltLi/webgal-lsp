@@ -27,7 +27,7 @@ import type { Character } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
-import { ReferencePickerDialog } from './ReferencePickerDialog';
+import { VoiceReferenceDialog } from './VoiceReferenceDialog';
 
 interface Props {
   open: boolean;
@@ -35,7 +35,7 @@ interface Props {
   onError: (error: string | null) => void;
 }
 
-export function CharacterPickerDialog({ open, onClose, onError }: Props) {
+export function RolePickerDialog({ open, onClose, onError }: Props) {
   const characters = useAppStore((state) => state.voiceCharacters);
   const [query, setQuery] = useState('');
   const [referenceTarget, setReferenceTarget] = useState<Character | null>(null);
@@ -168,7 +168,7 @@ export function CharacterPickerDialog({ open, onClose, onError }: Props) {
         </DialogSurface>
       </Dialog>
 
-      <ReferencePickerDialog
+      <VoiceReferenceDialog
         open={referenceTarget !== null}
         character={referenceTarget}
         selectedHash={null}

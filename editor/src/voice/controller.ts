@@ -57,7 +57,7 @@ import {
   paramsKey,
   randomSeed,
   type HistoryEntry,
-  type VoiceCard,
+  type SceneVoiceState,
   type VoiceParams,
   type VoiceTask,
 } from './types';
@@ -72,7 +72,7 @@ const DISK_CHECK_INTERVAL = 8000;
 class VoiceController {
   private settings: VoiceSettings = loadVoiceSettings();
   private tasks: VoiceTask[] = [];
-  private cards = new Map<string, VoiceCard>();
+  private cards = new Map<string, SceneVoiceState>();
   private characters: Character[] = [];
   private referencePaths = new Map<string, string>();
   private queueRunning = false;
@@ -114,16 +114,16 @@ class VoiceController {
 
   // -------- 卡片 --------
 
-  getCard(id: string): VoiceCard | null {
+  getCard(id: string): SceneVoiceState | null {
     return this.cards.get(id) ?? null;
   }
 
   /** 打开 (或重新聚焦) 一个场景的配音卡: 解析对话并按内容哈希回填历史 */
-  async openCard(id: string, scenePath: string, content: string, diskHash: string): Promise<VoiceCard> {
+  async openCard(id: string, scenePath: string, content: string, diskHash: string): Promise<SceneVoiceState> {
     const dialogues = await this.parse(content);
     const previous = this.cards.get(id);
 
-    const card: VoiceCard = {
+    const card: SceneVoiceState = {
       id,
       scenePath,
       dialogues,
@@ -152,7 +152,7 @@ class VoiceController {
     this.tasks = [];
     this.queueRunning = false;
     const store = this.store();
-    store.setVoiceCards(new Map());
+    store.setSceneVoiceEditors(new Map());
     store.setVoiceCache([]);
     this.emit();
   }
@@ -175,7 +175,7 @@ class VoiceController {
   }
 
   /** 依据当前角色列表重算全场景的角色归属 */
-  rematch(card: VoiceCard): void {
+  rematch(card: SceneVoiceState): void {
     const overrides = this.store().voiceAssignments[card.scenePath] ?? {};
     const matches = matchScene(card.dialogues, this.characters, overrides);
     card.matches = matches;
@@ -823,6 +823,11 @@ class VoiceController {
     return this.enqueue(cardId, entry.kind, { ...entry.params, text: line.text });
   }
 
+  /** 该场景当前是否处于配音编辑模式 */
+  isSceneInVoiceMode(path: string): boolean {
+    return this.store().voiceModePaths.includes(path);
+  }
+
   /** 关闭场景卡时的未完成检查 */
   hasUnfinished(id: string): boolean {
     const card = this.cards.get(id);
@@ -842,19 +847,19 @@ class VoiceController {
     }
   }
 
-  private syncCard(card: VoiceCard): void {
-    this.store().setVoiceCards(new Map(this.cards));
+  private syncCard(card: SceneVoiceState): void {
+    this.store().setSceneVoiceEditors(new Map(this.cards));
     void card;
   }
 
   private syncCardStore(): void {
-    this.store().setVoiceCards(new Map(this.cards));
+    this.store().setSceneVoiceEditors(new Map(this.cards));
   }
 
   private emit(): void {
     const store = this.store();
     store.setVoiceTick();
-    // 总控台选项卡角标: 待处理 + 运行中
+    // 配音工作台选项卡角标: 待处理 + 运行中
     const active = this.tasks.filter((task) => task.status === 'pending' || task.status === 'running').length;
     if (store.voiceQueuePending !== active) store.setVoiceQueuePending(active);
   }

@@ -343,8 +343,8 @@ body.resizing {
   min-height: 0;
 }
 
-/* -------- 选项卡 -------- */
-.editor-tabs {
+/* -------- 选项卡栏 (所有类型共用同一套样式) -------- */
+.tab-strip {
   display: flex;
   overflow-x: auto;
   border-bottom: 1px solid var(--app-border);
@@ -352,11 +352,11 @@ body.resizing {
   flex: 0 0 auto;
 }
 
-.editor-tab {
+.tab-strip-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 6px;
+  padding: 7px 10px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -368,41 +368,48 @@ body.resizing {
   transition: background-color 0.12s ease;
 }
 
-.editor-tab:hover {
+.tab-strip-item:hover {
   background: var(--app-hover);
 }
 
-.editor-tab.active {
+.tab-strip-item.active {
   background: var(--app-panel);
   border-top: 2px solid var(--app-accent);
 }
 
+/* 配音相关选项卡在标题左侧留出模式开关的位置 */
+.tab-strip-item[data-kind='scene'] {
+  padding-left: 6px;
+}
+
 /* 拖拽排序反馈 */
-.editor-tab.dragging {
+.tab-strip-item.dragging {
   opacity: 0.45;
 }
 
-.editor-tab.drop-target {
+.tab-strip-item.drop-target {
   box-shadow: inset 2px 0 0 var(--app-accent);
 }
 
-/* 拖到末尾 (最后一个选项卡右侧) 的落点指示 */
-.editor-tab.drop-target-end {
-  box-shadow: inset -2px 0 0 var(--app-accent);
-}
-
-.editor-tab-name {
+.tab-strip-title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.dirty-dot {
+.tab-strip-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--app-muted);
+}
+
+.tab-strip-dirty {
   color: var(--app-accent);
   font-size: 10px;
 }
 
-.editor-tab-close {
+.tab-strip-close {
   border: none;
   background: transparent;
   color: var(--app-muted);
@@ -413,9 +420,42 @@ body.resizing {
   border-radius: 4px;
 }
 
-.editor-tab-close:hover {
+.tab-strip-close:hover {
   color: var(--app-fg);
   background: var(--app-hover);
+}
+
+/* 选项卡最左侧的模式开关 (场景配音编辑模式) */
+.tab-strip-action {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--app-muted);
+  font-size: 14px;
+  flex: none;
+}
+
+.tab-strip-action:hover {
+  color: var(--app-fg);
+}
+
+.tab-strip-action.on {
+  color: var(--app-accent);
+}
+
+/* 队列角标 */
+.tab-strip-badge {
+  background: var(--app-accent);
+  color: #ffffff;
+  border-radius: 9px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 15px;
+  min-width: 15px;
+  text-align: center;
 }
 
 /* -------- 编辑区 -------- */
@@ -1407,15 +1447,8 @@ body.resizing {
   background-color: var(--app-muted);
 }
 
-/* -------- 选项卡图标 (场景 / 文本预处理 / 差异统一) -------- */
-.editor-tab-icon {
-  display: inline-flex;
-  align-items: center;
-  color: var(--app-muted);
-  flex: 0 0 auto;
-}
-
-.editor-tab-icon svg {
+/* -------- 选项卡图标尺寸 (统一由 tab-strip-icon 承载) -------- */
+.tab-strip-icon svg {
   width: 14px;
   height: 14px;
 }
@@ -2047,8 +2080,17 @@ body.resizing {
 
 /* ==================== 配音工作流 ==================== */
 
-/* -------- 总控台 (作为独立选项卡铺满编辑区) -------- */
-.voice-console-pane {
+/* -------- 配音工作台 (独立页面, 铺满工作区) -------- */
+.voice-workbench-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.voice-workbench-pane {
   height: 100%;
   min-height: 0;
   background: var(--app-panel);
@@ -2057,7 +2099,7 @@ body.resizing {
   overflow: hidden;
 }
 
-.voice-console {
+.voice-workbench {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2331,19 +2373,19 @@ body.resizing {
 }
 
 /* -------- 配音卡 -------- */
-.voice-card {
+.scene-voice {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
-.voice-card-editor {
+.scene-voice-editor {
   flex: 1;
   min-height: 0;
 }
 
-.voice-card-panel {
+.scene-voice-panel {
   /* 固定高度: 光标移出对话时只清空内容, 布局不跳动 */
   height: 340px;
   border-top: 1px solid var(--app-border);
@@ -2352,19 +2394,19 @@ body.resizing {
   flex-direction: column;
 }
 
-.voice-panel-body {
+.scene-voice-body {
   flex: 1;
   overflow: hidden;
 }
 
-.voice-panel-split {
+.scene-voice-split {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(240px, 1fr);
   height: 100%;
   overflow: hidden;
 }
 
-.voice-panel-empty {
+.scene-voice-empty {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2375,7 +2417,7 @@ body.resizing {
   font-size: 13px;
 }
 
-.voice-panel-hint {
+.scene-voice-hint {
   font-size: 12px;
 }
 
@@ -2792,110 +2834,93 @@ body.resizing {
   font-variant-numeric: tabular-nums;
 }
 
-/* -------- 帮助选项卡 -------- */
-.voice-help {
+/* -------- 使用说明页 -------- */
+.voice-guide {
   height: 100%;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 28px;
+  /*
+   * 把滚动容器与外部布局隔离 (只做 layout/paint 隔离, 不能用 strict:
+   * 其中包含 size containment, 会因为内容不参与尺寸计算而被压成 0 高)。
+   */
+  contain: layout paint;
 }
-.voice-help-body {
+.voice-guide-body {
   max-width: 860px;
   line-height: 1.75;
   font-size: 14px;
 }
-.voice-help-body h1 {
+.voice-guide-body h1 {
   font-size: 22px;
   margin: 0 0 12px;
 }
-.voice-help-body h2 {
+.voice-guide-body h2 {
   font-size: 17px;
   margin: 22px 0 8px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--app-border);
 }
-.voice-help-body h3 {
+.voice-guide-body h3 {
   font-size: 15px;
   margin: 16px 0 6px;
 }
-.voice-help-body table {
+.voice-guide-body table {
   border-collapse: collapse;
   margin: 8px 0;
   width: 100%;
 }
-.voice-help-body th,
-.voice-help-body td {
+.voice-guide-body th,
+.voice-guide-body td {
   border: 1px solid var(--app-border);
   padding: 5px 8px;
   text-align: left;
   font-size: 13px;
 }
-.voice-help-body th {
+.voice-guide-body th {
   background: var(--app-hover);
 }
-.voice-help-body code {
+.voice-guide-body code {
   background: var(--app-hover);
   padding: 1px 4px;
   border-radius: 3px;
   font-family: Consolas, monospace;
   font-size: 12px;
 }
-.voice-help-body ul,
-.voice-help-body ol {
+.voice-guide-body ul,
+.voice-guide-body ol {
   padding-left: 22px;
 }
-.voice-help-body blockquote {
+.voice-guide-body blockquote {
   margin: 8px 0;
   padding: 6px 12px;
   border-left: 3px solid var(--app-accent);
   color: var(--app-muted);
 }
 
-/* -------- 选项卡上的配音按钮 (位于选项卡最左侧) -------- */
-.editor-tab-voice {
-  display: inline-flex;
-  align-items: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
+/* -------- 状态栏 GSOV 指示 (仅配音工作台打开时出现) -------- */
+.status-voice {
   color: var(--app-muted);
-  font-size: 13px;
-  flex: none;
 }
 
-.editor-tab-voice:hover {
-  color: var(--app-fg);
+.status-voice-ready {
+  color: #1a7f37;
+}
+.status-voice-starting {
+  color: #b8860b;
+}
+.status-voice-error {
+  color: #d1242f;
 }
 
-.editor-tab-voice.on {
-  color: var(--app-accent);
+[data-theme='dark'] .status-voice-ready {
+  color: #3fb950;
 }
-
-.editor-tab.voice {
-  border-bottom-color: var(--app-accent);
+[data-theme='dark'] .status-voice-starting {
+  color: #d29922;
 }
-
-/* 总控台选项卡 */
-.editor-tab.console .editor-tab-name {
-  gap: 4px;
-}
-
-/* 队列角标: 待处理 + 运行中的任务数 */
-.editor-tab-badge {
-  background: var(--app-accent);
-  color: #ffffff;
-  border-radius: 9px;
-  padding: 0 5px;
-  font-size: 10px;
-  line-height: 15px;
-  min-width: 15px;
-  text-align: center;
-}
-
-.voice-merge-hint {
-  font-size: 11px;
-  color: var(--app-muted);
-  padding: 4px 12px;
+[data-theme='dark'] .status-voice-error {
+  color: #f85149;
 }
 
 .character-model-pick {
@@ -2914,4 +2939,34 @@ body.resizing {
 }
 .voice-queue-hint {
   color: var(--app-muted);
+}
+
+/* -------- 配音工作台页头 -------- */
+.voice-workbench-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.voice-workbench-heading h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.voice-workbench-heading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+/* 工作台内容区在宽屏下限制最大宽度, 避免控件被拉得过长 */
+.voice-config,
+.voice-queue-section,
+.character-panel {
+  max-width: 1080px;
+  width: 100%;
 }

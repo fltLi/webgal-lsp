@@ -34,7 +34,7 @@ interface Props {
   onOpenGitMerge: () => void;
 }
 
-export function ExternalChangeDialog({ open, cardId, scenePath, inRepository, onResolved, onOpenGitMerge }: Props) {
+export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onResolved, onOpenGitMerge }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diskPreview, setDiskPreview] = useState<string | null>(null);

@@ -18,7 +18,7 @@ import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
 import { voiceController } from './controller';
-import { AudioButton } from './ReferencePickerDialog';
+import { AudioButton } from './VoiceReferenceDialog';
 import type { HistoryEntry } from './types';
 import { useAppStore } from '../state/store';
 import { fs } from '../lib/fs';
@@ -36,7 +36,7 @@ interface MenuState {
   entry: HistoryEntry;
 }
 
-export function VoiceHistory({ cardId, onChanged, onApplied }: Props) {
+export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
   // 订阅队列变化
   const { voiceTick } = useVoiceTick();
   const card = voiceController.getCard(cardId);

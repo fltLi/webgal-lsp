@@ -29,7 +29,7 @@ interface Props {
   onClose: () => void;
 }
 
-export function VoiceChangeDialog({ open, onClose }: Props) {
+export function VoiceCacheDialog({ open, onClose }: Props) {
   const cache = useAppStore((state) => state.voiceCache);
   const projectPath = useAppStore((state) => state.projectPath);
   const [references, setReferences] = useState<VocalReference[] | null>(null);

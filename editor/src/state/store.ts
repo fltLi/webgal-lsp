@@ -8,7 +8,18 @@ import type { CacheEntry, Character, GsvStatus } from '../commands/voice';
 import type { GitStatus } from '../commands/git';
 import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
-import type { VoiceCard } from '../voice/types';
+import {
+  makeSceneTab,
+  makeVoiceGuideTab,
+  makeWorkbenchTab,
+  VOICE_GUIDE_TAB_ID,
+  WORKBENCH_TAB_ID,
+  type SceneTab,
+  type WorkbenchTabItem,
+} from '../tabs/model';
+import { closeTab, insertTab, moveTab, removeTabsByKind } from '../tabs/order';
+import type { SceneVoiceState } from '../voice/types';
+
 export interface OpenDocument {
   path: string;
   name: string;
@@ -31,24 +42,6 @@ export interface LspDiagnostic {
   source?: string;
 }
 
-/** 文本预处理选项卡 (轻量描述; 实际会话与编辑器由组件实例管理)。 */
-export interface NovelTab {
-  id: string;
-  title: string;
-}
-
-/** 只读差异选项卡 (git 差异比较)。 */
-export interface DiffTab {
-  id: string;
-  title: string;
-  /** 仓库相对路径 (正斜杠) */
-  file: string;
-  /** 差异来源: 暂存 / 未暂存 / 历史提交 */
-  kind: 'staged' | 'unstaged' | 'commit';
-  /** kind 为 commit 时的提交 id */
-  commitId?: string;
-}
-
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
@@ -67,22 +60,21 @@ interface AppStore {
   /** 项目绑定 (key: 规范化项目路径 -> 引擎/模板 id) */
   projectBindings: Record<string, ProjectBinding>;
 
+  // -------- 选项卡 (单一有序序列) --------
+  /**
+   * 编辑器内的全部选项卡, 混合场景/文件、文本预处理、差异比较与配音工作台。
+   * 顺序即显示顺序, 可任意拖拽重排。
+   */
+  tabs: WorkbenchTabItem[];
+  /** 当前活动选项卡 id; `null` 表示没有打开任何选项卡 */
+  activeTabId: string | null;
+  /** 已打开文档 (按路径索引; 仅场景/文件选项卡有对应文档) */
   documents: OpenDocument[];
-  activePath: string | null;
-
-  novelTabs: NovelTab[];
-  activeNovelId: string | null;
-  /** 活动文本预处理选项卡的编辑器统计 (供状态栏显示; null 表示无活动预处理选项卡)。 */
+  /** 文本预处理选项卡的编辑器统计 (供状态栏显示)。 */
   novelStats: { chars: number; lines: number } | null;
-
-  /** 说明/帮助选项卡 (配音工作流说明) */
-  guidanceTabs: NovelTab[];
-  activeGuidanceId: string | null;
 
   /** git 仓库状态 (null 表示尚未加载)。 */
   gitStatus: GitStatus | null;
-  diffTabs: DiffTab[];
-  activeDiffId: string | null;
 
   lspStatus: LspStatus;
   lspError: string | null;
@@ -97,8 +89,8 @@ interface AppStore {
   cursor: { line: number; column: number } | null;
 
   // -------- 配音工作流 --------
-  /** 配音总控台选项卡是否打开 */
-  voiceConsoleOpen: boolean;
+  /** 配音工作台选项卡是否打开 (它是全部配音 UI/状态的可见性总开关) */
+  voiceWorkbenchOpen: boolean;
   /** GSOV 服务状态 */
   voiceStatus: GsvStatus;
   /** GSOV 状态详情 (错误信息等) */
@@ -107,27 +99,34 @@ interface AppStore {
   voiceLogs: string[];
   /** 角色列表 */
   voiceCharacters: Character[];
-  /** 场景配音卡 (key 为选项卡 id) */
-  voiceCards: Map<string, VoiceCard>;
+  /** 场景配音编辑器状态 (key 为场景路径) */
+  sceneVoiceEditors: Map<string, SceneVoiceState>;
   /** 配音缓存条目 */
   voiceCache: CacheEntry[];
   /** 场景级角色覆盖: 场景路径 -> (说话者 -> 角色 id) */
   voiceAssignments: Record<string, Record<string, string>>;
   /** 递增令牌: 队列状态变化时触发订阅者重渲染 */
   voiceTick: number;
-  /** 待处理 + 运行中的配音任务数 (供总控台选项卡显示角标) */
+  /** 待处理 + 运行中的配音任务数 (供工作台选项卡显示角标) */
   voiceQueuePending: number;
-  /** 处于配音模式的场景文件路径 */
+  /** 处于配音编辑模式的场景路径 (仅在配音工作台打开时有意义) */
   voiceModePaths: string[];
+  /**
+   * 用户在本次配音会话中**显式关闭**过配音编辑模式的场景。
+   *
+   * 自动开启规则 (打开工作台 / 切换场景卡) 必须尊重这个选择, 否则用户关掉之后
+   * 一切换回来又会被自动打开。
+   */
+  voiceModeDisabled: string[];
 
-  setVoiceConsoleOpen: (open: boolean) => void;
-  /** 设置某个场景的配音模式开关 */
+  setVoiceWorkbenchOpen: (open: boolean) => void;
+  /** 设置某个场景的配音编辑模式开关 */
   setVoiceMode: (path: string, enabled: boolean) => void;
   setVoiceStatus: (status: GsvStatus, detail?: string | null) => void;
   setVoiceLogs: (logs: string[]) => void;
   appendVoiceLog: (line: string) => void;
   setVoiceCharacters: (characters: Character[]) => void;
-  setVoiceCards: (cards: Map<string, VoiceCard>) => void;
+  setSceneVoiceEditors: (cards: Map<string, SceneVoiceState>) => void;
   setVoiceCache: (cache: CacheEntry[]) => void;
   upsertVoiceCache: (entry: CacheEntry) => void;
   setVoiceAssignment: (scenePath: string, assignments: Record<string, string>) => void;
@@ -146,23 +145,34 @@ interface AppStore {
   setProject: (path: string | null) => void;
   /** 设置项目绑定 (模板) 并持久化 */
   setProjectBinding: (projectPath: string, binding: ProjectBinding) => void;
+
+  /** 打开 (或聚焦) 一个场景/文件选项卡 */
+  openSceneTab: (path: string, name: string) => void;
+  /** 打开 (或聚焦) 一个任意选项卡 */
+  openTab: (tab: WorkbenchTabItem) => void;
+  /** 关闭选项卡 (会按需由调用方先处理未保存确认) */
+  closeTab: (id: string) => void;
+  /** 激活选项卡 */
+  activateTab: (id: string) => void;
+  /** 选项卡拖拽排序 */
+  moveTab: (id: string, toIndex: number) => void;
+  /** 文档被重命名/移动后, 把对应场景选项卡迁移到新路径 (保持原位置) */
+  retargetSceneTabs: (oldPath: string, newPath: string) => void;
+
+  /** 打开配音工作台 (单例选项卡) */
+  openVoiceWorkbench: () => void;
+  /** 关闭配音工作台 */
+  closeVoiceWorkbench: () => void;
+  /** 打开配音使用说明 (单例选项卡) */
+  openVoiceGuide: () => void;
+
   openDocument: (doc: OpenDocument) => void;
   closeDocument: (path: string) => void;
-  setActiveDocument: (path: string) => void;
   updateDocument: (path: string, patch: Partial<OpenDocument>) => void;
-  /** 将文档移动到指定位置 (选项卡拖拽排序) */
-  moveDocument: (path: string, toIndex: number) => void;
-  openNovelTab: (tab: NovelTab) => void;
-  closeNovelTab: (id: string) => void;
-  setActiveNovel: (id: string) => void;
   setNovelStats: (stats: { chars: number; lines: number } | null) => void;
-  openGuidanceTab: (tab: NovelTab) => void;
-  closeGuidanceTab: (id: string) => void;
-  setActiveGuidance: (id: string) => void;
+  /** 打开一个文本预处理选项卡 (返回其 id) */
+  addNovelTab: (tab: WorkbenchTabItem) => void;
   setGitStatus: (status: GitStatus | null) => void;
-  openDiffTab: (tab: DiffTab) => void;
-  closeDiffTab: (id: string) => void;
-  setActiveDiff: (id: string) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (
@@ -183,19 +193,12 @@ export const useAppStore = create<AppStore>((set) => ({
   projectName: null,
   projectBindings: loadBindings(),
 
+  tabs: [],
+  activeTabId: null,
   documents: [],
-  activePath: null,
-
-  novelTabs: [],
-  activeNovelId: null,
   novelStats: null,
 
-  guidanceTabs: [],
-  activeGuidanceId: null,
-
   gitStatus: null,
-  diffTabs: [],
-  activeDiffId: null,
 
   lspStatus: 'disconnected',
   lspError: null,
@@ -209,17 +212,18 @@ export const useAppStore = create<AppStore>((set) => ({
 
   cursor: null,
 
-  voiceConsoleOpen: false,
+  voiceWorkbenchOpen: false,
   voiceStatus: 'stopped',
   voiceStatusDetail: null,
   voiceLogs: [],
   voiceCharacters: [],
-  voiceCards: new Map(),
+  sceneVoiceEditors: new Map(),
   voiceCache: [],
   voiceAssignments: {},
   voiceTick: 0,
   voiceQueuePending: 0,
   voiceModePaths: [],
+  voiceModeDisabled: [],
 
   settingsOpen: false,
   unsavedDialog: false,
@@ -244,17 +248,17 @@ export const useAppStore = create<AppStore>((set) => ({
       set({
         projectPath: null,
         projectName: null,
+        tabs: [],
+        activeTabId: null,
         documents: [],
-        activePath: null,
-        novelTabs: [],
-        activeNovelId: null,
+        novelStats: null,
         gitStatus: null,
-        diffTabs: [],
-        activeDiffId: null,
         diagnostics: {},
         previewSiteId: null,
         previewReady: false,
         previewStage: null,
+        voiceWorkbenchOpen: false,
+        voiceModePaths: [],
       });
     }
   },
@@ -264,150 +268,146 @@ export const useAppStore = create<AppStore>((set) => ({
       persistBindings(projectBindings);
       return { projectBindings };
     }),
+
+  // -------- 选项卡 --------
+
+  openSceneTab: (path, name) => {
+    const state = useAppStore.getState();
+    const existing = state.tabs.find((tab) => tab.kind === 'scene' && tab.path === path);
+    const tab = existing ?? makeSceneTab(path, name);
+    state.openTab(tab);
+  },
+  openTab: (tab) =>
+    set((s) => {
+      const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
+      // 打开即激活: 配音工作台打开期间, 新打开的场景卡直接进入配音编辑模式
+      const auto = tab.kind === 'scene' ? autoVoiceMode(s, tab.path) : null;
+      return {
+        tabs,
+        activeTabId: activeId,
+        voiceModePaths: auto ? [...s.voiceModePaths, auto] : s.voiceModePaths,
+      };
+    }),
+  closeTab: (id) =>
+    set((s) => {
+      const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId);
+      const diagnostics = { ...s.diagnostics };
+      const closed = s.tabs.find((tab) => tab.id === id);
+      if (closed?.kind === 'scene') delete diagnostics[closed.path];
+      const closingWorkbench = closed?.kind === 'voice-workbench';
+      return {
+        tabs,
+        activeTabId: activeId,
+        diagnostics,
+        // 关闭工作台即退出配音功能; 场景的配音编辑模式也随之复位
+        ...(closingWorkbench ? { voiceWorkbenchOpen: false, voiceModePaths: [] } : {}),
+      };
+    }),
+  activateTab: (id) =>
+    set((s) => {
+      if (s.activeTabId === id) return {};
+      // 配音工作台打开时, 切到哪个场景就让它进入配音编辑模式 (尊重用户的显式关闭)
+      const tab = s.tabs.find((item) => item.id === id);
+      const auto = tab?.kind === 'scene' ? autoVoiceMode(s, tab.path) : null;
+      if (auto) return { activeTabId: id, voiceModePaths: [...s.voiceModePaths, auto] };
+      return { activeTabId: id };
+    }),
+  moveTab: (id, toIndex) => set((s) => ({ tabs: moveTab(s.tabs, id, toIndex) })),
+  retargetSceneTabs: (oldPath, newPath) =>
+    set((s) => {
+      const oldLower = oldPath.replace(/\\/g, '/').toLowerCase();
+      const tabs = s.tabs.map((tab) => {
+        if (tab.kind !== 'scene') return tab;
+        const current = tab.path.replace(/\\/g, '/').toLowerCase();
+        if (current !== oldLower && !current.startsWith(`${oldLower}/`)) return tab;
+        // 目录重命名时保留原相对部分
+        const suffix = tab.path.replace(/\\/g, '/').slice(oldPath.replace(/\\/g, '/').length);
+        const nextPath = `${newPath.replace(/\\/g, '/')}${suffix}`.replace(/\//g, '\\');
+        const nextTab = makeSceneTab(nextPath, nextPath.split(/[\\/]/).pop() ?? nextPath);
+        return nextTab;
+      });
+      const activeTabId =
+        tabs.find((tab) => tab.id === s.activeTabId)?.id ??
+        tabs.find((tab) => tab.kind === 'scene')?.id ??
+        s.activeTabId;
+      return { tabs, activeTabId };
+    }),
+
+  openVoiceWorkbench: () =>
+    set((s) => {
+      // 打开前的活动选项卡: 若它是场景卡, 让它进入配音编辑模式
+      const previous = s.tabs.find((tab) => tab.id === s.activeTabId);
+      const { tabs, activeId } = insertTab(s.tabs, makeWorkbenchTab(), s.activeTabId);
+      // 此处 state 仍是"工作台未打开"的状态, 不能走 autoVoiceMode (它要求工作台已打开);
+      // 新会话会清空"用户显式关闭"的记录, 因此可以直接开启。
+      const shouldEnable = previous?.kind === 'scene' && !s.voiceModePaths.includes(previous.path);
+      return {
+        tabs,
+        activeTabId: activeId,
+        voiceWorkbenchOpen: true,
+        voiceModeDisabled: [],
+        voiceModePaths: shouldEnable ? [...s.voiceModePaths, previous.path] : s.voiceModePaths,
+      };
+    }),
+  closeVoiceWorkbench: () =>
+    set((s) => {
+      const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
+      return { tabs, activeTabId: activeId, voiceWorkbenchOpen: false, voiceModePaths: [], voiceModeDisabled: [] };
+    }),
+  openVoiceGuide: () =>
+    set((s) => {
+      const { tabs, activeId } = insertTab(s.tabs, makeVoiceGuideTab(), s.activeTabId);
+      return { tabs, activeTabId: activeId };
+    }),
+
+  // -------- 文档 --------
+
   openDocument: (doc) =>
     set((s) => {
       const exists = s.documents.some((d) => d.path === doc.path);
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return {
-        documents,
-        activePath: doc.path,
-        activeNovelId: null,
-        activeDiffId: null,
-        activeGuidanceId: null,
-        // 总控台也是一个选项卡, 切到别的选项卡即离开它
-        voiceConsoleOpen: false,
-      };
+      return { documents };
     }),
   closeDocument: (path) =>
-    set((s) => {
-      const documents = s.documents.filter((d) => d.path !== path);
-      const diagnostics = { ...s.diagnostics };
-      delete diagnostics[path];
-      if (s.activePath !== path) return { documents, diagnostics };
-      // 关闭的是活动文档: 优先切到最后一个文档, 否则回退到预处理/差异/总控台选项卡
-      if (documents.length > 0) {
-        return { documents, diagnostics, activePath: documents[documents.length - 1].path };
-      }
-      const novel = s.novelTabs[s.novelTabs.length - 1];
-      if (novel) return { documents, diagnostics, activePath: null, activeNovelId: novel.id };
-      const diff = s.diffTabs[s.diffTabs.length - 1];
-      if (diff) return { documents, diagnostics, activePath: null, activeDiffId: diff.id };
-      if (s.voiceConsoleOpen) return { documents, diagnostics, activePath: null };
-      return { documents, diagnostics, activePath: null };
-    }),
-  setActiveDocument: (path) =>
-    set({ activePath: path, activeNovelId: null, activeDiffId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
-  openNovelTab: (tab) =>
-    set((s) => {
-      const exists = s.novelTabs.some((t) => t.id === tab.id);
-      const novelTabs = exists ? s.novelTabs : [...s.novelTabs, tab];
-      return {
-        novelTabs,
-        activeNovelId: tab.id,
-        activePath: null,
-        activeDiffId: null,
-        activeGuidanceId: null,
-        voiceConsoleOpen: false,
-      };
-    }),
-  closeNovelTab: (id) =>
-    set((s) => {
-      const novelTabs = s.novelTabs.filter((t) => t.id !== id);
-      if (s.activeNovelId !== id) return { novelTabs };
-      if (novelTabs.length > 0) return { novelTabs, activeNovelId: novelTabs[novelTabs.length - 1].id };
-      const doc = s.documents[s.documents.length - 1];
-      if (doc) return { novelTabs, activeNovelId: null, activePath: doc.path };
-      const diff = s.diffTabs[s.diffTabs.length - 1];
-      if (diff) return { novelTabs, activeNovelId: null, activeDiffId: diff.id };
-      if (s.voiceConsoleOpen) return { novelTabs, activeNovelId: null };
-      return { novelTabs, activeNovelId: null };
-    }),
-  setActiveNovel: (id) =>
-    set({ activeNovelId: id, activePath: null, activeDiffId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
-  setNovelStats: (stats) => set({ novelStats: stats }),
-  openGuidanceTab: (tab) =>
-    set((s) => {
-      const exists = s.guidanceTabs.some((t) => t.id === tab.id);
-      const guidanceTabs = exists ? s.guidanceTabs : [...s.guidanceTabs, tab];
-      return {
-        guidanceTabs,
-        activeGuidanceId: tab.id,
-        activePath: null,
-        activeNovelId: null,
-        activeDiffId: null,
-        voiceConsoleOpen: false,
-      };
-    }),
-  closeGuidanceTab: (id) =>
-    set((s) => {
-      const guidanceTabs = s.guidanceTabs.filter((t) => t.id !== id);
-      if (s.activeGuidanceId !== id) return { guidanceTabs };
-      if (guidanceTabs.length > 0) return { guidanceTabs, activeGuidanceId: guidanceTabs[guidanceTabs.length - 1].id };
-      const doc = s.documents[s.documents.length - 1];
-      if (doc) return { guidanceTabs, activeGuidanceId: null, activePath: doc.path };
-      const novel = s.novelTabs[s.novelTabs.length - 1];
-      if (novel) return { guidanceTabs, activeGuidanceId: null, activeNovelId: novel.id };
-      if (s.voiceConsoleOpen) return { guidanceTabs, activeGuidanceId: null };
-      return { guidanceTabs, activeGuidanceId: null };
-    }),
-  setActiveGuidance: (id) =>
-    set({ activeGuidanceId: id, activePath: null, activeNovelId: null, activeDiffId: null, voiceConsoleOpen: false }),
-  setGitStatus: (status) => set({ gitStatus: status }),
-  openDiffTab: (tab) =>
-    set((s) => {
-      const exists = s.diffTabs.some((t) => t.id === tab.id);
-      const diffTabs = exists ? s.diffTabs : [...s.diffTabs, tab];
-      return {
-        diffTabs,
-        activeDiffId: tab.id,
-        activePath: null,
-        activeNovelId: null,
-        activeGuidanceId: null,
-        voiceConsoleOpen: false,
-      };
-    }),
-  closeDiffTab: (id) =>
-    set((s) => {
-      const diffTabs = s.diffTabs.filter((t) => t.id !== id);
-      if (s.activeDiffId !== id) return { diffTabs };
-      if (diffTabs.length > 0) return { diffTabs, activeDiffId: diffTabs[diffTabs.length - 1].id };
-      const doc = s.documents[s.documents.length - 1];
-      if (doc) return { diffTabs, activeDiffId: null, activePath: doc.path };
-      const novel = s.novelTabs[s.novelTabs.length - 1];
-      if (novel) return { diffTabs, activeDiffId: null, activeNovelId: novel.id };
-      return { diffTabs, activeDiffId: null };
-    }),
-  setActiveDiff: (id) =>
-    set({ activeDiffId: id, activePath: null, activeNovelId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
+    set((s) => ({
+      documents: s.documents.filter((d) => d.path !== path),
+    })),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),
     })),
-  moveDocument: (path, toIndex) =>
+  setNovelStats: (stats) => set({ novelStats: stats }),
+  addNovelTab: (tab) =>
     set((s) => {
-      const fromIndex = s.documents.findIndex((d) => d.path === path);
-      if (fromIndex < 0 || fromIndex === toIndex) return {};
-      const documents = [...s.documents];
-      const [doc] = documents.splice(fromIndex, 1);
-      // 向后拖时, 移除后目标位置左移一位, 保证落在目标选项卡之前
-      const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
-      documents.splice(insertAt, 0, doc);
-      return { documents };
+      const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
+      return { tabs, activeTabId: activeId };
     }),
+
+  setGitStatus: (status) => set({ gitStatus: status }),
   setLspStatus: (status, error) => set({ lspStatus: status, lspError: error ?? null }),
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   setCursor: (cursor) => set({ cursor }),
 
-  setVoiceConsoleOpen: (open) => set({ voiceConsoleOpen: open }),
+  // -------- 配音 --------
+
+  setVoiceWorkbenchOpen: (open) => {
+    const state = useAppStore.getState();
+    if (open) state.openVoiceWorkbench();
+    else state.closeVoiceWorkbench();
+  },
   setVoiceMode: (path, enabled) =>
     set((s) => {
       const has = s.voiceModePaths.includes(path);
       if (enabled === has) return {};
       return {
         voiceModePaths: enabled ? [...s.voiceModePaths, path] : s.voiceModePaths.filter((item) => item !== path),
+        // 记录用户的显式关闭, 供自动开启规则尊重
+        voiceModeDisabled: enabled
+          ? s.voiceModeDisabled.filter((item) => item !== path)
+          : [...s.voiceModeDisabled, path],
       };
     }),
   setVoiceStatus: (status, detail) => set({ voiceStatus: status, voiceStatusDetail: detail ?? null }),
@@ -420,7 +420,7 @@ export const useAppStore = create<AppStore>((set) => ({
       return { voiceLogs };
     }),
   setVoiceCharacters: (characters) => set({ voiceCharacters: characters }),
-  setVoiceCards: (cards) => set({ voiceCards: new Map(cards) }),
+  setSceneVoiceEditors: (cards) => set({ sceneVoiceEditors: new Map(cards) }),
   setVoiceCache: (cache) => set({ voiceCache: cache }),
   upsertVoiceCache: (entry) =>
     set((s) => {
@@ -437,3 +437,43 @@ export const useAppStore = create<AppStore>((set) => ({
   setUnsavedDialog: (open) => set({ unsavedDialog: open }),
   requestPreviewReload: () => set((s) => ({ previewReloadToken: s.previewReloadToken + 1 })),
 }));
+
+// -------- 派生读取 (供组件使用) --------
+
+/**
+ * 自动进入配音编辑模式: 返回该场景应被加入的路径 (无需改动时返回 `null`)。
+ *
+ * 尊重用户的显式关闭 (`voiceModeDisabled`), 否则关掉后一重新选中又会被打开。
+ */
+function autoVoiceMode(state: AppStore, path: string): string | null {
+  if (!state.voiceWorkbenchOpen) return null;
+  if (state.voiceModePaths.includes(path)) return null;
+  if (state.voiceModeDisabled.includes(path)) return null;
+  return path;
+}
+
+/** 当前活动选项卡 */
+export function activeTabOf(state: AppStore): WorkbenchTabItem | null {
+  return state.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+}
+
+/** 当前活动的场景/文件选项卡 */
+export function activeSceneTabOf(state: AppStore): SceneTab | null {
+  const tab = activeTabOf(state);
+  return tab?.kind === 'scene' ? tab : null;
+}
+
+/** 当前活动的场景文档 */
+export function activeSceneDocumentOf(state: AppStore): OpenDocument | null {
+  const tab = activeSceneTabOf(state);
+  if (!tab) return null;
+  return state.documents.find((doc) => doc.path === tab.path) ?? null;
+}
+
+/** 项目内是否存在任何选项卡 */
+export function hasTabs(tabs: WorkbenchTabItem[]): boolean {
+  return tabs.length > 0;
+}
+
+export { makeSceneTab, makeWorkbenchTab, removeTabsByKind, WORKBENCH_TAB_ID, VOICE_GUIDE_TAB_ID };
+export type { WorkbenchTabItem };

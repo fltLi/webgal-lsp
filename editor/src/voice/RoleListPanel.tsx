@@ -14,10 +14,10 @@ import type { Character, ModelCandidate } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
-import { CharacterPickerDialog } from './CharacterPickerDialog';
+import { RolePickerDialog } from './RolePickerDialog';
 import { LANGUAGE_LABELS } from './types';
 
-export function CharacterPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
+export function RoleListPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
   const characters = useAppStore((state) => state.voiceCharacters);
   useAppStore((state) => state.voiceTick);
   const voiceStatus = useAppStore((state) => state.voiceStatus);
@@ -118,7 +118,7 @@ export function CharacterPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
         ))}
       </div>
 
-      <CharacterPickerDialog open={pickerOpen} onClose={() => setPickerOpen(false)} onError={setError} />
+      <RolePickerDialog open={pickerOpen} onClose={() => setPickerOpen(false)} onError={setError} />
     </div>
   );
 }

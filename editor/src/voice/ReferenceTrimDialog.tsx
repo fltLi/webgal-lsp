@@ -43,7 +43,7 @@ interface Props {
 const HEIGHT = 96;
 const HANDLE_HIT = 8;
 
-export function TrimDialog({
+export function ReferenceTrimDialog({
   path,
   suggestedStart,
   suggestedEnd,

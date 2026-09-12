@@ -22,7 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, SayLine } from '../commands/voice';
 import { voiceController } from './controller';
-import { ReferencePickerDialog } from './ReferencePickerDialog';
+import { VoiceReferenceDialog } from './VoiceReferenceDialog';
 import {
   GENERATE_SAMPLE_STEPS,
   LANGUAGE_LABELS,
@@ -40,7 +40,7 @@ interface Props {
   onChanged: () => void;
 }
 
-export function VoiceSentencePanel({ cardId, dialogue, characters, refreshToken, onChanged }: Props) {
+export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken, onChanged }: Props) {
   const [params, setParams] = useState<VoiceParams | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -390,7 +390,7 @@ export function VoiceSentencePanel({ cardId, dialogue, characters, refreshToken,
         {message && <span className="voice-message">{message}</span>}
       </div>
 
-      <ReferencePickerDialog
+      <VoiceReferenceDialog
         open={pickerOpen}
         character={character}
         selectedHash={params.referenceHash}

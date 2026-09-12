@@ -141,7 +141,7 @@ export interface TaskGroup {
 }
 
 /** 场景卡状态 */
-export interface VoiceCard {
+export interface SceneVoiceState {
   /** 选项卡 id (与文档路径一一对应) */
   id: string;
   scenePath: string;
@@ -163,7 +163,7 @@ export interface VoiceCard {
   diskChanged?: boolean;
 }
 
-/** 总控台默认推理配置 */
+/** 配音工作台默认推理配置 */
 export interface VoiceDefaults {
   language: string;
   textSplitMethod: string;

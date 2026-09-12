@@ -26,7 +26,11 @@ type PromptState = { mode: 'newFile' | 'newFolder'; dir: string } | { mode: 'ren
 
 export function SceneBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);
-  const activePath = useAppStore((s) => s.activePath);
+  // 场景浏览器高亮"当前正在编辑的场景": 即活动选项卡为场景类时对应的路径
+  const activePath = useAppStore((s) => {
+    const tab = s.tabs.find((item) => item.id === s.activeTabId);
+    return tab?.kind === 'scene' ? tab.path : null;
+  });
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [menu, setMenu] = useState<{ node: FileNode; x: number; y: number } | null>(null);

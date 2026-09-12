@@ -22,7 +22,7 @@ import { voiceAddReference, voiceExportCharacter, voiceRemoveReference, voiceRea
 import type { Character, ReferenceAudio } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
-import { TrimDialog } from './TrimDialog';
+import { ReferenceTrimDialog } from './ReferenceTrimDialog';
 import { LANGUAGE_LABELS } from './types';
 
 interface Props {
@@ -34,7 +34,7 @@ interface Props {
   onCharactersChanged: () => void;
 }
 
-export function ReferencePickerDialog({ open, character, selectedHash, onPick, onClose, onCharactersChanged }: Props) {
+export function VoiceReferenceDialog({ open, character, selectedHash, onPick, onClose, onCharactersChanged }: Props) {
   const [query, setQuery] = useState('');
   const [trimSource, setTrimSource] = useState<{ path: string; suggestedStart: number; suggestedEnd: number } | null>(
     null
@@ -210,7 +210,7 @@ export function ReferencePickerDialog({ open, character, selectedHash, onPick, o
       </Dialog>
 
       {trimSource && (
-        <TrimDialog
+        <ReferenceTrimDialog
           path={trimSource.path}
           suggestedStart={trimSource.suggestedStart}
           suggestedEnd={trimSource.suggestedEnd}
