@@ -16,6 +16,7 @@ import { absToRel } from '../git/util';
 import { useAppStore } from '../state/store';
 import { makeDiffTab, sceneTabId } from '../tabs/model';
 import { voiceController, DISK_CHECK_MS } from './controller';
+import { dialogueAtLine } from './types';
 import { SceneConflictDialog } from './SceneConflictDialog';
 import { SentenceVoicePanel } from './SentenceVoicePanel';
 import { VoiceTakeList } from './VoiceTakeList';
@@ -83,15 +84,19 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
     };
   }, [isActiveTab, docPath]);
 
-  // 光标位置变化 -> 定位当前对话
+  /*
+   * 光标位置变化 -> 定位当前对话。
+   *
+   * 判定必须按语句的 `[首行, 首行 + 行数)` 区间, 而不是"行号相等":
+   * WebGAL 语句可以跨行, 只比首行会出现"光标在对话上一行/下一行才识别"的错乱。
+   */
   const cursorLine = useAppStore((state) => state.cursor?.line ?? null);
   useEffect(() => {
     if (!isActiveTab || cursorLine === null) return;
     const current = voiceController.getCard(docPath);
     if (!current) return;
-    const line = cursorLine - 1;
-    const dialogue = current.dialogues.find((item) => item.line === line);
-    voiceController.setCursorLine(docPath, dialogue ? dialogue.line : null);
+    const hit = dialogueAtLine(current.dialogues, cursorLine - 1);
+    voiceController.setCursorLine(docPath, hit ? hit.line : null);
   }, [cursorLine, isActiveTab, docPath]);
 
   if (!doc) return null;
@@ -99,13 +104,20 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
     return <div className="scene-voice-loading">正在解析场景…</div>;
   }
 
-  const dialogue: SayLine | null =
-    card.cursorLine === null ? null : (card.dialogues.find((item) => item.line === card.cursorLine) ?? null);
+  const dialogue: SayLine | null = dialogueAtLine(card.dialogues, card.cursorLine ?? -1);
 
   return (
     <div className="scene-voice">
       <div className="scene-voice-editor">
-        <CodeEditor doc={doc} />
+        {/*
+          只读编辑器: 配音卡只负责"读场景 + 选中语句", 编辑一律回到普通场景卡完成。
+          当前语句整行高亮, 让"正在为哪一句配音"一目了然。
+        */}
+        <CodeEditor
+          doc={doc}
+          readOnly
+          highlightLine={dialogue ? { line: dialogue.line, count: dialogue.lineCount } : null}
+        />
       </div>
 
       <div className="scene-voice-panel">

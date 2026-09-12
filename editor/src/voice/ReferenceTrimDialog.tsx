@@ -14,14 +14,13 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Dropdown,
   Input,
-  Option,
 } from '@fluentui/react-components';
 import { PlayRegular, StopRegular } from '@fluentui/react-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { voiceReadAudio, voiceWaveform, type Waveform } from '../commands/voice';
+import { Select, toOptions } from '../components/Select';
 import { LANGUAGE_LABELS, MAX_REF_SECONDS, MIN_REF_SECONDS } from './types';
 
 interface Props {
@@ -264,18 +263,12 @@ export function ReferenceTrimDialog({
             <div className="voice-row">
               <label className="voice-field">
                 <span className="voice-label">语言</span>
-                <Dropdown
-                  className="voice-control"
-                  selectedOptions={[language]}
-                  value={LANGUAGE_LABELS[language] ?? language}
-                  onOptionSelect={(_, data) => onLanguageChange(data.optionValue ?? 'zh')}
-                >
-                  {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
-                    <Option key={code} value={code} text={label}>
-                      {label}
-                    </Option>
-                  ))}
-                </Dropdown>
+                <Select
+                  value={language}
+                  title="参考文本使用的语言"
+                  options={toOptions(LANGUAGE_LABELS)}
+                  onChange={onLanguageChange}
+                />
               </label>
             </div>
 

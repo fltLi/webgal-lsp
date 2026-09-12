@@ -9,7 +9,7 @@
 //   「移除」只清除当前语句的 `-vocal=` (不删文件、不清历史);
 // * 语音之外的参数 (文本) 随场景内容变化, 不随历史项回填。
 
-import { Button, Dropdown, Input, Option, Slider, Textarea } from '@fluentui/react-components';
+import { Button, Input, Slider, Textarea } from '@fluentui/react-components';
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, SayLine } from '../commands/voice';
+import { Select, toOptions } from '../components/Select';
 import { voiceController } from './controller';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
 import { GENERATE_SAMPLE_STEPS, LANGUAGE_LABELS, PARAM_TICKS, randomSeed, type VoiceParams } from './types';
@@ -128,47 +129,37 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
       <div className="voice-row">
         <label className="voice-field voice-field-character">
           <span className="voice-label">角色</span>
-          <Dropdown
-            className="voice-control"
-            selectedOptions={params.characterId ? [params.characterId] : []}
-            value={
-              character
-                ? `${character.name}${matchHint && !selected ? `（${matchHint}）` : ''}`
-                : '未选择（点击选择角色）'
-            }
-            onOptionSelect={(_, data) => {
-              const id = data.optionValue || null;
-              const next = voiceController.characterById(id);
-              voiceController.assignCharacter(voiceController.getCard(cardId)?.scenePath ?? '', dialogue.speaker, id);
+          <Select
+            value={params.characterId ?? ''}
+            title={character ? `${character.name}${matchHint && !selected ? `（${matchHint}）` : ''}` : '未选择角色'}
+            placeholder="未选择（点击选择角色）"
+            options={characters.map((item) => ({
+              value: item.id,
+              label: `${item.name}${item.references.length === 0 ? '（无参考音频）' : ''}`,
+            }))}
+            onChange={(id) => {
+              const next = voiceController.characterById(id || null);
+              voiceController.assignCharacter(
+                voiceController.getCard(cardId)?.scenePath ?? '',
+                dialogue.speaker,
+                id || null
+              );
               update({
-                characterId: id,
+                characterId: id || null,
                 referenceHash: next?.references[0]?.hash ?? null,
               });
             }}
-          >
-            {characters.map((item) => (
-              <Option key={item.id} value={item.id} text={item.name}>
-                {item.name}
-                {item.references.length === 0 ? '（无参考音频）' : ''}
-              </Option>
-            ))}
-          </Dropdown>
+          />
         </label>
 
         <label className="voice-field voice-field-language">
           <span className="voice-label">语言</span>
-          <Dropdown
-            className="voice-control"
-            selectedOptions={[params.language]}
-            value={LANGUAGE_LABELS[params.language] ?? params.language}
-            onOptionSelect={(_, data) => update({ language: data.optionValue ?? 'auto' })}
-          >
-            {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
-              <Option key={code} value={code} text={label}>
-                {label}
-              </Option>
-            ))}
-          </Dropdown>
+          <Select
+            value={params.language}
+            title="本条对话的合成语言"
+            options={toOptions(LANGUAGE_LABELS)}
+            onChange={(language) => update({ language })}
+          />
         </label>
       </div>
 
@@ -306,20 +297,15 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
           <div className="voice-row">
             <label className="voice-field">
               <span className="voice-label">正式生成采样步数</span>
-              <Dropdown
-                className="voice-control"
-                selectedOptions={[String(params.sampleSteps)]}
-                value={`x${params.sampleSteps}`}
-                onOptionSelect={(_, data) =>
-                  update({ sampleSteps: Number.parseInt(data.optionValue ?? String(GENERATE_SAMPLE_STEPS), 10) })
-                }
-              >
-                {[4, 8, 16, 32].map((steps) => (
-                  <Option key={steps} value={String(steps)} text={`x${steps}`}>
-                    {`x${steps}${steps === 32 ? '（默认）' : ''}`}
-                  </Option>
-                ))}
-              </Dropdown>
+              <Select
+                value={String(params.sampleSteps)}
+                title="正式生成使用的采样步数"
+                options={[4, 8, 16, 32].map((steps) => ({
+                  value: String(steps),
+                  label: `x${steps}${steps === GENERATE_SAMPLE_STEPS ? '（默认）' : ''}`,
+                }))}
+                onChange={(value) => update({ sampleSteps: Number.parseInt(value, 10) || GENERATE_SAMPLE_STEPS })}
+              />
             </label>
           </div>
         </div>

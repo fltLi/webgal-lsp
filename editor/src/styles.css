@@ -356,7 +356,7 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 左右内边距固定, 因此有没有图标都不会让标题贴边 */
+  /* 所有选项卡左右内边距一致, 标题起始位置由固定的前导槽决定 (见下) */
   padding: 7px 12px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
@@ -369,6 +369,19 @@ body.resizing {
   transition: background-color 0.12s ease;
 }
 
+/*
+ * 前导槽: 场景选项卡最左侧可能有配音模式开关, 其它种类的选项卡没有。
+ * 用固定宽度占位保证"有没有开关"都不影响标题起点 (也不再区分种类调整左内边距)。
+ */
+.tab-strip-lead {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
 .tab-strip-item:hover {
   background: var(--app-hover);
 }
@@ -376,14 +389,6 @@ body.resizing {
 .tab-strip-item.active {
   background: var(--app-panel);
   border-top: 2px solid var(--app-accent);
-}
-
-/*
- * 场景选项卡最左侧可能有模式开关。没有图标时用固定占位保持各选项卡标题对齐,
- * 避免"有无图标"导致文字起始位置参差。
- */
-.tab-strip-item[data-kind='scene'] {
-  padding-left: 8px;
 }
 
 .tab-strip-title {
@@ -394,6 +399,16 @@ body.resizing {
   min-width: 0;
 }
 
+/* 未保存标记 (宽度小于 6px 时会被 flex 间隙吃掉, 因此需要固定占位) */
+.tab-strip-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 7px;
+  height: 14px;
+  flex: none;
+}
+
 .tab-strip-icon {
   display: inline-flex;
   align-items: center;
@@ -402,6 +417,14 @@ body.resizing {
   height: 14px;
   flex: none;
   color: var(--app-muted);
+}
+
+/* 没有图标的选项卡也占一槽, 使所有标题的起始位置一致 */
+.tab-strip-slot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 
 /* 拖拽排序反馈: 竖线画在真实的插入缝隙那一侧 */
@@ -3006,4 +3029,318 @@ body.resizing {
   gap: 8px;
   flex: none;
   /* 与目录输入框底对齐 (Field 有 label, 因此由 voice-root-row 的 align-items 处理) */
+}
+
+/* -------- 自绘下拉选择器 (不使用 portal, 规避 WebView 弹层异常) -------- */
+.select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--app-fg);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.select-trigger:hover:not(:disabled) {
+  border-color: var(--app-accent);
+}
+
+.select-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.select.open .select-trigger {
+  border-color: var(--app-accent);
+}
+
+.select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-chevron {
+  flex: none;
+  font-size: 14px;
+  color: var(--app-muted);
+}
+
+.select-panel {
+  position: absolute;
+  z-index: 3000;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+/*
+ * 朝上展开: 卡片是滚动容器, 靠近底部的字段朝下展开会被卡片底边切掉。
+ * 具体高度由组件按视口可用空间就地计算 (行内 max-height), 这里只负责方向。
+ */
+.select-panel-up {
+  top: auto;
+  bottom: calc(100% + 2px);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.select-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--app-fg);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.select-option:hover {
+  background: var(--app-hover);
+}
+
+.select-option.selected {
+  color: var(--app-accent);
+}
+
+.select-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex: none;
+  font-size: 12px;
+}
+
+/* ==================== 配音工作台布局 ==================== */
+/*
+  参考 WebGAL Terre 图形编辑器的语句面板: 卡片分组、字段按内容宽度排布、行距紧凑。
+  结构: 页头 / (配置 | 队列) 两栏 / 角色库占满剩余高度。
+*/
+.voice-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  background: var(--app-bg);
+  overflow: hidden;
+}
+
+.voice-workbench-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+
+.voice-workbench-heading h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.voice-workbench-heading p {
+  margin: 1px 0 0;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.workbench-status-ready {
+  color: #1a7f37;
+}
+.workbench-status-starting {
+  color: #b8860b;
+}
+.workbench-status-error {
+  color: #d1242f;
+}
+
+[data-theme='dark'] .workbench-status-ready {
+  color: #3fb950;
+}
+[data-theme='dark'] .workbench-status-starting {
+  color: #d29922;
+}
+[data-theme='dark'] .workbench-status-error {
+  color: #f85149;
+}
+
+.voice-workbench-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* 两栏: 左配置 (可滚动) / 右队列 (独立滚动) */
+.voice-workbench-columns {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(320px, 1fr);
+  gap: 10px;
+  flex: 0 0 auto;
+  max-height: 46%;
+  min-height: 0;
+}
+
+.workbench-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 12px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  overflow-y: auto;
+}
+
+.workbench-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.workbench-card-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-muted);
+  letter-spacing: 0.02em;
+}
+
+.workbench-card-head .workbench-card-title {
+  color: var(--app-fg);
+  font-size: 13px;
+}
+
+.workbench-spacer {
+  flex: 1;
+}
+
+/* 紧凑网格: 字段按内容宽度排布, 不再强行等分 */
+.workbench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px 10px;
+}
+
+.workbench-field-wide {
+  grid-column: 1 / -1;
+}
+
+.workbench-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.workbench-input-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.workbench-args {
+  min-height: 56px;
+}
+
+/* 队列 / 日志切换 */
+.workbench-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.workbench-tabs button {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--app-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.workbench-tabs button.active {
+  color: var(--app-fg);
+  border-bottom-color: var(--app-accent);
+}
+
+.workbench-summary {
+  margin: 0;
+  flex: none;
+  font-size: 11px;
+  color: var(--app-muted);
+}
+
+.workbench-scroll {
+  flex: 1;
+  min-height: 60px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workbench-log {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 角色库占满剩余高度 */
+.character-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.voice-workbench .character-panel {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+/* 旧类名清理后的兼容: 角色卡内字段保持紧凑 */
+.character-card .fui-Field {
+  margin: 0;
+}
+
+/* 配音卡: 当前语句整行高亮 (不改变 Monaco 自身的行高亮样式) */
+.voice-line-highlight {
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--app-accent);
 }

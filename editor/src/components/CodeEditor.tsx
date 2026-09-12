@@ -10,14 +10,33 @@ import { useEffect, useRef } from 'react';
 import { gitFileChanges, gitFileRegion } from '../commands/git';
 import { absToRel } from '../git/util';
 import { fs } from '../lib/fs';
+import { lspClient } from '../lsp/client';
 import { applyDiagnostics, bindModel, openModel, TRIGGER_CHARACTERS } from '../lsp/monaco';
 import { previewClient } from '../preview/client';
 import { useAppStore, type OpenDocument } from '../state/store';
 
 const TRIGGER_SET = new Set(TRIGGER_CHARACTERS);
 
-export function CodeEditor({ doc }: { doc: OpenDocument }) {
+/**
+ * 单个文档的 Monaco 编辑器 (仅活动文档被挂载)。
+ *
+ * * 场景编辑器集成 git 行内差异 (行号旁色块 + 点击后在两行之间就地插入差异区);
+ * * `readOnly` 用于配音卡: 该模式只做"读场景 + 选语句", 编辑一律回到普通场景卡,
+ *   因此禁掉所有写入入口 (编辑、自动保存、预览同步与 git 差异);
+ * * `highlightLine` 为整条语句施加行高亮 (配音卡用它表示"正在配置哪一句")。
+ */
+export function CodeEditor({
+  doc,
+  readOnly = false,
+  highlightLine = null,
+}: {
+  doc: OpenDocument;
+  readOnly?: boolean;
+  highlightLine?: { line: number; count: number } | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const highlightDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -35,6 +54,9 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
+      readOnly,
+      // 只读时不显示光标插入符, 避免误以为可以编辑
+      domReadOnly: readOnly,
       fontFamily: initialSettings.editorFontFamily,
       fontSize: initialSettings.editorFontSize,
       minimap: { enabled: initialSettings.editorMinimap },
@@ -42,7 +64,13 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       // 显式启用语义高亮: 内置主题的 semanticHighlighting 恒为 false,
       // 不开启则语义 token 不会被请求/着色 (与 parse-playground 一致的做法)
       'semanticHighlighting.enabled': true,
+      // 当前语句整行高亮 (配音卡用它表示"正在配置哪一句")
+      renderLineHighlight: 'all',
     });
+
+    // 供 highlightLine 装饰复用 (避免因高亮变化而重建编辑器)
+    editorRef.current = editor;
+    highlightDecorations.current = editor.createDecorationsCollection();
 
     // 编辑器设置变化时热更新 (避免重建编辑器丢失光标)
     const settingsSub = useAppStore.subscribe((state, prev) => {
@@ -64,6 +92,7 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     });
 
     const saveDoc = async () => {
+      if (readOnly) return;
       const text = editor.getValue();
       try {
         await fs.writeText(path, text);
@@ -74,16 +103,20 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     };
 
     const scheduleAutoSave = () => {
+      if (readOnly) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveDoc(), 600);
     };
 
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void saveDoc();
-    });
+    if (!readOnly) {
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        void saveDoc();
+      });
+    }
 
     // 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)
     const scheduleSync = () => {
+      if (readOnly) return;
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = setTimeout(async () => {
         if (!useAppStore.getState().settings.autoSyncPreview) return;
@@ -107,12 +140,18 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     let unsubscribeDiagnostics: (() => void) | null = null;
 
     if (isScene) {
-      unbindModel = bindModel(model, path, (text) => {
-        const store = useAppStore.getState();
-        store.updateDocument(path, { content: text, dirty: true });
-        if (store.settings.autoSave) scheduleAutoSave();
-        scheduleSync();
-      });
+      // 只读编辑器不做文档同步与自动保存, 只保留诊断标记与语言能力
+      if (!readOnly) {
+        unbindModel = bindModel(model, path, (text) => {
+          const store = useAppStore.getState();
+          store.updateDocument(path, { content: text, dirty: true });
+          if (store.settings.autoSave) scheduleAutoSave();
+          scheduleSync();
+        });
+      } else {
+        lspClient.openDocument(path, model.getValue());
+        unbindModel = () => lspClient.closeDocument(path);
+      }
       applyDiagnostics(model, path);
       unsubscribeDiagnostics = useAppStore.subscribe((state, prev) => {
         if (state.diagnostics[path] !== prev.diagnostics[path]) applyDiagnostics(model, path);
@@ -163,7 +202,7 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     const gutterDecorations = editor.createDecorationsCollection();
     let unsubscribeGit: (() => void) | null = null;
     const applyGitGutter = async () => {
-      if (!isScene) return;
+      if (!isScene || readOnly) return;
       const store = useAppStore.getState();
       const project = store.projectPath;
       const rel = project ? absToRel(project, path) : '';
@@ -275,9 +314,31 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       if (unsubscribeGit) unsubscribeGit();
       if (saveTimer) clearTimeout(saveTimer);
       if (syncTimer) clearTimeout(syncTimer);
+      highlightDecorations.current = null;
+      editorRef.current = null;
       editor.dispose();
     };
   }, [doc.path]);
+
+  // 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。
+  useEffect(() => {
+    const collection = highlightDecorations.current;
+    const model = editorRef.current?.getModel();
+    if (!collection || !model) return;
+    if (!highlightLine) {
+      collection.clear();
+      return;
+    }
+    const lineCount = model.getLineCount();
+    const start = Math.min(Math.max(1, highlightLine.line), Math.max(1, lineCount));
+    const end = Math.min(start + Math.max(1, highlightLine.count) - 1, lineCount);
+    collection.set([
+      {
+        range: new monaco.Range(start, 1, end, model.getLineMaxColumn(end)),
+        options: { isWholeLine: true, className: 'voice-line-highlight' },
+      },
+    ]);
+  }, [doc.path, highlightLine]);
 
   return (
     <div className="code-editor">

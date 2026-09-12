@@ -14,6 +14,7 @@ import type {
   CacheEntry,
   Character,
   LaunchConfig,
+  ListImportReport,
   ModelCandidate,
   SayLine,
   TrimSuggestion,
@@ -26,6 +27,7 @@ import {
   voiceDefaultLaunchConfig,
   voiceDropCache,
   voiceImportCharacter,
+  voiceImportCharactersFromList,
   voiceLaunch,
   voiceListCache,
   voiceListCharacters,
@@ -760,6 +762,17 @@ class VoiceController {
     const imported = await voiceImportCharacter(selected);
     this.setCharacters([...this.characters, imported]);
     return imported;
+  }
+
+  /**
+   * 从 GPT-SoVITS 切片产物 (.list + 音频目录) 批量导入角色与参考音频。
+   *
+   * 目录选择由调用方完成, 这里只负责导入并重新读取角色列表。
+   */
+  async importFromList(listDir: string, audioDir: string): Promise<ListImportReport> {
+    const report = await voiceImportCharactersFromList(listDir, audioDir);
+    this.setCharacters(await voiceListCharacters());
+    return report;
   }
 
   // -------- 缓存清理 --------

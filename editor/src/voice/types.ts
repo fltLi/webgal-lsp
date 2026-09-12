@@ -188,6 +188,40 @@ export function dialogueKey(line: SayLine): string {
   return `${line.speaker ?? ''}\u001f${line.text.trim()}`;
 }
 
+/**
+ * 找出光标所在行属于哪一条对话。
+ *
+ * `SayLine.line` 是语句的**首行**行号, `lineCount` 是它占据的行数 (WebGAL 语句可以
+ * 跨行)。只比较行号相等是错误的: 那会让光标处于语句续行时不显示、或落到相邻语句上。
+ *
+ * 返回 `null` 表示光标不在任何对话语句上 (例如停在 changeBg 之类的演出语句上)。
+ */
+export function dialogueAtLine(dialogues: SayLine[], line: number): SayLine | null {
+  if (dialogues.length === 0 || line < 0) return null;
+  // 二分查找最后一个首行 <= line 的语句
+  let low = 0;
+  let high = dialogues.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (dialogues[mid].line <= line) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (found < 0) return null;
+  const current = dialogues[found];
+  const span = Math.max(1, current.lineCount ?? 1);
+  return line < current.line + span ? current : null;
+}
+
+/** 该行是否落在某条对话上 (与 `dialogueAtLine` 同义, 便于阅读) */
+export function isDialogueLine(dialogues: SayLine[], line: number): boolean {
+  return dialogueAtLine(dialogues, line) !== null;
+}
+
 /** 构造默认参数 */
 export function defaultParams(character: Character | null, text: string): VoiceParams {
   return {

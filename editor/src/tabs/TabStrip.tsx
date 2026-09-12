@@ -116,11 +116,15 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
-            {renderLeadingAction?.(tab)}
+            {/*
+              前导槽固定占位: 场景选项卡可能有配音模式开关, 其它种类没有。
+              固定宽度保证"有没有开关"都不影响标题起点。
+            */}
+            <span className="tab-strip-lead">{renderLeadingAction?.(tab) ?? null}</span>
 
             <span className="tab-strip-title">
               {tab.kind === 'scene' && <SceneDirtyDot path={tab.path} />}
-              {tab.icon && <span className="tab-strip-icon">{tab.icon}</span>}
+              {tab.icon ? <span className="tab-strip-icon">{tab.icon}</span> : <span className="tab-strip-slot" />}
               {tab.title}
               {tab.kind === 'voice-workbench' && <QueueBadge />}
             </span>
@@ -143,10 +147,10 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
   );
 }
 
-/** 场景选项卡的未保存标记 */
+/** 场景选项卡的未保存标记 (固定占位, 避免有无标记时标题左右跳动) */
 function SceneDirtyDot({ path }: { path: string }) {
   const dirty = useAppStore((s) => s.documents.find((doc) => doc.path === path)?.dirty ?? false);
-  return dirty ? <span className="tab-strip-dirty">●</span> : null;
+  return <span className="tab-strip-mark">{dirty ? <span className="tab-strip-dirty">●</span> : null}</span>;
 }
 
 /** 配音任务角标 */

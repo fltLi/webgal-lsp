@@ -5,19 +5,27 @@
 // 顶部为搜索 / 选择 / 新建; 列表按响应式网格排布 (窗口足够宽时两列)。
 // 参考音频的增删改在「选择角色」对话框内完成, 列表本身只展示与编辑角色元信息。
 
-import { Button, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components';
-import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { Button, Field, Input, Textarea } from '@fluentui/react-components';
+import {
+  AddRegular,
+  ArrowDownloadRegular,
+  ArrowImportRegular,
+  DeleteRegular,
+  StarFilled,
+  StarRegular,
+} from '@fluentui/react-icons';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, ModelCandidate } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
+import { Select, toOptions } from '../components/Select';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { RolePickerDialog } from './RolePickerDialog';
 import { LANGUAGE_LABELS } from './types';
 
-export function RoleListPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
+export function RoleListPanel() {
   const characters = useAppStore((state) => state.voiceCharacters);
   useAppStore((state) => state.voiceTick);
   const voiceStatus = useAppStore((state) => state.voiceStatus);
@@ -26,6 +34,8 @@ export function RoleListPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelCandidate[]>([]);
   const [switching, setSwitching] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     voiceController.primeReferencePaths().catch(() => {});
@@ -63,6 +73,33 @@ export function RoleListPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
     await voiceExportCharacter(character.id, destination);
   };
 
+  /**
+   * 从 GPT-SoVITS 切片产物导入: 分别选择配置目录 (.list) 与音频目录。
+   *
+   * 两个目录分开选是刻意的: 切片流程通常把文本清单与音频放在不同位置,
+   * 由用户明确指定比自动猜测更可靠。
+   */
+  const importFromList = async () => {
+    setError(null);
+    const listDir = await openDialog({ directory: true, multiple: false, title: '选择配置目录（含 .list）' });
+    if (typeof listDir !== 'string') return;
+    const audioDir = await openDialog({ directory: true, multiple: false, title: '选择音频目录' });
+    if (typeof audioDir !== 'string') return;
+
+    setBusy(true);
+    try {
+      const report = await voiceController.importFromList(listDir, audioDir);
+      setMessage(
+        `已导入 ${report.imported} 条参考音频，涉及 ${report.characters.length} 个角色` +
+          (report.skipped > 0 ? `，跳过 ${report.skipped} 条` : '')
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="character-panel">
       <div className="character-toolbar">
@@ -78,13 +115,18 @@ export function RoleListPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
         <Button appearance="primary" icon={<AddRegular />} onClick={() => void create()}>
           新建角色
         </Button>
-        <span className="voice-actions-spacer" />
-        <Button appearance="subtle" onClick={onOpenHelp}>
-          帮助
+        <Button
+          appearance="secondary"
+          icon={<ArrowImportRegular />}
+          disabled={busy}
+          onClick={() => void importFromList()}
+        >
+          从切片导入
         </Button>
       </div>
 
       {error && <p className="voice-error">{error}</p>}
+      {message && <p className="character-message">{message}</p>}
 
       <div className="character-list">
         {characters.length === 0 && (
@@ -187,26 +229,21 @@ function CharacterCard({
 
       <Field label="GSOV 模型（本地记录，不参与导出）">
         {models.length > 0 && (
-          <Dropdown
+          <Select
             className="character-model-pick"
             placeholder="从整合包扫描到的模型中选择"
-            selectedOptions={[]}
-            value={modelSummary(draft, models)}
-            onOptionSelect={(_, data) => {
-              const picked = models.find((item) => item.gptWeights === data.optionValue);
+            value={models.some((item) => item.gptWeights === draft.model?.gptWeights) ? draft.model!.gptWeights! : ''}
+            title={modelSummary(draft, models)}
+            options={models.map((item) => ({ value: item.gptWeights, label: item.name }))}
+            onChange={(gptWeights) => {
+              const picked = models.find((item) => item.gptWeights === gptWeights);
               if (picked) {
                 void commit({
                   model: { gptWeights: picked.gptWeights, sovitsWeights: picked.sovitsWeights },
                 });
               }
             }}
-          >
-            {models.map((item) => (
-              <Option key={item.gptWeights} value={item.gptWeights} text={item.name}>
-                {item.name}
-              </Option>
-            ))}
-          </Dropdown>
+          />
         )}
         <div className="character-model">
           <Input
@@ -240,17 +277,12 @@ function CharacterCard({
       </Field>
 
       <Field label="默认语言">
-        <Dropdown
-          selectedOptions={[draft.language]}
-          value={LANGUAGE_LABELS[draft.language] ?? draft.language}
-          onOptionSelect={(_, data) => void commit({ language: data.optionValue ?? 'auto' })}
-        >
-          {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
-            <Option key={code} value={code} text={label}>
-              {label}
-            </Option>
-          ))}
-        </Dropdown>
+        <Select
+          value={draft.language}
+          title="该角色默认使用的合成语言"
+          options={toOptions(LANGUAGE_LABELS)}
+          onChange={(language) => void commit({ language })}
+        />
       </Field>
 
       <Field label="别名（参与场景对话者自动匹配，逗号分隔）">

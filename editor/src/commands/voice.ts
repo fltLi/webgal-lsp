@@ -56,7 +56,10 @@ export interface VoiceStatus {
 }
 
 export interface SayLine {
+  /** 语句首行行号 (0 起) */
   line: number;
+  /** 该语句占据的行数 (至少 1) */
+  lineCount: number;
   speaker: string | null;
   speakerInherited: boolean;
   text: string;
@@ -358,6 +361,23 @@ export function voiceExportCharacter(id: string, destination: string): Promise<v
 
 export function voiceImportCharacter(source: string): Promise<Character> {
   return invoke<Character>('voice_import_character', { source });
+}
+
+/** `.list` 批量导入结果 */
+export interface ListImportReport {
+  imported: number;
+  skipped: number;
+  characters: string[];
+}
+
+/**
+ * 从 GPT-SoVITS 切片产物批量导入角色与参考音频。
+ *
+ * `listDir` 内每个角色一个 `.list`（行格式 `音频路径|说话者|语言|文本`）；
+ * `audioDir` 是切好的音频目录。两者都按角色分目录存放。
+ */
+export function voiceImportCharactersFromList(listDir: string, audioDir: string): Promise<ListImportReport> {
+  return invoke<ListImportReport>('voice_import_characters_from_list', { listDir, audioDir });
 }
 
 // -------- 缓存 / 引用扫描 / 对齐 --------
