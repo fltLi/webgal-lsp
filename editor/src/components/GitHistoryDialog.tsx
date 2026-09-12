@@ -13,6 +13,7 @@ import { openGitDiff } from '../git/diff';
 import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
 import { useAppStore } from '../state/store';
+import { AppDialog } from './AppDialog';
 import { middleEllipsis } from './FileTree';
 
 /** 跨打开保留的历史状态 (打开场景差异 / Esc 关闭时不清空, 仅"关闭"按钮重置) */
@@ -173,97 +174,101 @@ export function GitHistoryDialog({ onClose }: Props) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-surface history-surface" onClick={(e) => e.stopPropagation()}>
-        <div className="history-header">
-          <h2 className="modal-title">提交历史</h2>
-          <span className="repository-branch">
-            <BranchForkRegular /> {branch ?? '当前分支'}
-          </span>
-          <span className="history-header-spacer" />
-          <Button appearance="secondary" onClick={manualClose}>
+    <AppDialog
+      title="提交历史"
+      className="history-surface"
+      size="large"
+      height={620}
+      compact
+      onClose={onClose}
+      titleExtra={
+        <span className="repository-branch">
+          <BranchForkRegular /> {branch ?? '当前分支'}
+        </span>
+      }
+      footer={
+        <Button appearance="secondary" onClick={manualClose}>
+          关闭
+        </Button>
+      }
+    >
+      <div className="history-list dialog-scroll" ref={listRef}>
+        {commits.length === 0 ? (
+          <div className="muted repository-empty-list">暂无提交记录</div>
+        ) : (
+          commits.map((c) => (
+            <div key={c.id} className="git-commit">
+              <div className="git-commit-row" onClick={() => void toggle(c.id)}>
+                <span className="git-commit-toggle">{expanded === c.id ? '▾' : '▸'}</span>
+                <span className="git-commit-summary" title={c.summary}>
+                  {middleEllipsis(c.summary, 60)}
+                </span>
+                <span className="git-commit-time">{formatDate(c.time)}</span>
+                <span className="git-file-stats">
+                  {c.additions > 0 ? <em className="git-add">+{c.additions}</em> : null}
+                  {c.deletions > 0 ? <em className="git-del">-{c.deletions}</em> : null}
+                </span>
+              </div>
+              {expanded === c.id ? (
+                <div className="git-commit-detail">
+                  <div className="git-commit-detail-info">
+                    <pre className="git-commit-message">{c.message}</pre>
+                    <div className="git-commit-meta">
+                      <span>ID: {c.id}</span>
+                      <span>作者: {c.author}</span>
+                    </div>
+                  </div>
+                  <div className="git-commit-detail-files">{(files[c.id] ?? []).map((f) => fileRow(f, c.id))}</div>
+                </div>
+              ) : null}
+            </div>
+          ))
+        )}
+      </div>
+
+      {menu ? (
+        <>
+          <div
+            className="context-menu-backdrop"
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu(null);
+            }}
+          />
+          <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                setMenu(null);
+                void run(() => gitRestore(projectPath, [menu.file.path], menu.commitId));
+              }}
+            >
+              <ArrowClockwiseRegular />
+              还原
+            </button>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                setMenu(null);
+                void run(() => gitRestoreAll(projectPath, menu.commitId));
+              }}
+            >
+              <HistoryRegular />
+              还原全部
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {error ? (
+        <div className="history-error">
+          <span className="prompt-error">{error}</span>
+          <Button appearance="secondary" size="small" onClick={() => setError(null)}>
             关闭
           </Button>
         </div>
-
-        <div className="history-list" ref={listRef}>
-          {commits.length === 0 ? (
-            <div className="muted repository-empty-list">暂无提交记录</div>
-          ) : (
-            commits.map((c) => (
-              <div key={c.id} className="git-commit">
-                <div className="git-commit-row" onClick={() => void toggle(c.id)}>
-                  <span className="git-commit-toggle">{expanded === c.id ? '▾' : '▸'}</span>
-                  <span className="git-commit-summary" title={c.summary}>
-                    {middleEllipsis(c.summary, 60)}
-                  </span>
-                  <span className="git-commit-time">{formatDate(c.time)}</span>
-                  <span className="git-file-stats">
-                    {c.additions > 0 ? <em className="git-add">+{c.additions}</em> : null}
-                    {c.deletions > 0 ? <em className="git-del">-{c.deletions}</em> : null}
-                  </span>
-                </div>
-                {expanded === c.id ? (
-                  <div className="git-commit-detail">
-                    <div className="git-commit-detail-info">
-                      <pre className="git-commit-message">{c.message}</pre>
-                      <div className="git-commit-meta">
-                        <span>ID: {c.id}</span>
-                        <span>作者: {c.author}</span>
-                      </div>
-                    </div>
-                    <div className="git-commit-detail-files">{(files[c.id] ?? []).map((f) => fileRow(f, c.id))}</div>
-                  </div>
-                ) : null}
-              </div>
-            ))
-          )}
-        </div>
-
-        {menu ? (
-          <>
-            <div
-              className="context-menu-backdrop"
-              onClick={() => setMenu(null)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu(null);
-              }}
-            />
-            <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  setMenu(null);
-                  void run(() => gitRestore(projectPath, [menu.file.path], menu.commitId));
-                }}
-              >
-                <ArrowClockwiseRegular />
-                还原
-              </button>
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  setMenu(null);
-                  void run(() => gitRestoreAll(projectPath, menu.commitId));
-                }}
-              >
-                <HistoryRegular />
-                还原全部
-              </button>
-            </div>
-          </>
-        ) : null}
-
-        {error ? (
-          <div className="history-error">
-            <span className="prompt-error">{error}</span>
-            <Button appearance="secondary" size="small" onClick={() => setError(null)}>
-              关闭
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </div>
+      ) : null}
+    </AppDialog>
   );
 }

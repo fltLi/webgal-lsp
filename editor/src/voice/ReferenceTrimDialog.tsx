@@ -6,20 +6,12 @@
 // 由后端执行实际裁剪 (后端同时负责 3~10 秒约束的最终校验)。
 // 音频**过短**时不弹此对话框, 由后端静默补尾 —— 本组件在那种情况下只做提示。
 
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-  Input,
-} from '@fluentui/react-components';
+import { Button, Input } from '@fluentui/react-components';
 import { PlayRegular, StopRegular } from '@fluentui/react-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { voiceReadAudio, voiceWaveform, type Waveform } from '../commands/voice';
+import { AppDialog } from '../components/AppDialog';
 import { Select, toOptions } from '../components/Select';
 import { LANGUAGE_LABELS, MAX_REF_SECONDS, MIN_REF_SECONDS } from './types';
 
@@ -222,87 +214,88 @@ export function ReferenceTrimDialog({
   }, [needsTrim, duration, selected, tooShort]);
 
   return (
-    <Dialog open onOpenChange={(_, data) => (!data.open ? onCancel() : undefined)}>
-      <DialogSurface className="voice-dialog trim-dialog">
-        <DialogTitle>{needsTrim ? '裁剪参考音频' : '添加参考音频'}</DialogTitle>
-        <DialogBody>
-          <DialogContent>
-            <p className="voice-dialog-hint">
-              GPT-SoVITS 要求参考音频时长在 {MIN_REF_SECONDS}~{MAX_REF_SECONDS} 秒之间。
-              {needsTrim ? '已按静音边界自动放置裁剪区间，可拖拽两端微调。' : '该音频较短，会在尾部补静音。'}
-            </p>
+    <AppDialog
+      title={needsTrim ? '裁剪参考音频' : '添加参考音频'}
+      size="large"
+      height={560}
+      onClose={onCancel}
+      footerLeading={
+        <Button
+          appearance="secondary"
+          size="small"
+          icon={playing ? <StopRegular /> : <PlayRegular />}
+          onClick={() => void togglePlay()}
+        >
+          {playing ? '停止' : '试听'}
+        </Button>
+      }
+      footer={
+        <>
+          <Button appearance="secondary" onClick={onCancel} disabled={busy}>
+            取消
+          </Button>
+          <Button
+            appearance="primary"
+            disabled={!canConfirm}
+            onClick={() => onConfirm(shownStart, needsTrim ? shownEnd : -1)}
+          >
+            {busy ? '处理中…' : '确认'}
+          </Button>
+        </>
+      }
+    >
+      <p className="voice-dialog-hint">
+        GPT-SoVITS 要求参考音频时长在 {MIN_REF_SECONDS}~{MAX_REF_SECONDS} 秒之间。
+        {needsTrim ? '已按静音边界自动放置裁剪区间，可拖拽两端微调。' : '该音频较短，会在尾部补静音。'}
+      </p>
 
-            <div className="trim-waveform">
-              <canvas
-                ref={canvasRef}
-                style={{ height: HEIGHT }}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-              />
-            </div>
+      <div className="trim-waveform">
+        <canvas
+          ref={canvasRef}
+          style={{ height: HEIGHT }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        />
+      </div>
 
-            <div className="trim-toolbar">
-              <Button
-                appearance="secondary"
-                size="small"
-                icon={playing ? <StopRegular /> : <PlayRegular />}
-                onClick={() => void togglePlay()}
-              >
-                {playing ? '停止' : '试听'}
-              </Button>
-              <span className="trim-readout">{durationLabel}</span>
-              {needsTrim && (
-                <span className="trim-range">
-                  {shownStart.toFixed(2)}s → {shownEnd.toFixed(2)}s
-                </span>
-              )}
-            </div>
+      <div className="trim-toolbar">
+        <span className="trim-readout">{durationLabel}</span>
+        {needsTrim && (
+          <span className="trim-range">
+            {shownStart.toFixed(2)}s → {shownEnd.toFixed(2)}s
+          </span>
+        )}
+      </div>
 
-            <div className="voice-row">
-              <label className="voice-field">
-                <span className="voice-label">语言</span>
-                <Select
-                  value={language}
-                  title="参考文本使用的语言"
-                  options={toOptions(LANGUAGE_LABELS)}
-                  onChange={onLanguageChange}
-                />
-              </label>
-            </div>
+      <div className="voice-row">
+        <label className="voice-field">
+          <span className="voice-label">语言</span>
+          <Select
+            value={language}
+            title="参考文本使用的语言"
+            options={toOptions(LANGUAGE_LABELS)}
+            onChange={onLanguageChange}
+          />
+        </label>
+      </div>
 
-            <label className="voice-field">
-              <span className="voice-label">
-                参考文本
-                <span className="voice-required">*</span>
-                <span className="voice-label-note">必须与音频逐字一致</span>
-              </span>
-              <Input
-                value={text}
-                placeholder="例如：我有什么不对劲的地方吗？"
-                onChange={(_, data) => onTextChange(data.value)}
-              />
-            </label>
+      <label className="voice-field">
+        <span className="voice-label">
+          参考文本
+          <span className="voice-required">*</span>
+          <span className="voice-label-note">必须与音频逐字一致</span>
+        </span>
+        <Input
+          value={text}
+          placeholder="例如：我有什么不对劲的地方吗？"
+          onChange={(_, data) => onTextChange(data.value)}
+        />
+      </label>
 
-            {error && <p className="voice-error">{error}</p>}
-            {overLimit && <p className="voice-error">裁剪区间超过 {MAX_REF_SECONDS}s 上限</p>}
-          </DialogContent>
-
-          <DialogActions>
-            <Button appearance="secondary" onClick={onCancel} disabled={busy}>
-              取消
-            </Button>
-            <Button
-              appearance="primary"
-              disabled={!canConfirm}
-              onClick={() => onConfirm(shownStart, needsTrim ? shownEnd : -1)}
-            >
-              {busy ? '处理中…' : '确认'}
-            </Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
+      {error && <p className="voice-error">{error}</p>}
+      {overLimit && <p className="voice-error">裁剪区间超过 {MAX_REF_SECONDS}s 上限</p>}
+    </AppDialog>
   );
 }

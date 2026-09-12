@@ -4,22 +4,24 @@
 //
 // 布局 (参考 WebGAL Terre 图形编辑器的语句面板: 分组紧凑、字段按内容宽度排布):
 // ┌ 页头 ──────────────────────────────────────────────┐
-// │ 配音工作台 · 说明副标题          [启动服务] [使用说明] │
-// ├ 左栏 (配置) ─────────────┬ 右栏 (队列) ────────────┤
-// │ 服务: 整合包 / 启动方式 / … │ 队列与日志 (独立滚动)    │
-// │ 默认: 默认语言              │                         │
-// ├───────────────────────────┴─────────────────────────┤
-// │ 角色库 (占满剩余高度, 内部滚动)                        │
+// │ 配音工作台 · 服务状态            [启动服务] [帮助]   │
+// ├ 左栏 (服务配置 / 默认设置) ─┬ 右栏 (任务队列 / 日志) ┤
+// │ 整合包 / 启动方式 / 解释器… │ 队列与日志 (独立滚动)   │
+// ├─────────────────────────────┴───────────────────────┤
+// │ 角色库 (占满剩余高度, 内部滚动)                       │
 // └─────────────────────────────────────────────────────┘
+//
+// 两栏内的分组都做成**分页**, 而不是把所有字段堆成一长条: 字段一多就必须滚动,
+// 而滚动会把"启动服务"这类关键操作推到视野之外。
 
 import { Button, Field, Input, ProgressBar, Spinner, Textarea } from '@fluentui/react-components';
 import {
   ArrowClockwiseRegular,
-  BookQuestionMarkRegular,
   DismissRegular,
   ErrorCircleRegular,
-  FolderOpenRegular,
+  FolderRegular,
   PlayRegular,
+  QuestionCircleRegular,
   StopRegular,
   WrenchRegular,
 } from '@fluentui/react-icons';
@@ -36,8 +38,11 @@ import { RoleListPanel } from './RoleListPanel';
 import { LANGUAGE_LABELS } from './types';
 import { VoiceCacheDialog } from './VoiceCacheDialog';
 
+type ConfigPage = 'service' | 'defaults';
+type QueuePage = 'queue' | 'log';
+
 export function VoiceWorkbench() {
-  // 使用说明是独立选项卡, 直接由工作台发起打开
+  // 帮助是独立选项卡, 直接由工作台发起打开
   const onOpenHelp = () => useAppStore.getState().openVoiceGuide();
   const status = useAppStore((state) => state.voiceStatus);
   const logs = useAppStore((state) => state.voiceLogs);
@@ -48,7 +53,8 @@ export function VoiceWorkbench() {
   const [launch, setLaunch] = useState<LaunchConfig | null>(settings.launch);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'queue' | 'log'>('queue');
+  const [configPage, setConfigPage] = useState<ConfigPage>('service');
+  const [queuePage, setQueuePage] = useState<QueuePage>('queue');
   const [changeDialogOpen, setChangeDialogOpen] = useState(false);
 
   const defaults = settings.defaults;
@@ -72,7 +78,7 @@ export function VoiceWorkbench() {
 
   /** 选择整合包目录并探测 */
   const pickRoot = async () => {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({ directory: true, multiple: false, title: '选择 GPT-SoVITS 整合包目录' });
     if (typeof selected !== 'string') return;
     setRootPath(selected);
     setBusy(true);
@@ -86,6 +92,36 @@ export function VoiceWorkbench() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * 整合包目录按钮 (目录的唯一入口)。
+   *
+   * 尚未选择时点击进入选择; 已选择时点击在文件管理器中打开 —— 因此不需要额外的
+   * 「选择…」按钮, 也就不会出现两个长得一样、含义却不同的文件夹图标。
+   */
+  const onRootAction = () => {
+    if (rootPath) void revealItemInDir(rootPath);
+    else void pickRoot();
+  };
+
+  /**
+   * 选择解释器 / 命令。
+   *
+   * 自定义命令可能是一个脚本或可执行文件, 因此这里选文件而不是目录。
+   */
+  const pickProgram = async () => {
+    if (!launch) return;
+    const picked = await openDialog({
+      multiple: false,
+      title: launch.mode.kind === 'command' ? '选择要执行的脚本或可执行文件' : '选择 Python 解释器',
+      filters:
+        launch.mode.kind === 'command'
+          ? [{ name: '脚本或可执行文件', extensions: ['exe', 'bat', 'cmd', 'ps1', 'py'] }]
+          : [{ name: '可执行文件', extensions: ['exe'] }],
+    });
+    if (typeof picked !== 'string') return;
+    patchLaunch({ mode: { ...launch.mode, program: picked } as LaunchConfig['mode'] });
   };
 
   const start = async () => {
@@ -137,8 +173,8 @@ export function VoiceWorkbench() {
               启动服务
             </Button>
           )}
-          <Button appearance="secondary" icon={<BookQuestionMarkRegular />} onClick={onOpenHelp}>
-            使用说明
+          <Button appearance="secondary" icon={<QuestionCircleRegular />} onClick={onOpenHelp}>
+            帮助
           </Button>
         </div>
       </div>
@@ -146,108 +182,119 @@ export function VoiceWorkbench() {
       {/* -------- 左: 配置 / 右: 队列 -------- */}
       <div className="voice-workbench-columns">
         <section className="workbench-card workbench-config">
-          <h2 className="workbench-card-title">服务配置</h2>
-
-          <Field label="GPT-SoVITS 整合包目录" className="workbench-field-wide">
-            <div className="workbench-input-row">
-              <Input value={rootPath} readOnly placeholder="选择包含 api_v2.py 的整合包目录" />
-              <Button appearance="secondary" onClick={() => void pickRoot()} disabled={busy}>
-                选择…
-              </Button>
-              <Button
-                appearance="subtle"
-                title="在文件管理器中打开"
-                icon={<FolderOpenRegular />}
-                disabled={!rootPath}
-                onClick={() => void revealItemInDir(rootPath)}
-              />
+          <div className="workbench-card-head">
+            <h2 className="workbench-card-title">服务</h2>
+            <div className="workbench-tabs">
+              <button className={configPage === 'service' ? 'active' : ''} onClick={() => setConfigPage('service')}>
+                服务配置
+              </button>
+              <button className={configPage === 'defaults' ? 'active' : ''} onClick={() => setConfigPage('defaults')}>
+                默认设置
+              </button>
             </div>
-          </Field>
+          </div>
 
-          {launch && (
+          {configPage === 'service' ? (
             <>
-              <div className="workbench-grid">
-                <Field label="启动方式">
-                  <Select
-                    value={launch.mode.kind}
-                    title={modeLabel(launch)}
-                    options={[
-                      { value: 'embedded', label: '整合包内置运行时' },
-                      { value: 'python', label: '外部 Python' },
-                      { value: 'command', label: '自定义命令' },
-                    ]}
-                    onChange={(kind) =>
-                      patchLaunch({
-                        mode:
-                          kind === 'embedded'
-                            ? { kind: 'embedded', program: `${launch.root}\\runtime\\python.exe` }
-                            : kind === 'python'
-                              ? { kind: 'python', program: 'python' }
-                              : { kind: 'command', program: '', args: [] },
-                      })
-                    }
+              <Field label="GPT-SoVITS 整合包目录">
+                <div className="workbench-input-row">
+                  <Input value={rootPath} readOnly placeholder="选择包含 api_v2.py 的整合包目录" />
+                  <Button
+                    appearance="secondary"
+                    icon={<FolderRegular />}
+                    title={rootPath ? '在文件管理器中打开' : '选择整合包目录'}
+                    disabled={busy && !rootPath}
+                    onClick={onRootAction}
                   />
-                </Field>
+                </div>
+              </Field>
 
-                <Field label={launch.mode.kind === 'command' ? '命令' : 'Python 解释器'}>
-                  <Input
-                    value={launch.mode.program}
-                    onChange={(_, data) =>
-                      patchLaunch({ mode: { ...launch.mode, program: data.value } as LaunchConfig['mode'] })
-                    }
-                  />
-                </Field>
+              {launch && (
+                <>
+                  <div className="workbench-grid">
+                    <Field label="启动方式">
+                      <Select
+                        value={launch.mode.kind}
+                        title={modeLabel(launch)}
+                        options={[
+                          { value: 'embedded', label: '整合包内置运行时' },
+                          { value: 'python', label: '外部 Python' },
+                          { value: 'command', label: '自定义命令' },
+                        ]}
+                        onChange={(kind) =>
+                          patchLaunch({
+                            mode:
+                              kind === 'embedded'
+                                ? { kind: 'embedded', program: `${launch.root}\\runtime\\python.exe` }
+                                : kind === 'python'
+                                  ? { kind: 'python', program: 'python' }
+                                  : { kind: 'command', program: '', args: [] },
+                          })
+                        }
+                      />
+                    </Field>
 
-                <Field label="绑定地址">
-                  <Input value={launch.host} onChange={(_, data) => patchLaunch({ host: data.value })} />
-                </Field>
+                    <Field label={launch.mode.kind === 'command' ? '命令' : 'Python 解释器'}>
+                      <div className="workbench-input-row">
+                        <Input
+                          value={launch.mode.program}
+                          onChange={(_, data) =>
+                            patchLaunch({ mode: { ...launch.mode, program: data.value } as LaunchConfig['mode'] })
+                          }
+                        />
+                        <Button
+                          appearance="secondary"
+                          icon={<FolderRegular />}
+                          title={launch.mode.kind === 'command' ? '选择脚本或可执行文件' : '选择 Python 解释器'}
+                          onClick={() => void pickProgram()}
+                        />
+                      </div>
+                    </Field>
 
-                <Field label="端口">
-                  <Input
-                    value={String(launch.port)}
-                    onChange={(_, data) =>
-                      patchLaunch({ port: Number.parseInt(data.value.replace(/[^0-9]/g, ''), 10) || 9880 })
-                    }
-                  />
-                </Field>
+                    <Field label="控制脚本">
+                      <Input value={launch.script} onChange={(_, data) => patchLaunch({ script: data.value })} />
+                    </Field>
 
-                <Field label="控制脚本">
-                  <Input value={launch.script} onChange={(_, data) => patchLaunch({ script: data.value })} />
-                </Field>
+                    <Field label="推理配置">
+                      <Input
+                        value={launch.inferConfig}
+                        onChange={(_, data) => patchLaunch({ inferConfig: data.value })}
+                      />
+                    </Field>
+                  </div>
 
-                <Field label="推理配置">
-                  <Input value={launch.inferConfig} onChange={(_, data) => patchLaunch({ inferConfig: data.value })} />
-                </Field>
-              </div>
-
-              {launch.mode.kind === 'command' && (
-                <Field label="命令参数（每行一个）">
-                  <Textarea
-                    className="workbench-args"
-                    value={launch.mode.args.join('\n')}
-                    resize="vertical"
-                    onChange={(_, data) =>
-                      patchLaunch({
-                        mode: { ...launch.mode, args: data.value.split('\n').filter(Boolean) } as LaunchConfig['mode'],
-                      })
-                    }
-                  />
-                </Field>
+                  {launch.mode.kind === 'command' && (
+                    <Field label="命令参数（每行一个）">
+                      <Textarea
+                        className="workbench-args"
+                        value={launch.mode.args.join('\n')}
+                        resize="vertical"
+                        onChange={(_, data) =>
+                          patchLaunch({
+                            mode: {
+                              ...launch.mode,
+                              args: data.value.split('\n').filter(Boolean),
+                            } as LaunchConfig['mode'],
+                          })
+                        }
+                      />
+                    </Field>
+                  )}
+                </>
               )}
             </>
+          ) : (
+            <div className="workbench-grid">
+              <Field label="默认语言">
+                <Select
+                  value={defaults.language}
+                  title="新对话默认使用的语言"
+                  options={toOptions(LANGUAGE_LABELS)}
+                  onChange={(language) => voiceController.updateSettings({ defaults: { ...defaults, language } })}
+                />
+              </Field>
+            </div>
           )}
-
-          <h2 className="workbench-card-title">默认推理设置</h2>
-          <div className="workbench-grid">
-            <Field label="默认语言">
-              <Select
-                value={defaults.language}
-                title="新对话默认使用的语言"
-                options={toOptions(LANGUAGE_LABELS)}
-                onChange={(language) => voiceController.updateSettings({ defaults: { ...defaults, language } })}
-              />
-            </Field>
-          </div>
 
           {error && (
             <p className="voice-error">
@@ -260,10 +307,10 @@ export function VoiceWorkbench() {
           <div className="workbench-card-head">
             <h2 className="workbench-card-title">任务队列</h2>
             <div className="workbench-tabs">
-              <button className={tab === 'queue' ? 'active' : ''} onClick={() => setTab('queue')}>
+              <button className={queuePage === 'queue' ? 'active' : ''} onClick={() => setQueuePage('queue')}>
                 队列
               </button>
-              <button className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>
+              <button className={queuePage === 'log' ? 'active' : ''} onClick={() => setQueuePage('log')}>
                 日志
               </button>
             </div>
@@ -282,7 +329,7 @@ export function VoiceWorkbench() {
               icon={<DismissRegular />}
               onClick={() => {
                 voiceController.clearFinishedTasks();
-                setTab('queue');
+                setQueuePage('queue');
               }}
             />
           </div>
@@ -293,7 +340,7 @@ export function VoiceWorkbench() {
             {summary.pending + summary.running > 0 && ` · 预计 ${formatEta(summary.etaMillis)}`}
           </p>
 
-          {tab === 'queue' ? (
+          {queuePage === 'queue' ? (
             <div className="workbench-scroll">
               {voiceController.allTasks().length === 0 && (
                 <p className="voice-dialog-empty">队列为空。在场景卡的配音模式中点击「测试」或「生成」。</p>

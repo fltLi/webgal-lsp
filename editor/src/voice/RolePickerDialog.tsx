@@ -2,29 +2,21 @@
 
 // 角色选择对话框: 勾选启用、星标靠前、导出、删除、导入, 并进入参考音频管理。
 
-import {
-  Button,
-  Checkbox,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-  Input,
-} from '@fluentui/react-components';
+import { Button, Checkbox, Input } from '@fluentui/react-components';
 import {
   ArrowDownloadRegular,
   ArrowUploadRegular,
   DeleteRegular,
+  FolderOpenRegular,
   StarFilled,
   StarRegular,
 } from '@fluentui/react-icons';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
+import { AppDialog } from '../components/AppDialog';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
@@ -39,9 +31,14 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
   const characters = useAppStore((state) => state.voiceCharacters);
   const [query, setQuery] = useState('');
   const [referenceTarget, setReferenceTarget] = useState<Character | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) setQuery('');
+    if (open) {
+      setQuery('');
+      setMessage(null);
+    }
   }, [open]);
 
   const visible = useMemo(() => {
@@ -57,11 +54,13 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
 
   if (!open) return null;
 
+  const report = (caught: unknown) => onError(caught instanceof Error ? caught.message : String(caught));
+
   const toggleEnabled = async (character: Character, enabled: boolean) => {
     try {
       await voiceController.persistCharacter({ ...character, enabled });
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
+      report(caught);
     }
   };
 
@@ -69,7 +68,7 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     try {
       await voiceController.persistCharacter({ ...character, starred });
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
+      report(caught);
     }
   };
 
@@ -77,7 +76,7 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     try {
       await voiceController.deleteCharacter(character.id);
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
+      report(caught);
     }
   };
 
@@ -90,83 +89,133 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     await voiceExportCharacter(character.id, destination);
   };
 
+  /** 导入一份角色 zip */
+  const importCharacter = async () => {
+    setMessage(null);
+    try {
+      await voiceController.importCharacter();
+    } catch (caught) {
+      report(caught);
+    }
+  };
+
+  /**
+   * 从训练切分产物批量导入角色。
+   *
+   * 依次选择**文本清单所在目录**与**音频目录**: GPT-SoVITS 的切分流程常把清单与音频
+   * 放在不同位置, 由用户明确指定比自动猜测可靠。
+   */
+  const importFromList = async () => {
+    setMessage(null);
+    const listDir = await openDialog({ directory: true, multiple: false, title: '选择文本清单目录（含 .list 文件）' });
+    if (typeof listDir !== 'string') return;
+    const audioDir = await openDialog({ directory: true, multiple: false, title: '选择音频目录' });
+    if (typeof audioDir !== 'string') return;
+
+    setBusy(true);
+    try {
+      const result = await voiceController.importFromList(listDir, audioDir);
+      setMessage(
+        `已导入 ${result.imported} 条参考音频，涉及 ${result.characters.length} 个角色` +
+          (result.skipped > 0 ? `，跳过 ${result.skipped} 条` : '')
+      );
+    } catch (caught) {
+      report(caught);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
-      <Dialog open onOpenChange={(_, data) => (!data.open ? onClose() : undefined)}>
-        <DialogSurface className="voice-dialog character-picker">
-          <DialogTitle>选择角色</DialogTitle>
-          <DialogBody>
-            <div className="voice-dialog-toolbar">
-              <Input placeholder="搜索…" value={query} onChange={(_, data) => setQuery(data.value)} />
-              <Button
-                appearance="secondary"
-                icon={<ArrowUploadRegular />}
-                onClick={() => {
-                  void voiceController
-                    .importCharacter()
-                    .catch((caught: unknown) => onError(caught instanceof Error ? caught.message : String(caught)));
-                }}
+      <AppDialog
+        title="选择角色"
+        description="勾选参与配音的角色。点击角色名可管理它的参考音频。"
+        size="large"
+        height={600}
+        compact
+        onClose={onClose}
+        footer={
+          <Button appearance="secondary" onClick={onClose}>
+            关闭
+          </Button>
+        }
+      >
+        {/* 工具栏: 搜索占满剩余宽度, 两个导入按钮固定宽度, 因此不会换行 */}
+        <div className="dialog-toolbar">
+          <Input
+            className="dialog-toolbar-grow"
+            placeholder="搜索角色名或别名…"
+            value={query}
+            onChange={(_, data) => setQuery(data.value)}
+          />
+          <Button
+            appearance="secondary"
+            icon={<ArrowUploadRegular />}
+            disabled={busy}
+            onClick={() => void importCharacter()}
+          >
+            导入角色
+          </Button>
+          <Button
+            appearance="secondary"
+            icon={<FolderOpenRegular />}
+            disabled={busy}
+            title="从训练切分产物的文本清单与音频批量导入角色"
+            onClick={() => void importFromList()}
+          >
+            从清单导入
+          </Button>
+        </div>
+
+        {message && <p className="dialog-message">{message}</p>}
+
+        <div className="character-grid dialog-scroll">
+          {visible.length === 0 && <p className="voice-dialog-empty">没有匹配的角色。</p>}
+          {visible.map((character) => (
+            <div key={character.id} className={`character-block${character.enabled ? '' : ' disabled'}`}>
+              <Checkbox
+                checked={character.enabled}
+                onChange={(_, data) => void toggleEnabled(character, Boolean(data.checked))}
+                title="是否参与配音"
+              />
+              <button
+                type="button"
+                className="character-block-main"
+                onClick={() => setReferenceTarget(character)}
+                title="管理参考音频"
               >
-                导入角色
-              </Button>
+                <span className="character-block-name">{character.name}</span>
+                <span className="character-block-meta">
+                  {character.id} · 参考音频 {character.references.length}
+                  {!character.enabled && ' · 未启用'}
+                </span>
+              </button>
+              <Button
+                size="small"
+                appearance="subtle"
+                title={character.starred ? '取消星标' : '星标靠前'}
+                icon={character.starred ? <StarFilled /> : <StarRegular />}
+                onClick={() => void toggleStarred(character, !character.starred)}
+              />
+              <Button
+                size="small"
+                appearance="subtle"
+                title="导出角色"
+                icon={<ArrowDownloadRegular />}
+                onClick={() => void exportCharacter(character)}
+              />
+              <Button
+                size="small"
+                appearance="subtle"
+                title="删除角色"
+                icon={<DeleteRegular />}
+                onClick={() => void remove(character)}
+              />
             </div>
-
-            <DialogContent className="voice-dialog-scroll">
-              {visible.length === 0 && <p className="voice-dialog-empty">没有匹配的角色。</p>}
-              <div className="character-grid">
-                {visible.map((character) => (
-                  <div key={character.id} className={`character-block${character.enabled ? '' : ' disabled'}`}>
-                    <Checkbox
-                      checked={character.enabled}
-                      onChange={(_, data) => void toggleEnabled(character, Boolean(data.checked))}
-                      title="是否参与配音"
-                    />
-                    <button
-                      type="button"
-                      className="character-block-main"
-                      onClick={() => setReferenceTarget(character)}
-                      title="管理参考音频"
-                    >
-                      <span className="character-block-name">{character.name}</span>
-                      <span className="character-block-meta">
-                        {character.id} · 参考音频 {character.references.length}
-                        {!character.enabled && ' · 未启用'}
-                      </span>
-                    </button>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      title={character.starred ? '取消星标' : '星标靠前'}
-                      icon={character.starred ? <StarFilled /> : <StarRegular />}
-                      onClick={() => void toggleStarred(character, !character.starred)}
-                    />
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      title="导出角色"
-                      icon={<ArrowDownloadRegular />}
-                      onClick={() => void exportCharacter(character)}
-                    />
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      title="删除角色"
-                      icon={<DeleteRegular />}
-                      onClick={() => void remove(character)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </DialogContent>
-
-            <DialogActions>
-              <Button appearance="secondary" onClick={onClose}>
-                关闭
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+          ))}
+        </div>
+      </AppDialog>
 
       <VoiceReferenceDialog
         open={referenceTarget !== null}

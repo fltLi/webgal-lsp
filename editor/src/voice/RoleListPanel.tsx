@@ -3,18 +3,12 @@
 // 角色列表: 管理 GSOV 模型 + 参考音频组合。
 //
 // 顶部为搜索 / 选择 / 新建; 列表按响应式网格排布 (窗口足够宽时两列)。
-// 参考音频的增删改在「选择角色」对话框内完成, 列表本身只展示与编辑角色元信息。
+// 参考音频的增删改在「选择角色」对话框内完成, 列表本身只展示与编辑角色元信息;
+// 导入 (zip 与训练切分清单) 也统一放在那个对话框里, 这里只留日常操作。
 
 import { Button, Field, Input, Textarea } from '@fluentui/react-components';
-import {
-  AddRegular,
-  ArrowDownloadRegular,
-  ArrowImportRegular,
-  DeleteRegular,
-  StarFilled,
-  StarRegular,
-} from '@fluentui/react-icons';
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, ModelCandidate } from '../commands/voice';
@@ -34,8 +28,6 @@ export function RoleListPanel() {
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelCandidate[]>([]);
   const [switching, setSwitching] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     voiceController.primeReferencePaths().catch(() => {});
@@ -74,31 +66,10 @@ export function RoleListPanel() {
   };
 
   /**
-   * 从 GPT-SoVITS 切片产物导入: 分别选择配置目录 (.list) 与音频目录。
-   *
-   * 两个目录分开选是刻意的: 切片流程通常把文本清单与音频放在不同位置,
-   * 由用户明确指定比自动猜测更可靠。
+   * 导入 (zip 与训练切分清单) 已统一移入「选择角色」对话框 ——
+   * 它是"创建角色"这一类低频操作, 与列表里的日常操作混在同一行既分不清主次,
+   * 也会把工具栏挤到换行。
    */
-  const importFromList = async () => {
-    setError(null);
-    const listDir = await openDialog({ directory: true, multiple: false, title: '选择配置目录（含 .list）' });
-    if (typeof listDir !== 'string') return;
-    const audioDir = await openDialog({ directory: true, multiple: false, title: '选择音频目录' });
-    if (typeof audioDir !== 'string') return;
-
-    setBusy(true);
-    try {
-      const report = await voiceController.importFromList(listDir, audioDir);
-      setMessage(
-        `已导入 ${report.imported} 条参考音频，涉及 ${report.characters.length} 个角色` +
-          (report.skipped > 0 ? `，跳过 ${report.skipped} 条` : '')
-      );
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="character-panel">
@@ -115,18 +86,9 @@ export function RoleListPanel() {
         <Button appearance="primary" icon={<AddRegular />} onClick={() => void create()}>
           新建角色
         </Button>
-        <Button
-          appearance="secondary"
-          icon={<ArrowImportRegular />}
-          disabled={busy}
-          onClick={() => void importFromList()}
-        >
-          从切片导入
-        </Button>
       </div>
 
       {error && <p className="voice-error">{error}</p>}
-      {message && <p className="character-message">{message}</p>}
 
       <div className="character-list">
         {characters.length === 0 && (

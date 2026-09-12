@@ -7,6 +7,7 @@ import { Button } from '@fluentui/react-components';
 import * as monaco from 'monaco-editor';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
+import { AppDialog } from '../components/AppDialog';
 import { LANGUAGE_ID as WEBGAL_LANGUAGE_ID } from '../lsp/monaco';
 import { useAppStore } from '../state/store';
 import { NOVEL_LANGUAGE_ID, createEditorHost, createNovelModel } from './monaco';
@@ -267,19 +268,24 @@ function UnresolvedDialog({
 }) {
   if (!open) return null;
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">存在未分配的对话</h2>
-        <p>还有 {unresolvedCount} 段对话未设置说话者，是否将其作为旁白处理？</p>
-        <div className="modal-actions">
+    <AppDialog
+      title="存在未分配的对话"
+      size="small"
+      height={220}
+      closeOnBackdrop
+      onClose={onCancel}
+      footer={
+        <>
           <Button appearance="secondary" onClick={onCancel}>
             返回继续
           </Button>
           <Button appearance="primary" onClick={onConfirm}>
             作为旁白
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p>还有 {unresolvedCount} 段对话未设置说话者，是否将其作为旁白处理？</p>
+    </AppDialog>
   );
 }

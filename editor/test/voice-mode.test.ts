@@ -129,4 +129,20 @@ describe('配音编辑模式的可见性', () => {
     useAppStore.getState().activateTab(tabA!.id);
     expect(useAppStore.getState().voiceModePaths).toEqual([]);
   });
+
+  /*
+   * 选项卡最左侧的麦克风开关**只出现在当前场景卡上**。
+   * 判定用 store 状态表达: 只有当前场景会被自动置入配音编辑模式, 其它场景卡
+   * 既不在配音编辑模式, 也不该显示一个禁用态麦克风让人以为它们都被关掉了。
+   */
+  it('打开多个场景再开工作台: 只有当前场景进入配音编辑模式', () => {
+    useAppStore.getState().openTab(makeSceneTab(sceneA, 'a.txt'));
+    useAppStore.getState().openTab(makeSceneTab(sceneB, 'b.txt'));
+    toggleVoiceWorkbench();
+
+    // 当前场景 (B) 就位, 另一个场景不受影响
+    expect(isSceneInVoiceMode(sceneB)).toBe(true);
+    expect(isSceneInVoiceMode(sceneA)).toBe(false);
+    expect(useAppStore.getState().voiceModePaths).toEqual([sceneB]);
+  });
 });

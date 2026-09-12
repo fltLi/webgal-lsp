@@ -6,21 +6,12 @@
 // 因此这里是**唯一**会删除音频的地方, 并且先扫描项目中真实的 `-vocal=` 引用,
 // 把"未被任何场景引用"的文件列给用户确认后再删。
 
-import {
-  Button,
-  Checkbox,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-  Spinner,
-} from '@fluentui/react-components';
+import { Button, Checkbox, Spinner } from '@fluentui/react-components';
 import { ArrowSyncRegular, DeleteRegular } from '@fluentui/react-icons';
 import { useEffect, useMemo, useState } from 'react';
 
 import { voiceScanReferences, type CacheEntry, type VocalReference } from '../commands/voice';
+import { AppDialog } from '../components/AppDialog';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 
@@ -104,78 +95,78 @@ export function VoiceCacheDialog({ open, onClose }: Props) {
   const orphanSize = orphans.reduce((sum, entry) => sum + entry.size, 0);
 
   return (
-    <Dialog open onOpenChange={(_, data) => (!data.open ? onClose() : undefined)}>
-      <DialogSurface className="voice-dialog">
-        <DialogTitle>配音缓存与引用</DialogTitle>
-        <DialogBody>
-          <DialogContent className="voice-dialog-scroll">
-            <p className="voice-dialog-hint">
-              缓存共 {cache.length} 个文件（{formatSize(totalSize)}），其中未被任何场景引用 {orphans.length} 个（
-              {formatSize(orphanSize)}）。删除缓存只影响历史记录的试听，已应用的音频位于项目内，不受影响。
-            </p>
+    <AppDialog
+      title="配音缓存与引用"
+      description="缓存音频只由内容哈希寻址；删除缓存只影响历史记录的试听，已应用的音频位于项目内，不受影响。"
+      size="large"
+      height={600}
+      compact
+      onClose={onClose}
+      footer={
+        <Button appearance="secondary" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      <div className="dialog-toolbar">
+        <Button size="small" appearance="subtle" icon={<ArrowSyncRegular />} onClick={() => void rescan()}>
+          重新扫描项目引用
+        </Button>
+        {busy && <Spinner size="extra-tiny" />}
+        <span className="dialog-toolbar-grow" />
+        <Button
+          size="small"
+          appearance="secondary"
+          disabled={orphans.length === 0}
+          onClick={() => setSelected(new Set(orphans.map((entry) => entry.hash)))}
+        >
+          全选未引用
+        </Button>
+        <Button
+          size="small"
+          appearance="primary"
+          icon={<DeleteRegular />}
+          disabled={selected.size === 0}
+          onClick={() => void purge()}
+        >
+          删除选中（{selected.size}）
+        </Button>
+      </div>
 
-            <div className="voice-dialog-toolbar">
-              <Button size="small" appearance="subtle" icon={<ArrowSyncRegular />} onClick={() => void rescan()}>
-                重新扫描项目引用
-              </Button>
-              {busy && <Spinner size="extra-tiny" />}
-              <span className="voice-actions-spacer" />
-              <Button
-                size="small"
-                appearance="secondary"
-                disabled={orphans.length === 0}
-                onClick={() => setSelected(new Set(orphans.map((entry) => entry.hash)))}
-              >
-                全选未引用
-              </Button>
-              <Button
-                size="small"
-                appearance="primary"
-                icon={<DeleteRegular />}
-                disabled={selected.size === 0}
-                onClick={() => void purge()}
-              >
-                删除选中（{selected.size}）
-              </Button>
+      <p className="voice-dialog-hint">
+        缓存共 {cache.length} 个文件（{formatSize(totalSize)}），其中未被任何场景引用 {orphans.length} 个（
+        {formatSize(orphanSize)}）。
+      </p>
+
+      {error && <p className="voice-error">{error}</p>}
+      {message && <p className="voice-dialog-hint">{message}</p>}
+
+      {missing.length > 0 && (
+        <div className="voice-warn-block">
+          <strong>脚本引用了 {missing.length} 个不存在的音频文件：</strong>
+          {missing.slice(0, 20).map((reference) => (
+            <div key={`${reference.scene}:${reference.line}`} className="voice-warn-line">
+              {reference.scene}:{reference.line + 1} → {reference.vocal}
             </div>
+          ))}
+        </div>
+      )}
 
-            {error && <p className="voice-error">{error}</p>}
-            {message && <p className="voice-dialog-hint">{message}</p>}
-
-            {missing.length > 0 && (
-              <div className="voice-warn-block">
-                <strong>脚本引用了 {missing.length} 个不存在的音频文件：</strong>
-                {missing.slice(0, 20).map((reference) => (
-                  <div key={`${reference.scene}:${reference.line}`} className="voice-warn-line">
-                    {reference.scene}:{reference.line + 1} → {reference.vocal}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="cache-list">
-              {cache.length === 0 && <p className="voice-dialog-empty">缓存为空。</p>}
-              {cache.map((entry) => {
-                const orphan = !referencedPaths.has(normalize(entry.path));
-                return (
-                  <div key={entry.hash} className={`cache-item${orphan ? ' orphan' : ''}`}>
-                    <Checkbox checked={selected.has(entry.hash)} onChange={() => toggle(entry.hash)} />
-                    <span className="cache-hash">{entry.hash}</span>
-                    <span className="cache-size">{formatSize(entry.size)}</span>
-                    <span className="cache-flag">{orphan ? '未被引用' : '已引用'}</span>
-                  </div>
-                );
-              })}
+      <div className="cache-list dialog-scroll">
+        {cache.length === 0 && <p className="voice-dialog-empty">缓存为空。</p>}
+        {cache.map((entry) => {
+          const orphan = !referencedPaths.has(normalize(entry.path));
+          return (
+            <div key={entry.hash} className={`cache-item${orphan ? ' orphan' : ''}`}>
+              <Checkbox checked={selected.has(entry.hash)} onChange={() => toggle(entry.hash)} />
+              <span className="cache-hash">{entry.hash}</span>
+              <span className="cache-size">{formatSize(entry.size)}</span>
+              <span className="cache-flag">{orphan ? '未被引用' : '已引用'}</span>
             </div>
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="secondary" onClick={onClose}>
-              关闭
-            </Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
+          );
+        })}
+      </div>
+    </AppDialog>
   );
 }
 

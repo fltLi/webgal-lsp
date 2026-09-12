@@ -6,17 +6,10 @@
 // 检测到变更后必须先由用户裁决, **再**执行历史重新对齐 —— 顺序不能颠倒:
 // 用户在 git 合并页里改完内容会再次改变行号, 先对齐会让对齐结果失效。
 
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-} from '@fluentui/react-components';
+import { Button } from '@fluentui/react-components';
 import { useEffect, useState } from 'react';
 
+import { AppDialog } from '../components/AppDialog';
 import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
@@ -101,42 +94,40 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
   };
 
   return (
-    <Dialog open onOpenChange={(_, data) => (!data.open ? onResolved('keep-editor') : undefined)}>
-      <DialogSurface className="voice-dialog">
-        <DialogTitle>场景文件已被外部修改</DialogTitle>
-        <DialogBody>
-          <DialogContent>
-            <p className="voice-dialog-hint">
-              <code>{scenePath}</code> 在磁盘上发生了变化（例如 git 切换分支或另一处编辑）。
-              请先决定保留哪一份内容，之后 Ink 会把配音历史重新对齐到最终的对话列表。
-            </p>
-            {error && <p className="voice-error">{error}</p>}
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="secondary" disabled={busy} onClick={() => void keepEditor()}>
-              保留编辑器内容
-            </Button>
-            <Button
-              appearance="secondary"
-              disabled={busy || diskPreview === null}
-              onClick={() => void backupAndTakeDisk()}
-            >
-              备份后加载磁盘
-            </Button>
-            <Button
-              appearance="secondary"
-              disabled={busy || !inRepository}
-              title={inRepository ? '打开独立的 git 合并页面' : '当前项目不在 git 仓库中'}
-              onClick={onOpenGitMerge}
-            >
-              用 git 合并
-            </Button>
-            <Button appearance="primary" disabled={busy || diskPreview === null} onClick={() => void takeDisk()}>
-              加载磁盘内容
-            </Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
+    <AppDialog
+      title="场景文件已被外部修改"
+      size="medium"
+      height={320}
+      onClose={() => onResolved('keep-editor')}
+      footerLeading={
+        <Button
+          appearance="secondary"
+          disabled={busy || !inRepository}
+          title={inRepository ? '打开独立的 git 合并页面' : '当前项目不在 git 仓库中'}
+          onClick={onOpenGitMerge}
+        >
+          用 git 合并
+        </Button>
+      }
+      footer={
+        <>
+          <Button appearance="secondary" disabled={busy} onClick={() => void backupAndTakeDisk()}>
+            备份后加载磁盘
+          </Button>
+          <Button appearance="primary" disabled={busy || diskPreview === null} onClick={() => void takeDisk()}>
+            加载磁盘内容
+          </Button>
+        </>
+      }
+    >
+      <p className="voice-dialog-hint">
+        <code>{scenePath}</code> 在磁盘上发生了变化（例如 git 切换分支或另一处编辑）。 请先决定保留哪一份内容，之后 Ink
+        会把配音历史重新对齐到最终的对话列表。
+      </p>
+      <Button appearance="secondary" disabled={busy} onClick={() => void keepEditor()}>
+        保留编辑器内容并继续
+      </Button>
+      {error && <p className="voice-error">{error}</p>}
+    </AppDialog>
   );
 }

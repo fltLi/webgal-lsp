@@ -356,8 +356,8 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 所有选项卡左右内边距一致, 标题起始位置由固定的前导槽决定 (见下) */
-  padding: 7px 12px;
+  /* 左右内边距固定, 因此有没有图标都不会让标题贴边 */
+  padding: 8px 14px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -369,19 +369,6 @@ body.resizing {
   transition: background-color 0.12s ease;
 }
 
-/*
- * 前导槽: 场景选项卡最左侧可能有配音模式开关, 其它种类的选项卡没有。
- * 用固定宽度占位保证"有没有开关"都不影响标题起点 (也不再区分种类调整左内边距)。
- */
-.tab-strip-lead {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  flex: none;
-}
-
 .tab-strip-item:hover {
   background: var(--app-hover);
 }
@@ -389,6 +376,12 @@ body.resizing {
 .tab-strip-item.active {
   background: var(--app-panel);
   border-top: 2px solid var(--app-accent);
+}
+
+/* 场景选项卡最左侧有一个固定占位的配音开关, 因此左侧留出它的宽度 */
+.tab-strip-item[data-kind='scene'] {
+  padding-left: 10px;
+  gap: 4px;
 }
 
 .tab-strip-title {
@@ -399,16 +392,6 @@ body.resizing {
   min-width: 0;
 }
 
-/* 未保存标记 (宽度小于 6px 时会被 flex 间隙吃掉, 因此需要固定占位) */
-.tab-strip-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 7px;
-  height: 14px;
-  flex: none;
-}
-
 .tab-strip-icon {
   display: inline-flex;
   align-items: center;
@@ -417,14 +400,6 @@ body.resizing {
   height: 14px;
   flex: none;
   color: var(--app-muted);
-}
-
-/* 没有图标的选项卡也占一槽, 使所有标题的起始位置一致 */
-.tab-strip-slot {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  flex: none;
 }
 
 /* 拖拽排序反馈: 竖线画在真实的插入缝隙那一侧 */
@@ -473,6 +448,15 @@ body.resizing {
   color: var(--app-muted);
   font-size: 14px;
   flex: none;
+}
+
+/*
+ * 不可用时只隐藏、不塌陷: 槽位始终占位, 因此开关的有无不会让标题左右跳动。
+ * `visibility: hidden` 同时保证它不可点击 (用 opacity: 0 会留下透明的点击区)。
+ */
+.tab-strip-action.hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .tab-strip-action:hover {
@@ -1245,6 +1229,148 @@ body.resizing {
   font-weight: 600;
 }
 
+/* ==================== 统一模态框外壳 (AppDialog) ==================== */
+/*
+  尺寸固定是刻意的: 面板不随内容自动缩放, 内容超出由 .dialog-body 内部滚动。
+  因此同一类对话框在任何数据量下都长一个样, 按钮永远在同一个位置。
+*/
+.dialog-surface {
+  display: flex;
+  flex-direction: column;
+  /* 固定尺寸: 宽度由尺寸档决定, 高度由行内样式决定 (见 AppDialog 的 height) */
+  min-width: 0;
+  max-width: 92vw;
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dialog-small {
+  width: 440px;
+}
+
+.dialog-medium {
+  width: 720px;
+}
+
+.dialog-large {
+  width: 880px;
+}
+
+.dialog-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 16px 20px 10px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.dialog-title-extra {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-description {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.dialog-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+  overflow: auto;
+}
+
+/*
+ * 紧凑模式: 主体本身不滚动, 让内部的滚动列表 (.dialog-scroll) 自行填满空间
+ * (`overflow: auto` 与 `flex: 1` 同时生效时, 子项的滚动容器才有确定高度)。
+ */
+.dialog-compact .dialog-body {
+  overflow: hidden;
+}
+
+.dialog-compact .dialog-body > * {
+  flex: none;
+}
+
+/* 无内边距模式: 主体不加内边距与间距, 由内容自己排布 (左右分栏等自定义布局) */
+.dialog-flush .dialog-body {
+  padding: 0;
+  gap: 0;
+}
+
+/* 内部已有滚动列表时, 让它占满剩余高度 (配合 compact 模式使用) */
+.dialog-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dialog-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--app-border);
+}
+
+.dialog-foot-leading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 操作按钮一律右对齐, 与标题栏的左右内边距对齐 */
+.dialog-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 对话框内的工具栏: 需要撑开的元素用 .dialog-toolbar-grow, 其余按钮不换行 */
+.dialog-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-toolbar-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog-toolbar > .fui-Button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.dialog-message {
+  flex: none;
+  margin: 0;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
 .settings-surface {
   width: 720px;
   height: 560px;
@@ -1260,6 +1386,8 @@ body.resizing {
   gap: 16px;
   flex: 1;
   min-height: 0;
+  width: 100%;
+  padding: 4px 20px 16px;
 }
 
 .settings-nav {
@@ -1269,6 +1397,7 @@ body.resizing {
   flex: 0 0 110px;
   border-right: 1px solid var(--app-border);
   padding-right: 12px;
+  overflow-y: auto;
 }
 
 .settings-nav-item {
@@ -3202,13 +3331,13 @@ body.resizing {
   flex: none;
 }
 
-/* 两栏: 左配置 (可滚动) / 右队列 (独立滚动) */
+/* 两栏: 左配置 (分页) / 右队列 (独立滚动)。高度受限, 剩余空间全部留给角色库 */
 .voice-workbench-columns {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(320px, 1fr);
   gap: 10px;
   flex: 0 0 auto;
-  max-height: 46%;
+  max-height: 38%;
   min-height: 0;
 }
 
@@ -3269,6 +3398,11 @@ body.resizing {
 .workbench-input-row > :first-child {
   flex: 1;
   min-width: 0;
+}
+
+/* 行内按钮是图标按钮, 固定宽度, 不随内容缩放 */
+.workbench-input-row > .fui-Button {
+  flex: none;
 }
 
 .workbench-args {

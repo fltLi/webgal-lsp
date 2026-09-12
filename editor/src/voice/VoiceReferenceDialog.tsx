@@ -4,22 +4,14 @@
 //
 // 添加流程: 选择文件 -> 探测属性 -> 过短静默补尾 / 过长弹出裁剪对话框 -> 填写参考文本 -> 入库。
 
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
-  Input,
-} from '@fluentui/react-components';
+import { Button, Input } from '@fluentui/react-components';
 import { AddRegular, ArrowDownloadRegular, DeleteRegular, PlayRegular, StopRegular } from '@fluentui/react-icons';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { voiceAddReference, voiceExportCharacter, voiceRemoveReference, voiceReadAudio } from '../commands/voice';
 import type { Character, ReferenceAudio } from '../commands/voice';
+import { AppDialog } from '../components/AppDialog';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { ReferenceTrimDialog } from './ReferenceTrimDialog';
@@ -138,76 +130,78 @@ export function VoiceReferenceDialog({ open, character, selectedHash, onPick, on
 
   return (
     <>
-      <Dialog open onOpenChange={(_, data) => (!data.open ? onClose() : undefined)}>
-        <DialogSurface className="voice-dialog">
-          <DialogTitle>选择参考音频</DialogTitle>
-          <DialogBody>
-            <div className="voice-dialog-toolbar">
-              <Input placeholder="搜索参考文本或标签…" value={query} onChange={(_, data) => setQuery(data.value)} />
-              <Button appearance="primary" icon={<AddRegular />} disabled={busy} onClick={() => void pickFile()}>
-                添加参考音频
-              </Button>
-            </div>
+      <AppDialog
+        title={`参考音频 · ${character.name}`}
+        description="参考文本必须与音频逐字一致；时长须在 3~10 秒之间。"
+        size="large"
+        height={600}
+        compact
+        onClose={onClose}
+        footerLeading={
+          <Button
+            appearance="secondary"
+            icon={<ArrowDownloadRegular />}
+            onClick={() => void exportCharacter(character)}
+          >
+            导出角色
+          </Button>
+        }
+        footer={
+          <Button appearance="secondary" onClick={onClose}>
+            关闭
+          </Button>
+        }
+      >
+        <div className="dialog-toolbar">
+          <Input
+            className="dialog-toolbar-grow"
+            placeholder="搜索参考文本或标签…"
+            value={query}
+            onChange={(_, data) => setQuery(data.value)}
+          />
+          <Button appearance="primary" icon={<AddRegular />} disabled={busy} onClick={() => void pickFile()}>
+            添加参考音频
+          </Button>
+        </div>
 
-            <DialogContent className="voice-dialog-scroll">
-              {references.length === 0 && <p className="voice-dialog-empty">该角色还没有参考音频。</p>}
-              <div className="reference-list">
-                {references.map((reference) => (
-                  <div
-                    key={reference.hash}
-                    className={`reference-item${reference.hash === selectedHash ? ' selected' : ''}`}
-                  >
-                    <div className="reference-main" onClick={() => onPick(reference.hash)}>
-                      <div className="reference-text">{reference.text || '（未填写参考文本）'}</div>
-                      <div className="reference-meta">
-                        {LANGUAGE_LABELS[reference.language] ?? reference.language} · {reference.duration.toFixed(2)}s ·{' '}
-                        {Math.round(reference.sampleRate / 1000)}kHz
-                        {reference.tags.length > 0 && ` · ${reference.tags.join(' / ')}`}
-                      </div>
-                    </div>
-                    <AudioButton path={voiceController.referencePathFor(character.id, reference.file)} />
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<DeleteRegular />}
-                      title="删除该参考音频"
-                      onClick={() => void removeReference(reference)}
-                    />
-                  </div>
-                ))}
+        <div className="reference-list dialog-scroll">
+          {references.length === 0 && <p className="voice-dialog-empty">该角色还没有参考音频。</p>}
+          {references.map((reference) => (
+            <div key={reference.hash} className={`reference-item${reference.hash === selectedHash ? ' selected' : ''}`}>
+              <div className="reference-main" onClick={() => onPick(reference.hash)}>
+                <div className="reference-text">{reference.text || '（未填写参考文本）'}</div>
+                <div className="reference-meta">
+                  {LANGUAGE_LABELS[reference.language] ?? reference.language} · {reference.duration.toFixed(2)}s ·{' '}
+                  {Math.round(reference.sampleRate / 1000)}kHz
+                  {reference.tags.length > 0 && ` · ${reference.tags.join(' / ')}`}
+                </div>
               </div>
-            </DialogContent>
-
-            <div className="voice-dialog-section">
-              <span className="voice-label">
-                参考文本（必填，须与音频逐字一致）
-                <span className="voice-required">*</span>
-              </span>
-              <Input
-                value={pendingText}
-                placeholder="添加音频时填写的参考文本"
-                onChange={(_, data) => setPendingText(data.value)}
+              <AudioButton path={voiceController.referencePathFor(character.id, reference.file)} />
+              <Button
+                size="small"
+                appearance="subtle"
+                icon={<DeleteRegular />}
+                title="删除该参考音频"
+                onClick={() => void removeReference(reference)}
               />
             </div>
+          ))}
+        </div>
 
-            {error && <p className="voice-error">{error}</p>}
+        <div className="voice-dialog-section">
+          <span className="voice-label">
+            参考文本（必填，须与音频逐字一致）
+            <span className="voice-required">*</span>
+          </span>
+          <Input
+            value={pendingText}
+            placeholder="添加音频时填写的参考文本"
+            onChange={(_, data) => setPendingText(data.value)}
+          />
+        </div>
 
-            <DialogActions>
-              <Button
-                appearance="secondary"
-                icon={<ArrowDownloadRegular />}
-                onClick={() => void exportCharacter(character)}
-              >
-                导出角色
-              </Button>
-              <span className="voice-actions-spacer" />
-              <Button appearance="secondary" onClick={onClose}>
-                关闭
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+        {error && <p className="voice-error">{error}</p>}
+      </AppDialog>
 
       {trimSource && (
         <ReferenceTrimDialog

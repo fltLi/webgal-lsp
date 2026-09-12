@@ -29,6 +29,7 @@ import { openGitDiff } from '../git/diff';
 import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
 import { useAppStore } from '../state/store';
+import { AppDialog } from './AppDialog';
 import { middleEllipsis } from './FileTree';
 import { GitHistoryDialog } from './GitHistoryDialog';
 
@@ -253,22 +254,16 @@ export function RepositoryTab() {
         </div>
 
         {initOpen ? (
-          <div className="modal-backdrop" onClick={() => setInitOpen(false)}>
-            <div className="modal-surface" onClick={(e) => e.stopPropagation()}>
-              <h2 className="modal-title">初始化仓库</h2>
-              <p className="confirm-message">
-                初始化将在项目目录创建 git 仓库。默认只跟踪场景文本文件，其余资源 (图片/音频等) 会被忽略。
-                如需调整可编辑下方 .gitignore 内容：
-              </p>
-              <Textarea
-                className="gitignore-editor"
-                value={gitignore}
-                onChange={(_, data) => setGitignore(data.value)}
-                rows={7}
-                disabled={busy}
-              />
-              {error ? <p className="prompt-error">{error}</p> : null}
-              <div className="modal-actions">
+          <AppDialog
+            title="初始化仓库"
+            size="medium"
+            height={440}
+            onClose={() => setInitOpen(false)}
+            footer={
+              <>
+                <Button appearance="secondary" disabled={busy} onClick={() => setInitOpen(false)}>
+                  取消
+                </Button>
                 <Button
                   appearance="primary"
                   disabled={busy}
@@ -280,12 +275,21 @@ export function RepositoryTab() {
                 >
                   初始化
                 </Button>
-                <Button appearance="secondary" disabled={busy} onClick={() => setInitOpen(false)}>
-                  取消
-                </Button>
-              </div>
-            </div>
-          </div>
+              </>
+            }
+          >
+            <p className="confirm-message">
+              初始化将在项目目录创建 git 仓库。默认只跟踪场景文本文件，其余资源 (图片/音频等) 会被忽略。
+              如需调整可编辑下方 .gitignore 内容：
+            </p>
+            <Textarea
+              className="gitignore-editor dialog-scroll"
+              value={gitignore}
+              onChange={(_, data) => setGitignore(data.value)}
+              disabled={busy}
+            />
+            {error ? <p className="prompt-error">{error}</p> : null}
+          </AppDialog>
         ) : null}
       </div>
     );
@@ -372,30 +376,16 @@ export function RepositoryTab() {
       ) : null}
 
       {identityOpen ? (
-        <div className="modal-backdrop" onClick={() => setIdentityOpen(false)}>
-          <div className="modal-surface small-surface" onClick={(e) => e.stopPropagation()}>
-            <h2 className="modal-title">设置提交身份</h2>
-            <p className="confirm-message">首次提交需要填写作者姓名和邮箱，将写入此项目的 git 配置。</p>
-            <div className="prompt-field">
-              <span className="settings-label">姓名</span>
-              <Input
-                value={identity.name}
-                placeholder="你的名字"
-                onChange={(_, data) => setIdentity((v) => ({ ...v, name: data.value }))}
-                disabled={busy}
-              />
-            </div>
-            <div className="prompt-field">
-              <span className="settings-label">邮箱</span>
-              <Input
-                value={identity.email}
-                placeholder="you@example.com"
-                onChange={(_, data) => setIdentity((v) => ({ ...v, email: data.value }))}
-                disabled={busy}
-              />
-            </div>
-            {error ? <p className="prompt-error">{error}</p> : null}
-            <div className="modal-actions">
+        <AppDialog
+          title="设置提交身份"
+          size="small"
+          height={360}
+          onClose={() => setIdentityOpen(false)}
+          footer={
+            <>
+              <Button appearance="secondary" disabled={busy} onClick={() => setIdentityOpen(false)}>
+                取消
+              </Button>
               <Button
                 appearance="primary"
                 disabled={busy || !identity.name.trim() || !identity.email.trim()}
@@ -403,28 +393,48 @@ export function RepositoryTab() {
               >
                 保存并提交
               </Button>
-              <Button appearance="secondary" disabled={busy} onClick={() => setIdentityOpen(false)}>
-                取消
-              </Button>
-            </div>
+            </>
+          }
+        >
+          <p className="confirm-message">首次提交需要填写作者姓名和邮箱，将写入此项目的 git 配置。</p>
+          <div className="prompt-field">
+            <span className="settings-label">姓名</span>
+            <Input
+              value={identity.name}
+              placeholder="你的名字"
+              onChange={(_, data) => setIdentity((v) => ({ ...v, name: data.value }))}
+              disabled={busy}
+            />
           </div>
-        </div>
+          <div className="prompt-field">
+            <span className="settings-label">邮箱</span>
+            <Input
+              value={identity.email}
+              placeholder="you@example.com"
+              onChange={(_, data) => setIdentity((v) => ({ ...v, email: data.value }))}
+              disabled={busy}
+            />
+          </div>
+          {error ? <p className="prompt-error">{error}</p> : null}
+        </AppDialog>
       ) : null}
 
       {historyOpen ? <GitHistoryDialog onClose={() => setHistoryOpen(false)} /> : null}
 
       {error && !initOpen && !identityOpen ? (
-        <div className="modal-backdrop" onClick={() => setError(null)}>
-          <div className="modal-surface small-surface" onClick={(e) => e.stopPropagation()}>
-            <h2 className="modal-title">操作失败</h2>
-            <p className="confirm-message">{error}</p>
-            <div className="modal-actions">
-              <Button appearance="primary" onClick={() => setError(null)}>
-                确定
-              </Button>
-            </div>
-          </div>
-        </div>
+        <AppDialog
+          title="操作失败"
+          size="small"
+          height={220}
+          onClose={() => setError(null)}
+          footer={
+            <Button appearance="primary" onClick={() => setError(null)}>
+              确定
+            </Button>
+          }
+        >
+          <p className="confirm-message">{error}</p>
+        </AppDialog>
       ) : null}
     </div>
   );
