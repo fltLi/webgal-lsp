@@ -1,15 +1,18 @@
 //! webgal-ink Tauri 后端入口。
 //!
-//! 提供两类能力:
+//! 提供三类能力:
 //! * LSP 传输: [`service::lsp::start_server`] 启动内置 WebGAL LSP 的 WebSocket 服务。
 //! * 实时预览: [`service::preview`] 启动本地静态服务器 + `/api/webgalsync` 网关。
+//! * 配音工作流: [`service::voice`] 管理 GPT-SoVITS 进程、角色库与音频处理。
 //!
-//! 应用退出时主动关闭 LSP 服务与预览服务器, 避免后台任务阻塞退出。
+//! 应用退出时主动关闭 LSP 服务、预览服务器与 GSOV 进程, 避免后台任务阻塞退出。
+
+use std::sync::Arc;
 
 use tauri::Manager;
 use tokio::sync::Mutex;
 
-use crate::service::{lsp::LspState, preview::PreviewState};
+use crate::service::{lsp::LspState, preview::PreviewState, voice::VoiceState};
 
 mod service;
 
@@ -21,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(LspState::default())
         .manage(Mutex::new(PreviewState::new()))
+        .manage(Arc::new(VoiceState::default()))
         .invoke_handler(tauri::generate_handler![
             service::fs::copy_directory,
             service::fs::move_to_trash,
@@ -51,6 +55,37 @@ pub fn run() {
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
+            service::voice::voice_detect_runtime,
+            service::voice::voice_default_launch_config,
+            service::voice::voice_launch,
+            service::voice::voice_shutdown,
+            service::voice::voice_status,
+            service::voice::voice_take_logs,
+            service::voice::voice_probe,
+            service::voice::voice_synthesize,
+            service::voice::voice_set_model,
+            service::voice::voice_parse_scene,
+            service::voice::voice_apply_lines,
+            service::voice::voice_apply_scene,
+            service::voice::voice_probe_audio,
+            service::voice::voice_trim_suggestion,
+            service::voice::voice_waveform,
+            service::voice::voice_normalize_reference,
+            service::voice::voice_read_audio,
+            service::voice::voice_list_characters,
+            service::voice::voice_load_character,
+            service::voice::voice_save_character,
+            service::voice::voice_remove_character,
+            service::voice::voice_create_character,
+            service::voice::voice_add_reference,
+            service::voice::voice_remove_reference,
+            service::voice::voice_export_character,
+            service::voice::voice_import_character,
+            service::voice::voice_list_cache,
+            service::voice::voice_store_cache,
+            service::voice::voice_drop_cache,
+            service::voice::voice_scan_references,
+            service::voice::voice_realign,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -70,6 +105,10 @@ pub fn run() {
                 if let Some(handle) = guard.server_handle.take() {
                     let _ = handle.shutdown_tx.send(());
                 }
+            }
+            // 主动关闭 GSOV 进程 (优先请求服务端优雅退出)
+            if let Some(voice) = app_handle.try_state::<Arc<VoiceState>>() {
+                tauri::async_runtime::block_on(voice.shutdown());
             }
         }
     });

@@ -11,6 +11,7 @@ import { disposeModel } from './lsp/monaco';
 import { disposeAllNovelTabs } from './novel/registry';
 import { previewClient } from './preview/client';
 import { useAppStore } from './state/store';
+import { voiceController } from './voice/controller';
 
 /** 读取并打开一个文件为新文档。 */
 export async function openFile(path: string): Promise<void> {
@@ -59,6 +60,7 @@ export async function openProject(path: string): Promise<void> {
   // 关闭旧项目的所有文档与 model
   disposeAllModels();
   disposeAllNovelTabs();
+  voiceController.resetProject();
   store.setProject(path);
   store.updateSettings(pushRecentProject(store.settings, path));
   previewClient.resetSite();
@@ -72,6 +74,7 @@ export function closeProject(): void {
   }
   disposeAllModels();
   disposeAllNovelTabs();
+  voiceController.resetProject();
   store.setProject(null);
   previewClient.resetSite();
 }

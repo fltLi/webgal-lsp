@@ -2,12 +2,13 @@
 
 // 项目编辑页: 顶栏 + 左侧(预览 + 场景/资源) + 右侧(选项卡/编辑器/状态栏)。
 
-import { Button } from '@fluentui/react-components';
+import { Button, Spinner } from '@fluentui/react-components';
 import { save } from '@tauri-apps/plugin-dialog';
 import {
   ArchiveRegular,
   ArrowLeftRegular,
   DocumentTextRegular,
+  MicRegular,
   PanelLeftContractRegular,
   PanelLeftExpandRegular,
   SettingsRegular,
@@ -21,6 +22,9 @@ import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
 import { useAppStore } from '../state/store';
 import { confirmClose } from '../unsaved';
+import { VoiceCard } from '../voice/VoiceCard';
+import { VoiceConsole } from '../voice/VoiceConsole';
+import { VoiceHelpTab } from '../voice/VoiceHelpTab';
 import { CodeEditor } from './CodeEditor';
 import { EditorTabs } from './EditorTabs';
 import { GitDiffEditor } from './GitDiffEditor';
@@ -41,6 +45,10 @@ export function EditorPage() {
   const openNovelTab = useAppStore((s) => s.openNovelTab);
   const activeDiffId = useAppStore((s) => s.activeDiffId);
   const diffTabs = useAppStore((s) => s.diffTabs);
+  const activeHelpId = useAppStore((s) => s.activeHelpId);
+  const voiceConsoleOpen = useAppStore((s) => s.voiceConsoleOpen);
+  const voiceStatus = useAppStore((s) => s.voiceStatus);
+  const voiceModePaths = useAppStore((s) => s.voiceModePaths);
   const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
@@ -91,6 +99,32 @@ export function EditorPage() {
     document.body.classList.remove('resizing');
   };
 
+  /**
+   * 顶栏配音按钮: **只管总控台**。
+   *
+   * 从场景编辑卡按下时, 顺带把当前卡切进配音模式 (便利行为, 且卡片上的麦克风图标
+   * 会同步亮起, 因此用户始终能看清发生了什么)。
+   */
+  const toggleVoiceConsole = () => {
+    const store = useAppStore.getState();
+    const next = !store.voiceConsoleOpen;
+    store.setVoiceConsoleOpen(next);
+    if (next && activeDoc?.isScene) {
+      store.setVoiceMode(activeDoc.path, true);
+    }
+  };
+
+  /** 打开配音工作流说明 (独立选项卡, 便于与场景对照阅读)。 */
+  const openVoiceHelp = () => {
+    const store = useAppStore.getState();
+    const existing = store.helpTabs.find((tab) => tab.id === 'voice-guide');
+    if (existing) {
+      store.setActiveHelp(existing.id);
+      return;
+    }
+    store.openHelpTab({ id: 'voice-guide', title: '配音工作流说明' });
+  };
+
   /** 生成快照: 先处理未保存更改, 再选择输出位置。 */
   const startSnapshot = () => {
     if (!projectPath) return;
@@ -130,6 +164,12 @@ export function EditorPage() {
         <span className="top-bar-spacer" />
 
         <Button appearance="subtle" icon={<DocumentTextRegular />} title="文本预处理" onClick={startNovelPreprocess} />
+        <Button
+          appearance={voiceConsoleOpen ? 'primary' : 'subtle'}
+          icon={voiceStatus === 'starting' ? <Spinner size="tiny" /> : <MicRegular />}
+          title={voiceConsoleOpen ? '关闭配音总控台' : '打开配音总控台'}
+          onClick={toggleVoiceConsole}
+        />
         <Button appearance="subtle" icon={<ArchiveRegular />} title="生成快照" onClick={startSnapshot} />
         <Button
           appearance="subtle"
@@ -210,8 +250,12 @@ export function EditorPage() {
           <div className="editor-area">
             {activeDiff ? (
               <GitDiffEditor tab={activeDiff} />
+            ) : activeHelpId ? (
+              <VoiceHelpTab />
             ) : activeNovelId ? (
               <PreprocessTab id={activeNovelId} />
+            ) : activeDoc && voiceModePaths.includes(activeDoc.path) ? (
+              <VoiceCard docPath={activeDoc.path} />
             ) : activeDoc ? (
               <CodeEditor doc={activeDoc} />
             ) : (
@@ -220,6 +264,12 @@ export function EditorPage() {
           </div>
           <StatusBar />
         </div>
+
+        {voiceConsoleOpen && (
+          <div className="voice-console-pane">
+            <VoiceConsole onOpenHelp={openVoiceHelp} />
+          </div>
+        )}
       </div>
 
       {snapshot && (

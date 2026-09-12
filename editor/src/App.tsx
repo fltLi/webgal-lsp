@@ -13,6 +13,7 @@ import { lspClient } from './lsp/client';
 import { setMonacoTheme } from './lsp/monaco';
 import { useAppStore } from './state/store';
 import { confirmClose } from './unsaved';
+import { voiceController } from './voice/controller';
 
 export default function App() {
   const settings = useAppStore((s) => s.settings);
@@ -38,6 +39,11 @@ export default function App() {
   // 启动 LSP 客户端 (应用级单例)
   useEffect(() => {
     void lspClient.start();
+  }, []);
+
+  // 启动时同步配音工作流状态: GSOV 进程状态、角色库与音频缓存
+  useEffect(() => {
+    void voiceController.initialize();
   }, []);
 
   // 主窗口就绪后: 显示主窗口并关闭启动画面, 消除加载白屏

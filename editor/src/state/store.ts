@@ -4,10 +4,11 @@
 
 import { create } from 'zustand';
 
+import type { CacheEntry, Character, GsvStatus } from '../commands/voice';
 import type { GitStatus } from '../commands/git';
 import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
-
+import type { VoiceCard } from '../voice/types';
 export interface OpenDocument {
   path: string;
   name: string;
@@ -74,6 +75,10 @@ interface AppStore {
   /** 活动文本预处理选项卡的编辑器统计 (供状态栏显示; null 表示无活动预处理选项卡)。 */
   novelStats: { chars: number; lines: number } | null;
 
+  /** 帮助选项卡 (配音工作流说明) */
+  helpTabs: NovelTab[];
+  activeHelpId: string | null;
+
   /** git 仓库状态 (null 表示尚未加载)。 */
   gitStatus: GitStatus | null;
   diffTabs: DiffTab[];
@@ -90,6 +95,41 @@ interface AppStore {
   previewStage: StageSnapshot | null;
 
   cursor: { line: number; column: number } | null;
+
+  // -------- 配音工作流 --------
+  /** 总控台是否打开 */
+  voiceConsoleOpen: boolean;
+  /** GSOV 服务状态 */
+  voiceStatus: GsvStatus;
+  /** GSOV 状态详情 (错误信息等) */
+  voiceStatusDetail: string | null;
+  /** GSOV 进程日志 */
+  voiceLogs: string[];
+  /** 角色列表 */
+  voiceCharacters: Character[];
+  /** 场景配音卡 (key 为选项卡 id) */
+  voiceCards: Map<string, VoiceCard>;
+  /** 配音缓存条目 */
+  voiceCache: CacheEntry[];
+  /** 场景级角色覆盖: 场景路径 -> (说话者 -> 角色 id) */
+  voiceAssignments: Record<string, Record<string, string>>;
+  /** 递增令牌: 队列状态变化时触发订阅者重渲染 */
+  voiceTick: number;
+  /** 处于配音模式的场景文件路径 */
+  voiceModePaths: string[];
+
+  setVoiceConsoleOpen: (open: boolean) => void;
+  /** 设置某个场景的配音模式开关 */
+  setVoiceMode: (path: string, enabled: boolean) => void;
+  setVoiceStatus: (status: GsvStatus, detail?: string | null) => void;
+  setVoiceLogs: (logs: string[]) => void;
+  appendVoiceLog: (line: string) => void;
+  setVoiceCharacters: (characters: Character[]) => void;
+  setVoiceCards: (cards: Map<string, VoiceCard>) => void;
+  setVoiceCache: (cache: CacheEntry[]) => void;
+  upsertVoiceCache: (entry: CacheEntry) => void;
+  setVoiceAssignment: (scenePath: string, assignments: Record<string, string>) => void;
+  setVoiceTick: () => void;
 
   settingsOpen: boolean;
   unsavedDialog: boolean;
@@ -113,6 +153,9 @@ interface AppStore {
   closeNovelTab: (id: string) => void;
   setActiveNovel: (id: string) => void;
   setNovelStats: (stats: { chars: number; lines: number } | null) => void;
+  openHelpTab: (tab: NovelTab) => void;
+  closeHelpTab: (id: string) => void;
+  setActiveHelp: (id: string) => void;
   setGitStatus: (status: GitStatus | null) => void;
   openDiffTab: (tab: DiffTab) => void;
   closeDiffTab: (id: string) => void;
@@ -144,6 +187,9 @@ export const useAppStore = create<AppStore>((set) => ({
   activeNovelId: null,
   novelStats: null,
 
+  helpTabs: [],
+  activeHelpId: null,
+
   gitStatus: null,
   diffTabs: [],
   activeDiffId: null,
@@ -159,6 +205,17 @@ export const useAppStore = create<AppStore>((set) => ({
   previewStage: null,
 
   cursor: null,
+
+  voiceConsoleOpen: false,
+  voiceStatus: 'stopped',
+  voiceStatusDetail: null,
+  voiceLogs: [],
+  voiceCharacters: [],
+  voiceCards: new Map(),
+  voiceCache: [],
+  voiceAssignments: {},
+  voiceTick: 0,
+  voiceModePaths: [],
 
   settingsOpen: false,
   unsavedDialog: false,
@@ -209,7 +266,7 @@ export const useAppStore = create<AppStore>((set) => ({
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return { documents, activePath: doc.path, activeNovelId: null, activeDiffId: null };
+      return { documents, activePath: doc.path, activeNovelId: null, activeDiffId: null, activeHelpId: null };
     }),
   closeDocument: (path) =>
     set((s) => {
@@ -247,6 +304,24 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   setActiveNovel: (id) => set({ activeNovelId: id, activePath: null, activeDiffId: null }),
   setNovelStats: (stats) => set({ novelStats: stats }),
+  openHelpTab: (tab) =>
+    set((s) => {
+      const exists = s.helpTabs.some((t) => t.id === tab.id);
+      const helpTabs = exists ? s.helpTabs : [...s.helpTabs, tab];
+      return { helpTabs, activeHelpId: tab.id, activePath: null, activeNovelId: null, activeDiffId: null };
+    }),
+  closeHelpTab: (id) =>
+    set((s) => {
+      const helpTabs = s.helpTabs.filter((t) => t.id !== id);
+      if (s.activeHelpId !== id) return { helpTabs };
+      if (helpTabs.length > 0) return { helpTabs, activeHelpId: helpTabs[helpTabs.length - 1].id };
+      const doc = s.documents[s.documents.length - 1];
+      if (doc) return { helpTabs, activeHelpId: null, activePath: doc.path };
+      const novel = s.novelTabs[s.novelTabs.length - 1];
+      if (novel) return { helpTabs, activeHelpId: null, activeNovelId: novel.id };
+      return { helpTabs, activeHelpId: null };
+    }),
+  setActiveHelp: (id) => set({ activeHelpId: id, activePath: null, activeNovelId: null, activeDiffId: null }),
   setGitStatus: (status) => set({ gitStatus: status }),
   openDiffTab: (tab) =>
     set((s) => {
@@ -285,6 +360,37 @@ export const useAppStore = create<AppStore>((set) => ({
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   setCursor: (cursor) => set({ cursor }),
+
+  setVoiceConsoleOpen: (open) => set({ voiceConsoleOpen: open }),
+  setVoiceMode: (path, enabled) =>
+    set((s) => {
+      const has = s.voiceModePaths.includes(path);
+      if (enabled === has) return {};
+      return {
+        voiceModePaths: enabled ? [...s.voiceModePaths, path] : s.voiceModePaths.filter((item) => item !== path),
+      };
+    }),
+  setVoiceStatus: (status, detail) => set({ voiceStatus: status, voiceStatusDetail: detail ?? null }),
+  setVoiceLogs: (logs) => set({ voiceLogs: logs }),
+  appendVoiceLog: (line) =>
+    set((s) => {
+      const voiceLogs = [...s.voiceLogs, line];
+      // 日志缓冲上限, 避免长时间运行后内存膨胀
+      if (voiceLogs.length > 500) voiceLogs.splice(0, voiceLogs.length - 500);
+      return { voiceLogs };
+    }),
+  setVoiceCharacters: (characters) => set({ voiceCharacters: characters }),
+  setVoiceCards: (cards) => set({ voiceCards: new Map(cards) }),
+  setVoiceCache: (cache) => set({ voiceCache: cache }),
+  upsertVoiceCache: (entry) =>
+    set((s) => {
+      const rest = s.voiceCache.filter((item) => item.hash !== entry.hash);
+      return { voiceCache: [entry, ...rest] };
+    }),
+  setVoiceAssignment: (scenePath, assignments) =>
+    set((s) => ({ voiceAssignments: { ...s.voiceAssignments, [scenePath]: assignments } })),
+  setVoiceTick: () => set((s) => ({ voiceTick: s.voiceTick + 1 })),
+
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSettingsCategory: (category) => set({ settingsCategory: category }),
   setUnsavedDialog: (open) => set({ unsavedDialog: open }),
