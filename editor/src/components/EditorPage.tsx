@@ -24,7 +24,13 @@ import { useEffect, useRef, useState } from 'react';
 import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
 import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
-import { activeSceneDocumentOf, activeTabOf, isVoiceWorkbenchOpen, useAppStore } from '../state/store';
+import {
+  activeSceneDocumentOf,
+  activeTabOf,
+  isVoiceWorkbenchOpen,
+  shouldShowVoiceToggle,
+  useAppStore,
+} from '../state/store';
 import { requestCloseTab } from '../tabs/close';
 import { TabStrip } from '../tabs/TabStrip';
 import { makeNovelTab, type WorkbenchTabItem } from '../tabs/model';
@@ -50,7 +56,8 @@ export function EditorPage() {
   const activeDoc = useAppStore(activeSceneDocumentOf);
   // 工作台是否打开由选项卡序列推导 (它就是一个普通选项卡, 没有独立开关)
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
-  const activeTabId = useAppStore((s) => s.activeTabId);
+  const currentSceneTabId = useAppStore((s) => s.currentSceneTabId);
+  const voiceModePaths = useAppStore((s) => s.voiceModePaths);
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const theme = useAppStore((s) => s.theme);
 
@@ -130,20 +137,19 @@ export function EditorPage() {
   };
 
   /**
-   * 当前场景选项卡最左侧的配音编辑开关。
+   * 场景选项卡最左侧的配音编辑开关。
    *
-   * 两个条件缺一不可:
-   * * **配音工作台已打开** —— 未启用配音功能时, 场景卡上不应出现任何配音痕迹;
-   * * **它就是当前选项卡** —— 这个开关针对的是"你正在看的这个场景",
-   *   在没打开的其它场景卡上常驻一个禁用态麦克风只会让人误以为它们都被关掉了。
+   * 可见性规则集中在 store 的 `shouldShowVoiceToggle` (一处定义, 一处测试):
+   * 工作台未打开时不显示; 已在配音编辑模式的卡始终显示; 否则只在当前选中的卡上显示。
    *
-   * 工作台关闭时返回的仍是**按钮本身**(由 CSS 置为 `visibility: hidden`):
-   * 槽位始终占位, 否则开关有无会让标题左右跳动。
+   * 不可见时返回的仍是**按钮本身**(由 CSS 置为 `visibility: hidden`), 这样槽位始终
+   * 占位、选项卡宽度不变, 但它在视觉上不占任何空间 —— 这也是纯文本标题不会被
+   * 顶出一段留白的原因。
    */
   const renderTabLeadingAction = (tab: WorkbenchTabItem) => {
     if (tab.kind !== 'scene') return null;
     const inVoiceMode = isSceneInVoiceMode(tab.path);
-    const visible = workbenchOpen && tab.id === activeTabId;
+    const visible = shouldShowVoiceToggle({ workbenchOpen, currentSceneTabId, tab, voiceModePaths });
     return (
       <button
         type="button"
@@ -151,7 +157,6 @@ export function EditorPage() {
         title={inVoiceMode ? '退出配音编辑模式' : '进入配音编辑模式'}
         onClick={(event) => {
           event.stopPropagation();
-          if (!visible) return;
           setSceneVoiceMode(tab.path, !inVoiceMode);
         }}
       >

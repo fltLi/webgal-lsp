@@ -356,8 +356,12 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 左右内边距固定, 因此有没有图标都不会让标题贴边 */
-  padding: 8px 14px;
+  /*
+   * 所有选项卡左右内边距**完全一致**: 图标起点对齐, 也保证工作台/说明这类
+   * 没有前导按钮的选项卡与场景卡的图标落在同一条竖线上。
+   * (曾经为场景卡单独调过左内边距, 结果两者图标差了几个像素。)
+   */
+  padding: 8px 10px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -376,12 +380,6 @@ body.resizing {
 .tab-strip-item.active {
   background: var(--app-panel);
   border-top: 2px solid var(--app-accent);
-}
-
-/* 场景选项卡最左侧有一个固定占位的配音开关, 因此左侧留出它的宽度 */
-.tab-strip-item[data-kind='scene'] {
-  padding-left: 10px;
-  gap: 4px;
 }
 
 .tab-strip-title {
@@ -3325,20 +3323,32 @@ body.resizing {
   color: #f85149;
 }
 
+/* 页头操作按钮: 统一最小宽度, 避免"有图标/无图标"导致按钮宽窄不一 */
 .voice-workbench-actions {
   display: flex;
   gap: 8px;
   flex: none;
 }
 
-/* 两栏: 左配置 (分页) / 右队列 (独立滚动)。高度受限, 剩余空间全部留给角色库 */
+.voice-workbench-actions > .fui-Button {
+  min-width: 110px;
+  justify-content: center;
+}
+
+/*
+ * 两栏: 左配置 (分页) / 右队列 (独立滚动)。
+ *
+ * 高度**固定**是刻意的: 用 max-height 时高度等于内容, 于是在「服务配置」与
+ * 「合成设置」之间切换会让整个下方角色库跟着一放一缩。这里钉死两栏高度,
+ * 让角色库的高度在任何分页下都不变。
+ */
 .voice-workbench-columns {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(320px, 1fr);
   gap: 10px;
   flex: 0 0 auto;
-  max-height: 38%;
-  min-height: 0;
+  height: 38%;
+  min-height: 220px;
 }
 
 .workbench-card {

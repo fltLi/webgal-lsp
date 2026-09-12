@@ -78,7 +78,10 @@ describe('dialogueAtLine', () => {
   });
 
   it('lineCount 缺省或非法时按 1 行处理', () => {
-    const broken = [{ ...say(4), lineCount: 0 }, { ...say(6), lineCount: undefined as unknown as number }];
+    const broken = [
+      { ...say(4), lineCount: 0 },
+      { ...say(6), lineCount: undefined as unknown as number },
+    ];
     expect(dialogueAtLine(broken, 4)?.line).toBe(4);
     expect(dialogueAtLine(broken, 5)).toBeNull();
     expect(dialogueAtLine(broken, 6)?.line).toBe(6);

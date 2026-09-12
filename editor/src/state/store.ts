@@ -110,12 +110,13 @@ interface AppStore {
   /** 处于配音编辑模式的场景路径 (仅在配音工作台打开时有意义) */
   voiceModePaths: string[];
   /**
-   * 用户在本次配音会话中**显式关闭**过配音编辑模式的场景。
+   * 最近一次处于选中态的场景卡 id。
    *
-   * 自动开启规则 (打开工作台 / 切换场景卡) 必须尊重这个选择, 否则用户关掉之后
-   * 一切换回来又会被自动打开。
+   * 用于回答"当前是哪个场景": 当最前面的是配音工作台选项卡时, `activeTabId` 指向
+   * 工作台而不是场景, 但用户心中的"当前场景"仍是进工作台之前看的那张卡 ——
+   * 麦克风开关就是按这个来显示的。
    */
-  voiceModeDisabled: string[];
+  currentSceneTabId: string | null;
 
   /** 设置某个场景的配音编辑模式开关 */
   setVoiceMode: (path: string, enabled: boolean) => void;
@@ -211,7 +212,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   voiceQueuePending: 0,
   voiceModePaths: [],
-  voiceModeDisabled: [],
+  currentSceneTabId: null,
   voiceStatus: 'stopped',
   voiceStatusDetail: null,
   voiceLogs: [],
@@ -254,7 +255,7 @@ export const useAppStore = create<AppStore>((set) => ({
         previewReady: false,
         previewStage: null,
         voiceModePaths: [],
-        voiceModeDisabled: [],
+        currentSceneTabId: null,
       });
     }
   },
@@ -276,12 +277,12 @@ export const useAppStore = create<AppStore>((set) => ({
   openTab: (tab) =>
     set((s) => {
       const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
-      // 打开即激活: 配音工作台打开期间, 新打开的场景卡直接进入配音编辑模式
-      const auto = tab.kind === 'scene' ? autoVoiceMode(s, tab.path) : null;
+      // 注意: 打开场景卡**不会**自动进入配音编辑模式。进入与否完全由用户点麦克风决定,
+      // 否则"切到的每个场景都变成配音卡"。
       return {
         tabs,
         activeTabId: activeId,
-        voiceModePaths: auto ? [...s.voiceModePaths, auto] : s.voiceModePaths,
+        currentSceneTabId: tab.kind === 'scene' ? tab.id : s.currentSceneTabId,
       };
     }),
   closeTab: (id) =>
@@ -294,23 +295,42 @@ export const useAppStore = create<AppStore>((set) => ({
       // 关闭场景卡时顺带清掉它的配音编辑模式, 避免残留到下次打开
       const voiceModePaths =
         closed?.kind === 'scene' ? s.voiceModePaths.filter((path) => path !== closed.path) : s.voiceModePaths;
+      /*
+       * 当前场景卡: 关掉的若是当前场景, 退回到仍然存在的场景卡 (优先新选中的那张)。
+       * 关掉工作台时活动项会落到邻居上, 因此这一条同时覆盖了那种情况。
+       */
+      const nextTab = tabs.find((tab) => tab.id === activeId);
+      const currentSceneTabId =
+        s.currentSceneTabId !== null && s.currentSceneTabId !== id
+          ? s.currentSceneTabId
+          : nextTab?.kind === 'scene'
+            ? nextTab.id
+            : (tabs.find((tab) => tab.kind === 'scene')?.id ?? null);
       return {
         tabs,
         activeTabId: activeId,
         diagnostics,
         voiceModePaths,
+        currentSceneTabId,
         // 关闭工作台即退出配音功能
-        ...(closingWorkbench ? { voiceModePaths: [], voiceModeDisabled: [] } : {}),
+        ...(closingWorkbench ? { voiceModePaths: [] } : {}),
       };
     }),
+  /*
+   * 切换选项卡**不改变**任何场景的配音编辑模式。
+   *
+   * 曾经这里会"切到哪个场景就自动让它进入配音编辑模式", 结果是进入配音模式后
+   * 每切一次卡就多一张配音卡, 而麦克风开关又被自动规则覆盖掉 (点了没反应,
+   * 切走再切回来才发现生效)。进入与退出现在只有一个入口: 当前场景卡上的麦克风。
+   */
   activateTab: (id) =>
     set((s) => {
-      if (s.activeTabId === id) return {};
-      // 配音工作台打开时, 切到哪个场景就让它进入配音编辑模式 (尊重用户的显式关闭)
       const tab = s.tabs.find((item) => item.id === id);
-      const auto = tab?.kind === 'scene' ? autoVoiceMode(s, tab.path) : null;
-      if (auto) return { activeTabId: id, voiceModePaths: [...s.voiceModePaths, auto] };
-      return { activeTabId: id };
+      // 只记住"最近选中的场景卡": 切到工作台/说明页时它保持不变, 于是用户从工作台
+      // 回到场景卡时仍然知道"当前场景"是哪一张。
+      const currentSceneTabId = tab?.kind === 'scene' ? tab.id : s.currentSceneTabId;
+      if (s.activeTabId === id && s.currentSceneTabId === currentSceneTabId) return {};
+      return { activeTabId: id, currentSceneTabId };
     }),
   moveTab: (id, toIndex) => set((s) => ({ tabs: moveTab(s.tabs, id, toIndex) })),
   retargetSceneTabs: (oldPath, newPath) =>
@@ -333,25 +353,21 @@ export const useAppStore = create<AppStore>((set) => ({
       return { tabs, activeTabId };
     }),
 
+  /*
+   * 打开配音工作台**不改变**任何场景的配音编辑模式。
+   *
+   * 是否进入配音编辑模式由用户在当前场景卡上点麦克风决定; 自动开启会让人
+   * 以为"打开工作台 = 所有场景都变成配音卡"。
+   */
   openVoiceWorkbench: () =>
     set((s) => {
-      // 打开前的活动选项卡: 若它是场景卡, 让它进入配音编辑模式。
-      // 注意 state 仍是"工作台未打开"的状态, 不能走 autoVoiceMode (它要求工作台已打开);
-      // 新会话会清空"用户显式关闭"的记录, 因此可以直接开启。
-      const previous = s.tabs.find((tab) => tab.id === s.activeTabId);
       const { tabs, activeId } = insertTab(s.tabs, makeWorkbenchTab(), s.activeTabId);
-      const shouldEnable = previous?.kind === 'scene' && !s.voiceModePaths.includes(previous.path);
-      return {
-        tabs,
-        activeTabId: activeId,
-        voiceModeDisabled: [],
-        voiceModePaths: shouldEnable ? [...s.voiceModePaths, previous.path] : s.voiceModePaths,
-      };
+      return { tabs, activeTabId: activeId };
     }),
   closeVoiceWorkbench: () =>
     set((s) => {
       const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
-      return { tabs, activeTabId: activeId, voiceModePaths: [], voiceModeDisabled: [] };
+      return { tabs, activeTabId: activeId, voiceModePaths: [] };
     }),
   openVoiceGuide: () =>
     set((s) => {
@@ -398,10 +414,6 @@ export const useAppStore = create<AppStore>((set) => ({
       if (enabled === has) return {};
       return {
         voiceModePaths: enabled ? [...s.voiceModePaths, path] : s.voiceModePaths.filter((item) => item !== path),
-        // 记录用户的显式关闭, 供自动开启规则尊重
-        voiceModeDisabled: enabled
-          ? s.voiceModeDisabled.filter((item) => item !== path)
-          : [...s.voiceModeDisabled, path],
       };
     }),
   setVoiceStatus: (status, detail) => set({ voiceStatus: status, voiceStatusDetail: detail ?? null }),
@@ -450,15 +462,34 @@ export function isVoiceWorkbenchActive(state: AppStore): boolean {
 }
 
 /**
- * 自动进入配音编辑模式: 返回该场景应被加入的路径 (无需改动时返回 `null`)。
+ * 某个场景卡的麦克风开关是否应当显示。
  *
- * 尊重用户的显式关闭 (`voiceModeDisabled`), 否则关掉后一重新选中又会被打开。
+ * 这是配音编辑模式**唯一**的可见性规则, 由 `EditorPage` 使用 (参数都是已订阅的
+ * 响应式值, 因此 store 变化会正常触发重渲染):
+ *
+ * * 配音工作台未打开 -> 一律不显示 (未启用配音功能时界面上不出现任何配音痕迹);
+ * * 已处于配音编辑模式 -> 始终显示 (否则就没法退出);
+ * * 未处于配音编辑模式 -> 只在**当前场景卡**上显示。
+ *
+ * "当前场景卡"是 `currentSceneTabId` 而不是 `activeTabId`: 最前面是配音工作台时,
+ * 用户心中的当前场景仍是进工作台之前看的那张卡。
+ *
+ * 最后一条是刻意的: 在其它未进入配音编辑模式的场景卡上常驻一个划线麦克风,
+ * 看起来就像那些场景都被关掉了配音。
  */
-function autoVoiceMode(state: AppStore, path: string): string | null {
-  if (!isVoiceWorkbenchOpen(state.tabs)) return null;
-  if (state.voiceModePaths.includes(path)) return null;
-  if (state.voiceModeDisabled.includes(path)) return null;
-  return path;
+export function shouldShowVoiceToggle(input: {
+  /** 配音工作台是否打开 */
+  workbenchOpen: boolean;
+  /** 当前场景卡 id (见 `currentSceneTabId`) */
+  currentSceneTabId: string | null;
+  /** 要判断的选项卡 */
+  tab: WorkbenchTabItem;
+  /** 处于配音编辑模式的场景路径 */
+  voiceModePaths: string[];
+}): boolean {
+  const { workbenchOpen, currentSceneTabId, tab, voiceModePaths } = input;
+  if (!workbenchOpen || tab.kind !== 'scene') return false;
+  return voiceModePaths.includes(tab.path) || tab.id === currentSceneTabId;
 }
 
 /** 当前活动选项卡 */

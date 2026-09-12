@@ -189,7 +189,7 @@ export function VoiceWorkbench() {
                 服务配置
               </button>
               <button className={configPage === 'defaults' ? 'active' : ''} onClick={() => setConfigPage('defaults')}>
-                默认设置
+                合成设置
               </button>
             </div>
           </div>
