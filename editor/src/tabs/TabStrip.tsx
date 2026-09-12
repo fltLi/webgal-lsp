@@ -2,24 +2,19 @@
 
 // 通用选项卡栏。
 //
-// 编辑器内所有选项卡 (场景/文件、文本预处理、差异比较、配音工作台、说明) 共用这一个
-// 控件: 统一的选中态、拖拽重排、中键关闭与关闭按钮。不再为每一类选项卡写一套渲染,
-// 因而不会出现"只能同类型连续排布"或"多个选项卡同时选中"的问题。
+// 编辑器内所有选项卡 (场景/文件、文本预处理、差异比较、使用说明) 共用这一个控件:
+// 统一的图标、选中态、拖拽重排、中键关闭与关闭按钮。不再为每一类选项卡写一套渲染,
+// 因而不会出现"只能同类型连续排布""多个选项卡同时选中""图标丢失"这类问题。
 //
 // 拖拽基于 Pointer 事件 (HTML5 DnD 在部分 WebView 中不可靠)。
 
-import { MicRegular } from '@fluentui/react-icons';
 import { useRef, useState } from 'react';
 
 import { useAppStore, type WorkbenchTabItem } from '../state/store';
+import { dropIndicator, dropSlot, slotToIndex, type TabBox } from './dnd';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
 const DRAG_THRESHOLD = 6;
-
-/** 每类选项卡的图标 (无图标时仅显示标题) */
-const TAB_ICONS: Partial<Record<WorkbenchTabItem['kind'], React.ReactNode>> = {
-  'voice-workbench': <MicRegular />,
-};
 
 interface Props {
   /** 场景选项卡最左侧的模式开关 (仅场景选项卡会调用) */
@@ -37,18 +32,24 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ id: string; startX: number; active: boolean } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [indicator, setIndicator] = useState<{ id: string; side: 'before' | 'after' } | null>(null);
 
-  /** 命中检测: 返回指针 x 坐标所在选项卡的下标 */
-  const hitTest = (clientX: number): number => {
+  /** 测量各选项卡的位置 (相对滚动内容, 因此横向滚动时仍然正确) */
+  const measure = (): TabBox[] => {
     const container = containerRef.current;
-    const nodes = container?.querySelectorAll<HTMLElement>('.tab-strip-item');
-    if (!container || !nodes || nodes.length === 0) return -1;
-    for (let index = 0; index < nodes.length; index++) {
-      const rect = nodes[index].getBoundingClientRect();
-      if (clientX >= rect.left && clientX <= rect.right) return index;
-    }
-    return clientX < container.getBoundingClientRect().left ? 0 : nodes.length - 1;
+    if (!container) return [];
+    const base = container.getBoundingClientRect().left - container.scrollLeft;
+    return [...container.querySelectorAll<HTMLElement>('.tab-strip-item')].map((node) => {
+      const rect = node.getBoundingClientRect();
+      return { id: node.dataset['tabId'] ?? '', left: rect.left - base, width: rect.width };
+    });
+  };
+
+  /** 指针位置换算到"滚动内容坐标系" */
+  const pointerInContent = (clientX: number): number | null => {
+    const container = containerRef.current;
+    if (!container) return null;
+    return clientX - container.getBoundingClientRect().left + container.scrollLeft;
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>, tab: WorkbenchTabItem) => {
@@ -68,35 +69,42 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
       state.active = true;
       setDraggingId(state.id);
     }
-    setDropIndex(hitTest(event.clientX));
+    const pointerX = pointerInContent(event.clientX);
+    if (pointerX === null) return;
+    setIndicator(dropIndicator(tabs, state.id, dropSlot(measure(), pointerX)));
   };
 
   const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     const state = dragState.current;
     dragState.current = null;
     setDraggingId(null);
-    setDropIndex(null);
+    setIndicator(null);
     if (!state?.active) return;
-    const target = hitTest(event.clientX);
-    if (target >= 0) moveTab(state.id, target);
+
+    const pointerX = pointerInContent(event.clientX);
+    if (pointerX === null) return;
+    const slot = dropSlot(measure(), pointerX);
+    const target = slot === null ? null : slotToIndex(tabs, state.id, slot);
+    if (target !== null) moveTab(state.id, target);
   };
 
   if (tabs.length === 0) return null;
 
   return (
     <div className="tab-strip" role="tablist" ref={containerRef}>
-      {tabs.map((tab, index) => {
+      {tabs.map((tab) => {
         const active = tab.id === activeTabId;
         const dragging = draggingId === tab.id;
-        const dropBefore = dropIndex === index && draggingId !== null && draggingId !== tab.id;
+        const mark = indicator?.id === tab.id ? indicator.side : null;
         return (
           <div
             key={tab.id}
             role="tab"
-            aria-selected={active}
+            data-tab-id={tab.id}
             data-kind={tab.kind}
+            aria-selected={active}
             className={`tab-strip-item${active ? ' active' : ''}${dragging ? ' dragging' : ''}${
-              dropBefore ? ' drop-target' : ''
+              mark ? ` drop-${mark}` : ''
             }`}
             title={tab.tooltip}
             onClick={() => activateTab(tab.id)}
@@ -112,7 +120,7 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
 
             <span className="tab-strip-title">
               {tab.kind === 'scene' && <SceneDirtyDot path={tab.path} />}
-              {TAB_ICONS[tab.kind] && <span className="tab-strip-icon">{TAB_ICONS[tab.kind]}</span>}
+              {tab.icon && <span className="tab-strip-icon">{tab.icon}</span>}
               {tab.title}
               {tab.kind === 'voice-workbench' && <QueueBadge />}
             </span>

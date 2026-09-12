@@ -38,15 +38,14 @@ import type { LaunchConfig } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { formatEta } from './estimate';
+import { LANGUAGE_LABELS } from './types';
 import { RoleListPanel } from './RoleListPanel';
 import { VoiceCacheDialog } from './VoiceCacheDialog';
-import { LANGUAGE_LABELS, SPLIT_METHOD_LABELS } from './types';
 
 export function VoiceWorkbench() {
   // 使用说明是独立选项卡, 直接由工作台发起打开
   const onOpenHelp = () => useAppStore.getState().openVoiceGuide();
   const status = useAppStore((state) => state.voiceStatus);
-  const detail = useAppStore((state) => state.voiceStatusDetail);
   const logs = useAppStore((state) => state.voiceLogs);
   useAppStore((state) => state.voiceTick);
 
@@ -111,12 +110,12 @@ export function VoiceWorkbench() {
     }
   };
 
-  const statusLabel =
-    status === 'ready' ? '就绪' : status === 'starting' ? '启动中…' : status === 'error' ? '错误' : '未启动';
-
   return (
     <div className="voice-workbench">
-      {/* -------- 页头: 标题 + 服务状态 -------- */}
+      {/*
+        页头只保留标题与说明入口: GSOV 状态由底部状态栏统一承载 (见 StatusBar),
+        此处不再重复显示。
+      */}
       <div className="voice-workbench-header">
         <div className="voice-workbench-heading">
           <h1>配音工作台</h1>
@@ -125,35 +124,6 @@ export function VoiceWorkbench() {
         <Button size="small" appearance="secondary" icon={<BookQuestionMarkRegular />} onClick={onOpenHelp}>
           使用说明
         </Button>
-      </div>
-
-      <div className="voice-status-bar">
-        <span className={`voice-status-dot ${status}`} />
-        <span className="voice-status-text">
-          GSOV: {statusLabel}
-          {launch && status !== 'stopped' && (
-            <span className="voice-status-endpoint">
-              {launch.host}:{launch.port}
-            </span>
-          )}
-        </span>
-        {detail && <span className="voice-status-detail">{detail}</span>}
-        <span className="voice-actions-spacer" />
-        {status === 'ready' || status === 'starting' ? (
-          <Button
-            size="small"
-            appearance="secondary"
-            icon={<StopRegular />}
-            disabled={busy}
-            onClick={() => void stop()}
-          >
-            停止
-          </Button>
-        ) : (
-          <Button size="small" appearance="primary" icon={<PlayRegular />} disabled={busy} onClick={() => void start()}>
-            启动
-          </Button>
-        )}
       </div>
 
       {/* -------- 启动配置 -------- */}
@@ -173,6 +143,19 @@ export function VoiceWorkbench() {
             />
           </div>
         </Field>
+
+        {/* 启动/停止: 服务状态由底部状态栏承载, 这里只放操作入口 */}
+        <div className="voice-launch-actions">
+          {status === 'ready' || status === 'starting' ? (
+            <Button appearance="secondary" icon={<StopRegular />} disabled={busy} onClick={() => void stop()}>
+              停止服务
+            </Button>
+          ) : (
+            <Button appearance="primary" icon={<PlayRegular />} disabled={busy} onClick={() => void start()}>
+              启动服务
+            </Button>
+          )}
+        </div>
 
         {launch && (
           <>
@@ -288,9 +271,14 @@ export function VoiceWorkbench() {
           </>
         )}
 
+        {/*
+          推理默认值: 只保留真正需要在工作台层面决定的项。
+          因此都不在此处暴露。
+        */}
         <div className="voice-config-grid">
-          <Field label="默认语言">
+          <Field label="默认语言" className="voice-field-narrow">
             <Dropdown
+              className="voice-control-narrow"
               selectedOptions={[defaults.language]}
               value={LANGUAGE_LABELS[defaults.language] ?? defaults.language}
               onOptionSelect={(_, data) =>
@@ -300,60 +288,6 @@ export function VoiceWorkbench() {
               {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
                 <Option key={code} value={code} text={label}>
                   {label}
-                </Option>
-              ))}
-            </Dropdown>
-          </Field>
-          <Field label="文本切分">
-            <Dropdown
-              selectedOptions={[defaults.textSplitMethod]}
-              value={SPLIT_METHOD_LABELS[defaults.textSplitMethod] ?? defaults.textSplitMethod}
-              onOptionSelect={(_, data) =>
-                voiceController.updateSettings({
-                  defaults: { ...defaults, textSplitMethod: data.optionValue ?? 'cut5' },
-                })
-              }
-            >
-              {Object.entries(SPLIT_METHOD_LABELS).map(([code, label]) => (
-                <Option key={code} value={code} text={label}>
-                  {label}
-                </Option>
-              ))}
-            </Dropdown>
-          </Field>
-          <Field label="测试采样步数">
-            <Dropdown
-              selectedOptions={[String(settings.testSampleSteps)]}
-              value={`x${settings.testSampleSteps}`}
-              onOptionSelect={(_, data) =>
-                voiceController.updateSettings({
-                  testSampleSteps: Number.parseInt(data.optionValue ?? '4', 10),
-                })
-              }
-            >
-              {[4, 8].map((steps) => (
-                <Option key={steps} value={String(steps)} text={`x${steps}`}>
-                  {`x${steps}${steps === 4 ? '（推荐，最快）' : ''}`}
-                </Option>
-              ))}
-            </Dropdown>
-          </Field>
-          <Field label="正式生成采样步数">
-            <Dropdown
-              selectedOptions={[String(defaults.generateSampleSteps)]}
-              value={`x${defaults.generateSampleSteps}`}
-              onOptionSelect={(_, data) =>
-                voiceController.updateSettings({
-                  defaults: {
-                    ...defaults,
-                    generateSampleSteps: Number.parseInt(data.optionValue ?? '32', 10),
-                  },
-                })
-              }
-            >
-              {[4, 8, 16, 32].map((steps) => (
-                <Option key={steps} value={String(steps)} text={`x${steps}`}>
-                  {`x${steps}${steps === 32 ? '（默认）' : ''}`}
                 </Option>
               ))}
             </Dropdown>

@@ -382,13 +382,18 @@ body.resizing {
   padding-left: 6px;
 }
 
-/* 拖拽排序反馈 */
+/* 拖拽排序反馈: 竖线画在真实的插入缝隙那一侧 */
 .tab-strip-item.dragging {
   opacity: 0.45;
 }
 
-.tab-strip-item.drop-target {
+.tab-strip-item.drop-before {
   box-shadow: inset 2px 0 0 var(--app-accent);
+}
+
+/* 落到末尾时画在最右侧, 而不是最后一个选项卡的左边 */
+.tab-strip-item.drop-after {
+  box-shadow: inset -2px 0 0 var(--app-accent);
 }
 
 .tab-strip-title {
@@ -2080,29 +2085,13 @@ body.resizing {
 
 /* ==================== 配音工作流 ==================== */
 
-/* -------- 配音工作台 (独立页面, 铺满工作区) -------- */
-.voice-workbench-page {
+/* -------- 配音工作台 (作为编辑器工作区的内容, 铺满) -------- */
+.voice-workbench {
   flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.voice-workbench-pane {
-  height: 100%;
   min-height: 0;
   background: var(--app-panel);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-}
-
-.voice-workbench {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
   overflow: hidden;
 }
 
@@ -2969,4 +2958,24 @@ body.resizing {
 .character-panel {
   max-width: 1080px;
   width: 100%;
+}
+
+/* -------- 配音工作台: 窄字段与启动操作 -------- */
+/*
+  默认语言这类取值很短的字段不应占满整行。用固定上限宽度约束网格项,
+  同时让下拉本身跟字段同宽 (Fluent 的 Dropdown 默认撑满容器)。
+*/
+.voice-field-narrow {
+  max-width: 260px;
+}
+
+.voice-control-narrow {
+  width: 100%;
+  min-width: 0;
+}
+
+.voice-launch-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }

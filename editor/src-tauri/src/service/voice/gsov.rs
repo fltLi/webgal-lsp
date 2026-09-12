@@ -61,7 +61,9 @@ impl TtsRequest {
             top_k: 5,
             top_p: 1.0,
             temperature: 1.0,
-            text_split_method: "cut5".into(),
+            // 固定"不切分": 一句对话整体合成。切分会把一句拆成多段再拼接,
+            // 语气与停顿都会断裂, 因此不向用户暴露该选项。
+            text_split_method: "cut0".into(),
             batch_size: 1,
             batch_threshold: 0.75,
             split_bucket: true,
@@ -257,7 +259,8 @@ mod tests {
         assert!(!request.super_sampling);
         assert_eq!(request.media_type, "wav");
         assert!(!request.streaming_mode);
-        assert_eq!(request.text_split_method, "cut5");
+        // 固定不切分: 一句对话整体合成
+        assert_eq!(request.text_split_method, "cut0");
         assert_eq!(request.seed, -1);
         assert_eq!(request.batch_size, 1);
     }

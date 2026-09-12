@@ -270,18 +270,22 @@ export function EditorPage() {
           </button>
         )}
 
-        {voiceWorkbenchOpen ? (
-          // 配音工作台: 独立页面, 不参与选项卡栏
-          <div className="voice-workbench-page">
+        {/*
+          配音工作台与选项卡工作区共用一个列容器: 两者都是"编辑器工作区"的当前内容,
+          因此必须放在 flex column 内, 否则作为行容器 .editor-main 的直接子项会被
+          排到选项卡栏的右侧, 把选项卡栏挤成 0 宽。
+        */}
+        <div className="editor-workspace">
+          {voiceWorkbenchOpen ? (
             <VoiceWorkbench />
-          </div>
-        ) : (
-          <div className="editor-workspace">
-            <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
-            <div className="editor-area">{renderActivePane()}</div>
-            <StatusBar />
-          </div>
-        )}
+          ) : (
+            <>
+              <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
+              <div className="editor-area">{renderActivePane()}</div>
+              <StatusBar />
+            </>
+          )}
+        </div>
       </div>
 
       {snapshot && (

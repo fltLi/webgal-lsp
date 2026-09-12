@@ -194,7 +194,6 @@ export interface SynthesizeRequest {
   topK: number;
   topP: number;
   repetitionPenalty: number;
-  textSplitMethod?: string;
   seed?: number;
 }
 

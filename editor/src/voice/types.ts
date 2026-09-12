@@ -35,16 +35,6 @@ export const LANGUAGE_LABELS: Record<string, string> = {
 
 export const LANGUAGE_CODES = Object.keys(LANGUAGE_LABELS);
 
-/** 文本切分方式 */
-export const SPLIT_METHOD_LABELS: Record<string, string> = {
-  cut0: '不切分',
-  cut1: '凑四句一切',
-  cut2: '凑 50 字一切',
-  cut3: '按中文句号切',
-  cut4: '按英文句号切',
-  cut5: '按标点切（推荐）',
-};
-
 /** 配音参数 (一条任务的完整输入) */
 export interface VoiceParams {
   characterId: string | null;
@@ -59,7 +49,6 @@ export interface VoiceParams {
   topP: number;
   repetitionPenalty: number;
   sampleSteps: number;
-  textSplitMethod: string;
 }
 
 /** 粗糙刻度定义 (细刻度实测既降质量又可能突然变慢) */
@@ -166,7 +155,6 @@ export interface SceneVoiceState {
 /** 配音工作台默认推理配置 */
 export interface VoiceDefaults {
   language: string;
-  textSplitMethod: string;
   temperature: number;
   speedFactor: number;
   topK: number;
@@ -177,7 +165,6 @@ export interface VoiceDefaults {
 
 export const DEFAULT_VOICE_DEFAULTS: VoiceDefaults = {
   language: 'auto',
-  textSplitMethod: 'cut5',
   temperature: PARAM_TICKS.temperature.default,
   speedFactor: PARAM_TICKS.speedFactor.default,
   topK: PARAM_TICKS.topK.default,
@@ -215,7 +202,6 @@ export function defaultParams(character: Character | null, text: string): VoiceP
     topP: PARAM_TICKS.topP.default,
     repetitionPenalty: PARAM_TICKS.repetitionPenalty.default,
     sampleSteps: GENERATE_SAMPLE_STEPS,
-    textSplitMethod: 'cut5',
   };
 }
 
@@ -233,6 +219,5 @@ export function paramsKey(params: VoiceParams): string {
     params.topP,
     params.repetitionPenalty,
     params.sampleSteps,
-    params.textSplitMethod,
   ]);
 }

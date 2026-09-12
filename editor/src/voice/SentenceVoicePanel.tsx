@@ -23,14 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Character, SayLine } from '../commands/voice';
 import { voiceController } from './controller';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
-import {
-  GENERATE_SAMPLE_STEPS,
-  LANGUAGE_LABELS,
-  PARAM_TICKS,
-  SPLIT_METHOD_LABELS,
-  randomSeed,
-  type VoiceParams,
-} from './types';
+import { GENERATE_SAMPLE_STEPS, LANGUAGE_LABELS, PARAM_TICKS, randomSeed, type VoiceParams } from './types';
 
 interface Props {
   cardId: string;
@@ -308,21 +301,6 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
                 value={params.repetitionPenalty}
                 onChange={(_, data) => update({ repetitionPenalty: round2(data.value) })}
               />
-            </label>
-            <label className="voice-field">
-              <span className="voice-label">文本切分</span>
-              <Dropdown
-                className="voice-control"
-                selectedOptions={[params.textSplitMethod]}
-                value={SPLIT_METHOD_LABELS[params.textSplitMethod] ?? params.textSplitMethod}
-                onOptionSelect={(_, data) => update({ textSplitMethod: data.optionValue ?? 'cut5' })}
-              >
-                {Object.entries(SPLIT_METHOD_LABELS).map(([code, label]) => (
-                  <Option key={code} value={code} text={label}>
-                    {label}
-                  </Option>
-                ))}
-              </Dropdown>
             </label>
           </div>
           <div className="voice-row">

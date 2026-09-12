@@ -232,7 +232,6 @@ class VoiceController {
     return {
       ...base,
       language: selected?.params.language ?? defaults.language,
-      textSplitMethod: selected?.params.textSplitMethod ?? defaults.textSplitMethod,
       temperature: selected?.params.temperature ?? defaults.temperature,
       speedFactor: selected?.params.speedFactor ?? defaults.speedFactor,
       topK: selected?.params.topK ?? defaults.topK,
@@ -387,7 +386,6 @@ class VoiceController {
         topK: task.params.topK,
         topP: task.params.topP,
         repetitionPenalty: task.params.repetitionPenalty,
-        textSplitMethod: task.params.textSplitMethod,
         seed: task.params.seed,
       });
 

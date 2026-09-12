@@ -2,10 +2,16 @@
 
 // 统一选项卡模型。
 //
-// 编辑器的选项卡栏是**一个有序序列**, 混合了四类内容: 场景/文件、文本预处理、
-// 差异比较、配音工作台。它们共享同一套排布与拖拽排序规则, 因此这里用单一的
-// 标签联合 (tagged union) 描述, 而不是四套平行数组 + 四个 activeId ——
+// 编辑器的选项卡栏是**一个有序序列**, 混合了各类内容: 场景/文件、文本预处理、
+// 差异比较、使用说明。它们共享同一套排布与拖拽排序规则, 因此这里用单一的
+// 标签联合 (tagged union) 描述, 而不是多套平行数组 + 多个 activeId ——
 // 后者既无法乱序排布, 也无法避免"多个选项卡同时处于选中态"这类自相矛盾的状态。
+//
+// 图标由**选项卡自身携带**: 控件只负责渲染, 不维护"种类 -> 图标"的映射表
+// (那种映射表会在新增种类时因为忘记登记而丢图标)。
+
+import { ArrowSwapRegular, BookQuestionMarkRegular, DocumentTextRegular, MicRegular } from '@fluentui/react-icons';
+import type { ReactNode } from 'react';
 
 /** 选项卡种类 */
 export type TabKind = 'scene' | 'novel' | 'diff' | 'voice-workbench' | 'guidance';
@@ -21,6 +27,8 @@ interface TabBase {
   title: string;
   /** 悬浮提示 (通常为完整路径或补充说明) */
   tooltip: string;
+  /** 标题左侧的图标 */
+  icon?: ReactNode;
 }
 
 /** 场景/文件编辑选项卡 */
@@ -83,6 +91,7 @@ export function makeNovelTab(seq: number): NovelTab {
     kind: 'novel',
     title: `文本预处理 ${seq}`,
     tooltip: '将小说原文转换为 WebGAL 脚本',
+    icon: <DocumentTextRegular />,
   };
 }
 
@@ -93,6 +102,7 @@ export function makeDiffTab(input: { file: string; title: string; diffKind: Diff
     kind: 'diff',
     title: input.title,
     tooltip: input.file,
+    icon: <ArrowSwapRegular />,
     file: input.file,
     diffKind: input.diffKind,
     commitId: input.commitId,
@@ -106,6 +116,7 @@ export function makeWorkbenchTab(): WorkbenchTab {
     kind: 'voice-workbench',
     title: '配音工作台',
     tooltip: 'GPT-SoVITS 配音服务、角色库与任务队列',
+    icon: <MicRegular />,
   };
 }
 
@@ -116,5 +127,6 @@ export function makeVoiceGuideTab(): GuidanceTab {
     kind: 'guidance',
     title: '配音使用说明',
     tooltip: '配音工作流的操作与交互约定',
+    icon: <BookQuestionMarkRegular />,
   };
 }
