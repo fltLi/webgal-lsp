@@ -37,6 +37,16 @@ export interface DetectedRuntime {
   issues: string[];
 }
 
+/** 一组可配对的 GSOV v4 权重 */
+export interface ModelCandidate {
+  /** 推断的角色名 (来自权重文件名) */
+  name: string;
+  /** GPT (T2S) 权重路径, 相对整合包根 */
+  gptWeights: string;
+  /** SoVITS 权重路径, 相对整合包根 */
+  sovitsWeights: string;
+}
+
 export type VoiceEvent = { type: 'log'; line: string } | { type: 'status'; status: GsvStatus; detail: string | null };
 
 export interface VoiceStatus {
@@ -215,6 +225,11 @@ export function voiceDetectRuntime(root: string): Promise<DetectedRuntime> {
 
 export function voiceDefaultLaunchConfig(root: string): Promise<LaunchConfig> {
   return invoke<LaunchConfig>('voice_default_launch_config', { root });
+}
+
+/** 扫描整合包内的 v4 权重, 返回可配对的模型候选。 */
+export function voiceListModels(root: string): Promise<ModelCandidate[]> {
+  return invoke<ModelCandidate[]>('voice_list_models', { root });
 }
 
 export function voiceLaunch(config: LaunchConfig, onEvent: (event: VoiceEvent) => void): Promise<void> {

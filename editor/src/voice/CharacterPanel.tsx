@@ -10,7 +10,7 @@ import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegula
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { Character } from '../commands/voice';
+import type { Character, ModelCandidate } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
@@ -20,12 +20,20 @@ import { LANGUAGE_LABELS } from './types';
 export function CharacterPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
   const characters = useAppStore((state) => state.voiceCharacters);
   useAppStore((state) => state.voiceTick);
+  const voiceStatus = useAppStore((state) => state.voiceStatus);
   const [query, setQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelCandidate[]>([]);
+  const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
     voiceController.primeReferencePaths().catch(() => {});
+  }, [characters.length]);
+
+  // 扫描整合包内的 v4 权重, 为角色的模型下拉提供候选
+  useEffect(() => {
+    void voiceController.listModels().then(setModels);
   }, [characters.length]);
 
   const enabled = useMemo(
@@ -89,6 +97,21 @@ export function CharacterPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
           <CharacterCard
             key={character.id}
             character={character}
+            models={models}
+            canSwitchModel={voiceStatus === 'ready'}
+            switching={switching}
+            onSwitchModel={async (next) => {
+              setSwitching(true);
+              setError(null);
+              try {
+                await voiceController.switchModel(next.model?.gptWeights ?? null, next.model?.sovitsWeights ?? null);
+                await voiceController.persistCharacter(next);
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : String(caught));
+              } finally {
+                setSwitching(false);
+              }
+            }}
             onExport={() => void exportCharacter(character)}
             onError={setError}
           />
@@ -102,10 +125,18 @@ export function CharacterPanel({ onOpenHelp }: { onOpenHelp: () => void }) {
 
 function CharacterCard({
   character,
+  models,
+  canSwitchModel,
+  switching,
+  onSwitchModel,
   onExport,
   onError,
 }: {
   character: Character;
+  models: ModelCandidate[];
+  canSwitchModel: boolean;
+  switching: boolean;
+  onSwitchModel: (character: Character) => Promise<void>;
   onExport: () => void;
   onError: (error: string | null) => void;
 }) {
@@ -152,6 +183,28 @@ function CharacterCard({
       </div>
 
       <Field label="GSOV 模型（本地记录，不参与导出）">
+        {models.length > 0 && (
+          <Dropdown
+            className="character-model-pick"
+            placeholder="从整合包扫描到的模型中选择"
+            selectedOptions={[]}
+            value={modelSummary(draft, models)}
+            onOptionSelect={(_, data) => {
+              const picked = models.find((item) => item.gptWeights === data.optionValue);
+              if (picked) {
+                void commit({
+                  model: { gptWeights: picked.gptWeights, sovitsWeights: picked.sovitsWeights },
+                });
+              }
+            }}
+          >
+            {models.map((item) => (
+              <Option key={item.gptWeights} value={item.gptWeights} text={item.name}>
+                {item.name}
+              </Option>
+            ))}
+          </Dropdown>
+        )}
         <div className="character-model">
           <Input
             placeholder="GPT 权重路径（如 GPT_weights_v4/xxx-e15.ckpt）"
@@ -165,6 +218,23 @@ function CharacterCard({
             onChange={(_, data) => setDraft({ ...draft, model: { ...(draft.model ?? {}), sovitsWeights: data.value } })}
             onBlur={() => void commit({ model: draft.model })}
           />
+        </div>
+        <div className="character-model-actions">
+          <span className="character-model-note">
+            {canSwitchModel
+              ? '切换服务端权重会重载模型，通常无需手动操作（队列会按角色分组连续执行）'
+              : 'GSOV 就绪后可切换服务端权重'}
+          </span>
+          <Tooltip content="让 GSOV 立即加载上面的权重（高代价：重载模型并落盘配置）" relationship="label">
+            <Button
+              size="small"
+              appearance="secondary"
+              disabled={!canSwitchModel || switching || (!draft.model?.gptWeights && !draft.model?.sovitsWeights)}
+              onClick={() => void onSwitchModel(draft)}
+            >
+              {switching ? '切换中…' : '切换到该模型'}
+            </Button>
+          </Tooltip>
         </div>
       </Field>
 
@@ -250,4 +320,12 @@ function matchesQuery(character: Character, query: string): boolean {
     character.id.toLowerCase().includes(needle) ||
     character.aliases.some((alias) => alias.toLowerCase().includes(needle))
   );
+}
+
+/** 当前模型选择的可读摘要 */
+function modelSummary(character: Character, models: ModelCandidate[]): string {
+  const gpt = character.model?.gptWeights;
+  if (!gpt) return '未指定模型';
+  const matched = models.find((item) => item.gptWeights === gpt);
+  return matched ? matched.name : gpt;
 }

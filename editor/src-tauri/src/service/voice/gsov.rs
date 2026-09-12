@@ -45,7 +45,13 @@ pub struct TtsRequest {
 
 impl TtsRequest {
     /// 构造一份带默认推理参数的请求 (仅填充必填项与固定项)
-    pub fn new(text: String, text_lang: String, ref_audio_path: String, prompt_text: String, prompt_lang: String) -> Self {
+    pub fn new(
+        text: String,
+        text_lang: String,
+        ref_audio_path: String,
+        prompt_text: String,
+        prompt_lang: String,
+    ) -> Self {
         Self {
             text,
             text_lang,

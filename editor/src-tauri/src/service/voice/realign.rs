@@ -88,7 +88,10 @@ pub fn align(history: &[HistoryKey], dialogues: &[DialogueKey]) -> AlignmentRepo
     let mut pools: HashMap<(String, String), Vec<usize>> = HashMap::new();
     for dialogue in dialogues {
         pools
-            .entry((normalize_speaker(&dialogue.speaker), normalize_text(&dialogue.text)))
+            .entry((
+                normalize_speaker(&dialogue.speaker),
+                normalize_text(&dialogue.text),
+            ))
             .or_default()
             .push(dialogue.index);
     }
@@ -101,7 +104,10 @@ pub fn align(history: &[HistoryKey], dialogues: &[DialogueKey]) -> AlignmentRepo
 
     let mut pending: Vec<usize> = Vec::new();
     for (history_index, entry) in history.iter().enumerate() {
-        let key = (normalize_speaker(&entry.speaker), normalize_text(&entry.text));
+        let key = (
+            normalize_speaker(&entry.speaker),
+            normalize_text(&entry.text),
+        );
         let matched = pools.get_mut(&key).and_then(|candidates| {
             while let Some(index) = candidates.first().copied() {
                 candidates.remove(0);
@@ -136,7 +142,13 @@ pub fn align(history: &[HistoryKey], dialogues: &[DialogueKey]) -> AlignmentRepo
         .map(|(_, dialogue)| dialogue.index)
         .collect();
 
-    let lcs = longest_common_subsequence(history, dialogues, &remaining_history, &remaining_dialogue, &used_positions);
+    let lcs = longest_common_subsequence(
+        history,
+        dialogues,
+        &remaining_history,
+        &remaining_dialogue,
+        &used_positions,
+    );
 
     for (history_index, dialogue_index) in lcs {
         let entry = &history[history_index];
@@ -148,7 +160,8 @@ pub fn align(history: &[HistoryKey], dialogues: &[DialogueKey]) -> AlignmentRepo
             .iter()
             .find(|dialogue| dialogue.index == dialogue_index)
             .expect("对话序号必然存在");
-        let same_speaker = normalize_speaker(&entry.speaker) == normalize_speaker(&dialogue.speaker);
+        let same_speaker =
+            normalize_speaker(&entry.speaker) == normalize_speaker(&dialogue.speaker);
         result[history_index].index = Some(dialogue_index);
         result[history_index].kind = if same_speaker {
             AlignmentKind::Ordered
@@ -190,11 +203,12 @@ fn longest_common_subsequence(
     let mut lengths = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            lengths[i][j] = if text_of_history(history_indices[i]) == text_of_dialogue(dialogue_indices[j]) {
-                lengths[i + 1][j + 1] + 1
-            } else {
-                lengths[i + 1][j].max(lengths[i][j + 1])
-            };
+            lengths[i][j] =
+                if text_of_history(history_indices[i]) == text_of_dialogue(dialogue_indices[j]) {
+                    lengths[i + 1][j + 1] + 1
+                } else {
+                    lengths[i + 1][j].max(lengths[i][j + 1])
+                };
         }
     }
 
@@ -271,8 +285,14 @@ mod tests {
 
     #[test]
     fn exact_match_when_scene_unchanged() {
-        let dialogues = vec![dialogue(0, "爱音", "你爱我吗？"), dialogue(1, "", "她愣住了")];
-        let entries = vec![history("h1", "爱音", "你爱我吗？"), history("h2", "", "她愣住了")];
+        let dialogues = vec![
+            dialogue(0, "爱音", "你爱我吗？"),
+            dialogue(1, "", "她愣住了"),
+        ];
+        let entries = vec![
+            history("h1", "爱音", "你爱我吗？"),
+            history("h2", "", "她愣住了"),
+        ];
         let report = align(&entries, &dialogues);
         assert_eq!(report.exact, 2);
         assert_eq!(report.unmatched, 0);
@@ -287,7 +307,10 @@ mod tests {
             dialogue(1, "爱音", "你爱我吗？"),
             dialogue(2, "素世", "唉？"),
         ];
-        let entries = vec![history("h1", "爱音", "你爱我吗？"), history("h2", "素世", "唉？")];
+        let entries = vec![
+            history("h1", "爱音", "你爱我吗？"),
+            history("h2", "素世", "唉？"),
+        ];
         let report = align(&entries, &dialogues);
         // 内容未改, 只是行号前移 -> 精确匹配即可命中新行号
         assert_eq!(report.exact, 2);
@@ -302,7 +325,10 @@ mod tests {
             dialogue(0, "素世", "唉？"),
             dialogue(1, "爱音", "你爱我吗？"),
         ];
-        let entries = vec![history("h1", "爱音", "你爱我吗？"), history("h2", "素世", "唉？")];
+        let entries = vec![
+            history("h1", "爱音", "你爱我吗？"),
+            history("h2", "素世", "唉？"),
+        ];
         let report = align(&entries, &dialogues);
         assert_eq!(report.unmatched, 0);
         assert_eq!(index_of(&report, "h1"), Some(1));
@@ -312,7 +338,10 @@ mod tests {
     #[test]
     fn unmatched_when_dialogue_deleted() {
         let dialogues = vec![dialogue(0, "爱音", "你爱我吗？")];
-        let entries = vec![history("h1", "爱音", "你爱我吗？"), history("h2", "素世", "唉？")];
+        let entries = vec![
+            history("h1", "爱音", "你爱我吗？"),
+            history("h2", "素世", "唉？"),
+        ];
         let report = align(&entries, &dialogues);
         assert_eq!(index_of(&report, "h1"), Some(0));
         assert_eq!(index_of(&report, "h2"), None);

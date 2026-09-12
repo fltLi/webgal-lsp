@@ -375,6 +375,11 @@ export function VoiceConsole({ onOpenHelp }: Props) {
             待处理 {summary.pending}（测试 {summary.pendingTest} · 生成 {summary.pendingGenerate}）
             {summary.running > 0 && ` · 运行中 ${summary.running}`}
             {summary.pending + summary.running > 0 && ` · 预计 ${formatEta(summary.etaMillis)}`}
+            {summary.pendingGenerate > 0 && summary.pendingTest > 0 && (
+              <span className="voice-queue-hint">
+                （立即队列将把生成任务延后 {formatEta(summary.immediateDelayMillis)}）
+              </span>
+            )}
           </span>
           <span className="voice-actions-spacer" />
           <Tooltip content="清理未被任何场景引用的缓存音频" relationship="label">

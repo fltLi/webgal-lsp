@@ -14,6 +14,7 @@ import type {
   CacheEntry,
   Character,
   LaunchConfig,
+  ModelCandidate,
   SayLine,
   TrimSuggestion,
   VoiceEvent,
@@ -28,12 +29,14 @@ import {
   voiceLaunch,
   voiceListCache,
   voiceListCharacters,
+  voiceListModels,
   voiceParseScene,
   voiceProbe,
   voiceProbeAudio,
   voiceRealign,
   voiceRemoveCharacter,
   voiceSaveCharacter,
+  voiceSetModel,
   voiceShutdown,
   voiceStatus,
   voiceSynthesize,
@@ -45,6 +48,7 @@ import { useAppStore } from '../state/store';
 import { estimator, formatEta } from './estimate';
 import { matchScene, type CharacterMatch } from './match';
 import { charactersRoot, join } from './paths';
+import { executionOrder, nextTask as nextQueuedTask, summarize as summarizeQueue } from './queue';
 import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './settings';
 import {
   GENERATE_SAMPLE_STEPS,
@@ -334,31 +338,9 @@ class VoiceController {
 
   // -------- 调度 --------
 
-  private pendingByKind(kind: 'test' | 'generate'): VoiceTask[] {
-    return this.tasks.filter((task) => task.kind === kind && task.status === 'pending');
-  }
-
-  /** 按角色分组: 同角色连续执行, 避免服务端反复重载模型 */
-  private grouped(tasks: VoiceTask[]): VoiceTask[] {
-    const groups = new Map<string, VoiceTask[]>();
-    const order: string[] = [];
-    for (const task of tasks) {
-      const key = task.characterId ?? '';
-      if (!groups.has(key)) {
-        groups.set(key, []);
-        order.push(key);
-      }
-      groups.get(key)!.push(task);
-    }
-    return order.flatMap((key) => groups.get(key)!);
-  }
-
-  /** 取下一个待执行任务: 立即队列整体优先 */
+  /** 取下一个待执行任务: 立即队列整体优先, 队列内按角色分组连续执行 */
   private nextTask(): VoiceTask | null {
-    const immediate = this.grouped(this.pendingByKind('test'));
-    if (immediate.length > 0) return immediate[0];
-    const normal = this.grouped(this.pendingByKind('generate'));
-    return normal[0] ?? null;
+    return nextQueuedTask(this.tasks);
   }
 
   private async pump(): Promise<void> {
@@ -722,6 +704,29 @@ class VoiceController {
     return voiceDefaultLaunchConfig(root);
   }
 
+  /** 扫描整合包内的 v4 权重, 返回可配对的模型候选 */
+  async listModels(): Promise<ModelCandidate[]> {
+    const root = this.settings.launch?.root;
+    if (!root) return [];
+    try {
+      return await voiceListModels(root);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 显式切换服务端权重。
+   *
+   * 刻意只由用户主动触发: 服务端切换权重会重载模型 (SoVITS v4 需重载底模并合并 LoRA)
+   * 并落盘 `tts_infer.yaml`, 属于高代价且带副作用的操作。
+   * 队列通过按角色分组让同角色任务连续执行, 正常情况下无需切换。
+   */
+  async switchModel(gptWeights: string | null, sovitsWeights: string | null): Promise<void> {
+    if (!gptWeights && !sovitsWeights) throw new Error('请先填写至少一项权重路径');
+    await voiceSetModel(gptWeights, sovitsWeights);
+  }
+
   /** 清理已完成/已取消的任务记录 (历史记录不受影响) */
   clearFinishedTasks(): void {
     this.tasks = this.tasks.filter((task) => task.status === 'pending' || task.status === 'running');
@@ -781,17 +786,18 @@ class VoiceController {
     running: number;
     etaMillis: number;
     etaText: string;
+    /** 立即队列对生成任务的预计延后量 */
+    immediateDelayMillis: number;
   } {
-    const pending = this.tasks.filter((task) => task.status === 'pending');
+    const summary = summarizeQueue(this.tasks, (tasks) => estimator.estimateAll(tasks));
+    const ordered = executionOrder(this.tasks.filter((task) => task.status === 'pending'));
     const running = this.tasks.filter((task) => task.status === 'running');
-    const eta = estimator.estimateAll([...running, ...this.grouped(pending)]);
+    const eta = estimator.estimateAll([...running, ...ordered]);
     return {
-      pending: pending.length,
-      pendingTest: pending.filter((task) => task.kind === 'test').length,
-      pendingGenerate: pending.filter((task) => task.kind === 'generate').length,
-      running: running.length,
+      ...summary,
       etaMillis: eta,
       etaText: formatEta(eta),
+      immediateDelayMillis: summary.delayMillis,
     };
   }
 
@@ -802,6 +808,19 @@ class VoiceController {
   /** 用户在语句面板改动参数 -> 视为新配置 (旧历史项不受影响) */
   isNewConfiguration(id: string, params: VoiceParams): boolean {
     return this.findMatchingHistory(id, params) === null;
+  }
+
+  /** 在已有历史项的配置上创建一个新任务 (不修改历史项本身) */
+  retryFromHistory(cardId: string, entryId: string): VoiceTask | null {
+    const card = this.cards.get(cardId);
+    if (!card) return null;
+    const entry = card.history.find((item) => item.id === entryId);
+    if (!entry || entry.line === null) return null;
+    const line = card.dialogues.find((dialogue) => dialogue.line === entry.line);
+    if (!line) return null;
+
+    // 复用原参数, 但文本跟随当前场景内容
+    return this.enqueue(cardId, entry.kind, { ...entry.params, text: line.text });
   }
 
   /** 关闭场景卡时的未完成检查 */

@@ -160,12 +160,16 @@ impl Library {
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") || path.ends_with("index.json") {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json")
+                || path.ends_with("index.json")
+            {
                 continue;
             }
-            match std::fs::read_to_string(&path).map_err(LibraryError::from).and_then(|text| {
-                serde_json::from_str::<Character>(&text).map_err(LibraryError::from)
-            }) {
+            match std::fs::read_to_string(&path)
+                .map_err(LibraryError::from)
+                .and_then(|text| {
+                    serde_json::from_str::<Character>(&text).map_err(LibraryError::from)
+                }) {
                 Ok(character) => characters.push(character),
                 Err(error) => eprintln!("跳过无法解析的角色配置 {}: {error}", path.display()),
             }
@@ -283,7 +287,8 @@ impl Library {
         }
         let file = std::fs::File::create(destination)?;
         let mut writer = zip::ZipWriter::new(file);
-        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         writer.start_file("character.json", options)?;
         writer.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
@@ -374,7 +379,11 @@ impl Library {
 /// 依据角色名生成库内唯一 id
 pub fn unique_id(root: &Path, name: &str) -> String {
     let base = slugify(name);
-    let base = if base.is_empty() { "character".to_string() } else { base };
+    let base = if base.is_empty() {
+        "character".to_string()
+    } else {
+        base
+    };
     if !root.join(format!("{base}.json")).exists() {
         return base;
     }
@@ -385,6 +394,27 @@ pub fn unique_id(root: &Path, name: &str) -> String {
         }
     }
     format!("{base}-{}", now_millis())
+}
+
+/// 把 `-vocal=` 的值解析为项目内音频文件的绝对路径。
+///
+/// WebGAL 的取值是**相对 `game/vocal/` 的路径** (例如 `anon/a1b2c3d4.wav`),
+/// 引擎侧对应 `./game/vocal/${value}`, 因此这里只需拼接即可。
+/// 值里可能使用 `/` 或 `\`, 统一归一化后再拼接。
+pub fn resolve_audio_path(project: &Path, vocal: &str) -> PathBuf {
+    let normalized = vocal.replace('\\', "/");
+    let mut path = project.join("game").join("vocal");
+    for segment in normalized.split('/') {
+        // 跳过空段与 `.`, 拒绝 `..` 以防越界
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            continue;
+        }
+        path.push(segment);
+    }
+    path
 }
 
 /// 生成可用作文件名/id 的 slug (保留中日韩字符, 其余折叠为 `-`)
@@ -411,7 +441,9 @@ mod tests {
     use crate::service::voice::wav;
 
     fn temp_library(name: &str) -> Library {
-        let root = std::env::temp_dir().join("webgal-ink-library-test").join(name);
+        let root = std::env::temp_dir()
+            .join("webgal-ink-library-test")
+            .join(name);
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Library::new(root)
@@ -477,7 +509,13 @@ mod tests {
         let first = write_reference(&source_dir, "a.wav", 4.0);
 
         let adopted = library
-            .adopt_reference("anon", &first, "参考文本".into(), "zh".into(), vec!["平静".into()])
+            .adopt_reference(
+                "anon",
+                &first,
+                "参考文本".into(),
+                "zh".into(),
+                vec!["平静".into()],
+            )
             .unwrap();
         assert!(adopted.file.starts_with("ref_"));
         assert_eq!(adopted.text, "参考文本");
@@ -523,7 +561,13 @@ mod tests {
         std::fs::create_dir_all(&source_dir).unwrap();
         let source = write_reference(&source_dir, "a.wav", 4.0);
         let adopted = library
-            .adopt_reference("anon", &source, "参考文本".into(), "zh".into(), vec!["活泼".into()])
+            .adopt_reference(
+                "anon",
+                &source,
+                "参考文本".into(),
+                "zh".into(),
+                vec!["活泼".into()],
+            )
             .unwrap();
 
         let mut with_ref = library.load("anon").unwrap();
@@ -548,7 +592,9 @@ mod tests {
         assert_eq!(imported.references[0].tags, vec!["活泼".to_string()]);
         // 模型选择不参与导入
         assert!(imported.model.is_none());
-        assert!(other.reference_path(&imported.id, &imported.references[0].file).is_file());
+        assert!(other
+            .reference_path(&imported.id, &imported.references[0].file)
+            .is_file());
     }
 
     #[test]
@@ -596,6 +642,51 @@ mod tests {
         assert_eq!(slugify("素世（不夹）"), "素世-不夹");
         assert_eq!(slugify("  A B / C  "), "A-B-C");
         assert_eq!(slugify("《》"), "");
+    }
+
+    #[test]
+    fn resolve_audio_path_maps_vocal_value_under_game_vocal() {
+        let project = Path::new("C:/game-project");
+        let path = resolve_audio_path(project, "anon/a1b2c3d4.wav");
+        assert_eq!(
+            path,
+            project
+                .join("game")
+                .join("vocal")
+                .join("anon")
+                .join("a1b2c3d4.wav")
+        );
+    }
+
+    #[test]
+    fn resolve_audio_path_normalizes_separators() {
+        let project = Path::new("C:/game-project");
+        let forward = resolve_audio_path(project, "anon/x.wav");
+        let back = resolve_audio_path(project, "anon\\x.wav");
+        assert_eq!(forward, back);
+    }
+
+    #[test]
+    fn resolve_audio_path_handles_flat_names_and_rejects_traversal() {
+        let project = Path::new("C:/game-project");
+        // 直接放在 vocal 根下的旧式引用
+        let flat = resolve_audio_path(project, "v1.wav");
+        assert_eq!(flat, project.join("game").join("vocal").join("v1.wav"));
+        // `..` 与多余分隔符被忽略, 不会越出 vocal 目录
+        let escaped = resolve_audio_path(project, "../../secret.wav");
+        assert_eq!(
+            escaped,
+            project.join("game").join("vocal").join("secret.wav")
+        );
+        let duplicated = resolve_audio_path(project, "//anon//x.wav");
+        assert_eq!(
+            duplicated,
+            project
+                .join("game")
+                .join("vocal")
+                .join("anon")
+                .join("x.wav")
+        );
     }
 
     #[test]

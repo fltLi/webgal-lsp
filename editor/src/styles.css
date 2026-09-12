@@ -2908,3 +2908,21 @@ body.resizing {
   color: var(--app-muted);
   padding: 4px 12px;
 }
+
+.character-model-pick {
+  margin-bottom: 4px;
+}
+.character-model-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.character-model-note {
+  font-size: 10px;
+  color: var(--app-muted);
+}
+.voice-queue-hint {
+  color: var(--app-muted);
+}

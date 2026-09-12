@@ -21,6 +21,7 @@ pub mod realign;
 pub mod scene;
 pub mod wav;
 
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -54,7 +55,10 @@ pub enum VoiceEvent {
     /// GSOV 进程输出的一行日志
     Log { line: String },
     /// 状态变化
-    Status { status: GsvStatus, detail: Option<String> },
+    Status {
+        status: GsvStatus,
+        detail: Option<String>,
+    },
 }
 
 /// GSOV 进程与状态
@@ -82,7 +86,12 @@ impl Default for VoiceState {
 }
 
 impl VoiceState {
-    async fn set_status(&self, status: GsvStatus, detail: Option<String>, channel: Option<&Channel<VoiceEvent>>) {
+    async fn set_status(
+        &self,
+        status: GsvStatus,
+        detail: Option<String>,
+        channel: Option<&Channel<VoiceEvent>>,
+    ) {
         *self.status.lock().await = status;
         *self.detail.lock().await = detail.clone();
         if let Some(channel) = channel {
@@ -111,7 +120,8 @@ impl VoiceState {
         };
         if let Some(config) = self.config.lock().await.clone() {
             let client = gsov::GsvClient::new(&config.host, config.port);
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), client.shutdown()).await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(2), client.shutdown()).await;
         }
         // 给服务端一点时间自行退出 (它会落盘推理配置)
         let exited = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait())
@@ -146,6 +156,12 @@ pub async fn voice_default_launch_config(root: String) -> Result<LaunchConfig, S
             .unwrap_or_else(|| "不是有效的 GPT-SoVITS 整合包目录".into()));
     }
     Ok(launcher::default_config(&path, &detected))
+}
+
+/// 扫描整合包内的 v4 权重, 给出可配对的模型候选
+#[tauri::command]
+pub async fn voice_list_models(root: String) -> Result<Vec<launcher::ModelCandidate>, String> {
+    Ok(launcher::scan_models(Path::new(&root)))
 }
 
 /// 启动 GSOV 服务
@@ -184,22 +200,30 @@ pub async fn voice_launch(
     let state_arc: Arc<VoiceState> = state.inner().clone();
 
     if let Some(stdout) = child.stdout.take() {
-        spawn_log_reader(stdout, splitter.clone(), state_arc.clone(), on_event.clone());
+        spawn_log_reader(
+            stdout,
+            splitter.clone(),
+            state_arc.clone(),
+            on_event.clone(),
+        );
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_log_reader(stderr, splitter.clone(), state_arc.clone(), on_event.clone());
+        spawn_log_reader(
+            stderr,
+            splitter.clone(),
+            state_arc.clone(),
+            on_event.clone(),
+        );
     }
 
     *state.config.lock().await = Some(config.clone());
     *state.child.lock().await = Some(child);
-    state.set_status(GsvStatus::Starting, None, Some(&on_event)).await;
+    state
+        .set_status(GsvStatus::Starting, None, Some(&on_event))
+        .await;
     state
         .push_log(
-            format!(
-                "$ {} {}",
-                command.program,
-                command.args.join(" ")
-            ),
+            format!("$ {} {}", command.program, command.args.join(" ")),
             Some(&on_event),
         )
         .await;
@@ -218,7 +242,10 @@ fn spawn_log_reader<R>(
     tauri::async_runtime::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            let split = splitter.lock().map(|mut s| s.push(&line)).unwrap_or_default();
+            let split = splitter
+                .lock()
+                .map(|mut s| s.push(&line))
+                .unwrap_or_default();
             for entry in split {
                 state.push_log(entry, Some(&channel)).await;
             }
@@ -260,7 +287,9 @@ pub async fn voice_status(state: tauri::State<'_, Arc<VoiceState>>) -> Result<Vo
 
 /// 取走日志缓冲 (总控台打开时补全历史日志)
 #[tauri::command]
-pub async fn voice_take_logs(state: tauri::State<'_, Arc<VoiceState>>) -> Result<Vec<String>, String> {
+pub async fn voice_take_logs(
+    state: tauri::State<'_, Arc<VoiceState>>,
+) -> Result<Vec<String>, String> {
     let mut logs = state.logs.lock().await;
     Ok(std::mem::take(&mut *logs))
 }
@@ -405,7 +434,10 @@ pub async fn voice_synthesize(
     }
 
     let client = gsov::GsvClient::new(&config.host, config.port);
-    let bytes = client.synthesize(&tts).await.map_err(|error| error.to_string())?;
+    let bytes = client
+        .synthesize(&tts)
+        .await
+        .map_err(|error| error.to_string())?;
 
     // 先在临时目录落盘再入库, 保证缓存只出现完整文件
     let root = cache_root(&app)?;
@@ -427,7 +459,9 @@ pub async fn voice_synthesize(
         std::fs::rename(&staging, &target).map_err(|error| format!("写入配音缓存失败: {error}"))?;
     }
 
-    let size = std::fs::metadata(&target).map_err(|error| error.to_string())?.len();
+    let size = std::fs::metadata(&target)
+        .map_err(|error| error.to_string())?
+        .len();
     Ok(SynthesizeResult {
         entry: CacheEntry {
             hash,
@@ -641,14 +675,21 @@ fn library_of(app: &tauri::AppHandle) -> Result<library::Library, String> {
 
 /// 列出全部角色
 #[tauri::command]
-pub async fn voice_list_characters(app: tauri::AppHandle) -> Result<Vec<library::Character>, String> {
+pub async fn voice_list_characters(
+    app: tauri::AppHandle,
+) -> Result<Vec<library::Character>, String> {
     library_of(&app)?.list().map_err(|error| error.to_string())
 }
 
 /// 读取单个角色
 #[tauri::command]
-pub async fn voice_load_character(app: tauri::AppHandle, id: String) -> Result<library::Character, String> {
-    library_of(&app)?.load(&id).map_err(|error| error.to_string())
+pub async fn voice_load_character(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<library::Character, String> {
+    library_of(&app)?
+        .load(&id)
+        .map_err(|error| error.to_string())
 }
 
 /// 保存角色 (新建或更新)
@@ -665,7 +706,9 @@ pub async fn voice_save_character(
 /// 删除角色
 #[tauri::command]
 pub async fn voice_remove_character(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    library_of(&app)?.remove(&id).map_err(|error| error.to_string())
+    library_of(&app)?
+        .remove(&id)
+        .map_err(|error| error.to_string())
 }
 
 /// 新建角色的入参
@@ -765,10 +808,15 @@ pub async fn voice_remove_reference(
         .filter(|reference| reference.hash == hash)
         .map(|reference| reference.file.clone())
         .collect();
-    character.references.retain(|reference| reference.hash != hash);
+    character
+        .references
+        .retain(|reference| reference.hash != hash);
 
     for file in removed {
-        let still_used = character.references.iter().any(|reference| reference.file == file);
+        let still_used = character
+            .references
+            .iter()
+            .any(|reference| reference.file == file);
         library
             .drop_reference_file(&id, &file, still_used)
             .map_err(|error| error.to_string())?;
@@ -844,13 +892,16 @@ pub async fn voice_list_cache(app: tauri::AppHandle) -> Result<Vec<CacheEntry>, 
             modified_at,
         });
     }
-    entries.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    entries.sort_by_key(|b| Reverse(b.modified_at));
     Ok(entries)
 }
 
 /// 把一段音频写入缓存 (以内容哈希命名), 返回缓存路径与哈希
 #[tauri::command]
-pub async fn voice_store_cache(app: tauri::AppHandle, source: String) -> Result<CacheEntry, String> {
+pub async fn voice_store_cache(
+    app: tauri::AppHandle,
+    source: String,
+) -> Result<CacheEntry, String> {
     let root = cache_root(&app)?;
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let hash = audio::hash_file(Path::new(&source))?;
@@ -913,7 +964,6 @@ pub async fn voice_scan_references(project: String) -> Result<Vec<VocalReference
     if !scene_dir.is_dir() {
         return Err(format!("场景目录不存在: {}", scene_dir.display()));
     }
-    let vocal_root = Path::new(&project).join("game").join("vocal");
     let mut references = Vec::new();
 
     let entries = walkdir::WalkDir::new(&scene_dir)
@@ -936,7 +986,7 @@ pub async fn voice_scan_references(project: String) -> Result<Vec<VocalReference
             let Some(vocal) = line.vocal else {
                 continue;
             };
-            let file = vocal_root.join(vocal.replace('/', std::path::MAIN_SEPARATOR_STR));
+            let file = library::resolve_audio_path(Path::new(&project), &vocal);
             references.push(VocalReference {
                 path: file.display().to_string(),
                 exists: file.is_file(),
@@ -982,7 +1032,9 @@ mod tests {
         // 256 字节 -> 344 个字符 (含 1 个 '=')
         assert_eq!(encoded.len(), 344);
         assert!(encoded.ends_with('='));
-        assert!(encoded.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' || ch == '='));
+        assert!(encoded
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' || ch == '='));
     }
 
     #[tokio::test]
@@ -1000,6 +1052,9 @@ mod tests {
         }
         let logs = state.logs.lock().await;
         assert_eq!(logs.len(), LOG_LIMIT);
-        assert!(logs.last().unwrap().ends_with(&format!("{}", LOG_LIMIT + 49)));
+        assert!(logs
+            .last()
+            .unwrap()
+            .ends_with(&format!("{}", LOG_LIMIT + 49)));
     }
 }

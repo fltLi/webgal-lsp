@@ -252,6 +252,18 @@ export function VoiceHistory({ cardId, onChanged, onApplied }: Props) {
             <ArrowDownloadRegular /> 导出音频
           </button>
           <button
+            disabled={menu.entry.line === null}
+            title="用这一条记录的参数重新入队（不改动原记录）"
+            onClick={() => {
+              const task = voiceController.retryFromHistory(cardId, menu.entry.id);
+              setMessage(task ? '已按该参数重新入队' : '该记录已无法对齐到语句，无法重试');
+              setMenu(null);
+              onChanged();
+            }}
+          >
+            以此参数重试
+          </button>
+          <button
             disabled={menu.entry.status !== 'pending'}
             onClick={() => {
               voiceController.cancel(menu.entry.id);

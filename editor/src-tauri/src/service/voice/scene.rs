@@ -381,7 +381,8 @@ label:loop;
     fn parsed_lines_roundtrip_vocal_through_rewrite() {
         let scene = "爱音:你爱我吗？ -figureId=anon;\n:素世愣住了;\n";
         let lines = parse_say_lines(scene);
-        let rewritten = rewrite_line("爱音:你爱我吗？ -figureId=anon;", Some("anon/x.wav")).unwrap();
+        let rewritten =
+            rewrite_line("爱音:你爱我吗？ -figureId=anon;", Some("anon/x.wav")).unwrap();
         let reparsed = parse_say_lines(&rewritten);
         assert_eq!(reparsed.len(), 1);
         assert_eq!(reparsed[0].vocal.as_deref(), Some("anon/x.wav"));

@@ -112,7 +112,7 @@ pub fn trim_suggestion(path: &Path) -> Result<TrimSuggestion> {
     let audio = read_mono(path)?;
     let duration = audio.duration();
     let speech = detect_speech_range(&audio);
-    let suggested = match speech.clone() {
+    let suggested = match speech {
         // 语音区本身仍在 10 秒以上: 以语音区为基准截取前 10 秒
         Some(range) if range.end - range.start > MAX_REF_SECONDS => TrimRange {
             start: range.start,
@@ -187,7 +187,11 @@ pub fn waveform(path: &Path) -> Result<Waveform> {
 ///
 /// * `range` 为 `None` 时, 超长音频按静音检测自动截取;
 /// * 过短音频在尾部补静音至下限。
-pub fn normalize_reference(path: &Path, destination: &Path, range: Option<(f64, f64)>) -> Result<NormalizedRef> {
+pub fn normalize_reference(
+    path: &Path,
+    destination: &Path,
+    range: Option<(f64, f64)>,
+) -> Result<NormalizedRef> {
     let audio = read_mono(path)?;
     let duration = audio.duration();
     if duration <= 0.0 {
@@ -264,7 +268,11 @@ pub fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
-    Ok(digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect())
+    Ok(digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn read_mono(path: &Path) -> Result<Audio> {
@@ -344,7 +352,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("webgal-ink-audio-test").join(name);
+        let dir = std::env::temp_dir()
+            .join("webgal-ink-audio-test")
+            .join(name);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -403,7 +413,9 @@ mod tests {
         let path = write_audio(&dir, "over_limit.wav", &synth(15.0, 1.0, 14.0, 16000));
         let suggestion = trim_suggestion(&path).unwrap();
         assert!(suggestion.within_limit);
-        assert!((suggestion.suggested.end - suggestion.suggested.start - MAX_REF_SECONDS).abs() < 0.05);
+        assert!(
+            (suggestion.suggested.end - suggestion.suggested.start - MAX_REF_SECONDS).abs() < 0.05
+        );
     }
 
     #[test]

@@ -117,12 +117,15 @@ export function matchScene(
   for (const line of dialogues) {
     const match = matchCharacter(line, context);
     if (line.speaker === null) {
-      // 旁白: 先看人工覆盖, 再沿用上一条旁白的角色
-      const override = context.overrides[''];
+      // 旁白分两类:
+      // * 显式空说话者 (`:内容;`) - 可以单独指定角色, 该选择会成为"上一条旁白的角色";
+      // * 省略说话者的裸行 - 沿用上一条旁白的角色。
+      const explicit = !line.speakerInherited;
+      const override = explicit ? context.overrides[''] : undefined;
       const chosen = override ?? lastNarrationCharacter;
-      const valid = chosen && characters.some((character) => character.id === chosen && character.enabled);
+      const valid = Boolean(chosen) && characters.some((character) => character.id === chosen && character.enabled);
       const resolved: CharacterMatch = valid
-        ? { characterId: chosen, reason: override ? 'override' : 'narration' }
+        ? { characterId: chosen as string, reason: override ? 'override' : 'narration' }
         : { characterId: null, reason: 'none' };
       result.set(line.line, resolved);
       if (resolved.characterId) lastNarrationCharacter = resolved.characterId;

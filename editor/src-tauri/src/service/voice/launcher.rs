@@ -99,7 +99,9 @@ pub fn detect(root: &Path) -> DetectedRuntime {
     let embedded = root.join("runtime").join("python.exe");
     let has_embedded = embedded.is_file();
     if !has_embedded {
-        issues.push("未见整合包内置运行时 (runtime\\python.exe), 请指定外部 Python 或自定义命令".into());
+        issues.push(
+            "未见整合包内置运行时 (runtime\\python.exe), 请指定外部 Python 或自定义命令".into(),
+        );
     }
 
     let has_script = root.join(DEFAULT_SCRIPT).is_file();
@@ -120,6 +122,152 @@ pub fn detect(root: &Path) -> DetectedRuntime {
         has_infer_config,
         issues,
     }
+}
+
+/// 候选 GSOV 模型 (一整套 GPT + SoVITS 权重)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCandidate {
+    /// 推断的角色名 (由权重文件名归一化而来)
+    pub name: String,
+    /// GPT (T2S) 权重路径, 相对整合包根, 正斜杠分隔
+    pub gpt_weights: String,
+    /// SoVITS 权重路径, 相对整合包根, 正斜杠分隔
+    pub sovits_weights: String,
+}
+
+/// 扫描整合包内的权重目录, 推断出可用的模型组合。
+///
+/// GPT-SoVITS 的权重目录命名约定为 `GPT_weights[_vN]` 与 `SoVITS_weights[_vN]`,
+/// 训练产物文件名通常是「角色名 + 训练步数字段」(如 `爱音-e15.ckpt` 与
+/// `爱音_e4_s436_l64.pth`)。这里按**归一化后的公共前缀**配对, 只返回两边都存在的组合,
+/// 因此不会给出无法使用的建议。仅支持 v4: `_v2` / `_v3` 目录会被跳过。
+pub fn scan_models(root: &Path) -> Vec<ModelCandidate> {
+    let debug = std::env::var("WEBGAL_INK_DEBUG_SCAN").is_ok();
+    let mut gpt_files: Vec<(String, String)> = Vec::new(); // (归一化名, 相对路径)
+    let mut sovits_files: Vec<(String, String)> = Vec::new();
+
+    let top = read_dir_entries(root);
+    if debug {
+        eprintln!("[scan] root={} entries={}", root.display(), top.len());
+    }
+
+    for entry in top {
+        let name = entry.file_name;
+        let is_gpt = name.starts_with("GPT_weights");
+        let is_sovits = name.starts_with("SoVITS_weights");
+        if debug {
+            eprintln!("[scan] name={name:?} gpt={is_gpt} sovits={is_sovits}");
+        }
+        let is_sovits = name.starts_with("SoVITS_weights");
+        if !is_gpt && !is_sovits {
+            continue;
+        }
+        // 仅 v4: 无版本后缀, 或后缀恰为 `_v4`; 显式跳过 v1/v2/v3 等旧版本目录
+        if let Some((_, suffix)) = name.rsplit_once("_v") {
+            if !suffix.is_empty() && suffix != "4" && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+        }
+
+        for file in read_dir_entries(&root.join(&name)) {
+            if !file.is_file {
+                continue;
+            }
+            let extension = file
+                .file_name
+                .rsplit_once('.')
+                .map(|(_, ext)| ext.to_ascii_lowercase())
+                .unwrap_or_default();
+            let expected = if is_gpt { "ckpt" } else { "pth" };
+            if extension != expected {
+                continue;
+            }
+            let relative = format!("{}/{}", name, file.file_name);
+            let key = normalize_model_name(&file.file_name);
+            if is_gpt {
+                gpt_files.push((key, relative));
+            } else {
+                sovits_files.push((key, relative));
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+    for (gpt_key, gpt_weights) in &gpt_files {
+        // 选取归一化名匹配度最高的 SoVITS 权重: 互为前缀即视为同一角色
+        let best = sovits_files
+            .iter()
+            .filter(|(sovits_key, _)| {
+                !sovits_key.is_empty()
+                    && !gpt_key.is_empty()
+                    && (gpt_key.starts_with(sovits_key.as_str())
+                        || sovits_key.starts_with(gpt_key.as_str()))
+            })
+            .max_by_key(|(sovits_key, _)| sovits_key.len().min(gpt_key.len()));
+        let Some((_, sovits_weights)) = best else {
+            continue;
+        };
+        candidates.push(ModelCandidate {
+            name: display_model_name(gpt_weights),
+            gpt_weights: gpt_weights.clone(),
+            sovits_weights: sovits_weights.clone(),
+        });
+    }
+
+    candidates.sort_by(|a, b| a.name.cmp(&b.name));
+    candidates
+}
+
+/// 去掉训练后缀与扩展名, 得到用于配对的归一化名
+fn normalize_model_name(file_name: &str) -> String {
+    let stem = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name);
+    let mut result = String::new();
+    for ch in stem.chars() {
+        // 训练后缀形如 `-e15` / `_e4_s436_l64`, 遇到 `-` 或 `_` 即截断
+        if ch == '-' || ch == '_' {
+            break;
+        }
+        result.push(ch);
+    }
+    result.trim().to_lowercase()
+}
+
+/// 展示用名称: 权重文件的主干名
+fn display_model_name(relative: &str) -> String {
+    relative
+        .rsplit('/')
+        .next()
+        .unwrap_or(relative)
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(relative)
+        .to_string()
+}
+
+/// 目录项
+struct DirEntryName {
+    file_name: String,
+    is_file: bool,
+}
+
+fn read_dir_entries(dir: &Path) -> Vec<DirEntryName> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| DirEntryName {
+            file_name: entry.file_name().to_string_lossy().to_string(),
+            is_file: entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false),
+        })
+        .collect()
 }
 
 /// 按探测结果构造默认启动配置
@@ -174,11 +322,7 @@ impl LaunchConfig {
             LaunchMode::Command { program, args } => (program.clone(), args.clone()),
         };
         args.shrink_to_fit();
-        LaunchCommand {
-            program,
-            args,
-            cwd,
-        }
+        LaunchCommand { program, args, cwd }
     }
 }
 
@@ -340,7 +484,10 @@ mod tests {
         let mut splitter = LineSplitter::new();
         assert!(splitter.push("0%|          | 0/1500").is_empty());
         let lines = splitter.push("\r  1%|>         | 20/1500\r");
-        assert_eq!(lines, vec!["0%|          | 0/1500", "1%|>         | 20/1500"]);
+        assert_eq!(
+            lines,
+            vec!["0%|          | 0/1500", "1%|>         | 20/1500"]
+        );
         assert!(splitter.push("  50%|").is_empty());
         assert_eq!(splitter.flush().as_deref(), Some("50%|"));
     }
@@ -351,5 +498,116 @@ mod tests {
         let lines = splitter.push("Loading Text2Semantic weights\n\nINFO: ready\n");
         assert_eq!(lines, vec!["Loading Text2Semantic weights", "INFO: ready"]);
         assert!(splitter.flush().is_none());
+    }
+
+    // -------- 模型扫描 --------
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir()
+            .join("webgal-ink-model-scan")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn touch(root: &Path, relative: &str) {
+        let path = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"x").unwrap();
+    }
+
+    #[test]
+    fn scan_pairs_gpt_and_sovits_by_common_prefix() {
+        let root = temp_root("pair");
+        touch(&root, "GPT_weights_v4/爱音-e15.ckpt");
+        touch(&root, "SoVITS_weights_v4/爱音_e4_s436_l64.pth");
+        touch(&root, "GPT_weights_v4/素世(夹)-e15.ckpt");
+        touch(&root, "SoVITS_weights_v4/素世(夹)_e4_s512_l64.pth");
+
+        eprintln!("[test] debug_root={}", root.display());
+        eprintln!("[test] is_dir={}", root.is_dir());
+        eprintln!(
+            "[test] top entries={:?}",
+            std::fs::read_dir(&root).map(|r| r.count())
+        );
+
+        let candidates = scan_models(&root);
+        assert_eq!(candidates.len(), 2);
+        // 按名称排序
+        assert_eq!(candidates[0].gpt_weights, "GPT_weights_v4/爱音-e15.ckpt");
+        assert_eq!(
+            candidates[0].sovits_weights,
+            "SoVITS_weights_v4/爱音_e4_s436_l64.pth"
+        );
+        assert_eq!(candidates[0].name, "爱音-e15");
+        assert_eq!(
+            candidates[1].gpt_weights,
+            "GPT_weights_v4/素世(夹)-e15.ckpt"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_skips_non_v4_weight_directories() {
+        let root = temp_root("skip-old");
+        // 文件名刻意不互为前缀, 避免与 "旧目录被跳过" 的断言混在一起
+        touch(&root, "GPT_weights/onlygpt-e15.ckpt");
+        touch(&root, "SoVITS_weights/onlysovits_e4.pth");
+        touch(&root, "GPT_weights_v2/onlygpt2-e15.ckpt");
+        touch(&root, "SoVITS_weights_v3/onlysovits3_e4.pth");
+        assert!(scan_models(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_accepts_unsuffixed_v4_directories() {
+        // 部分整合包直接用 `GPT_weights` / `SoVITS_weights` 存放 v4 权重
+        let root = temp_root("no-suffix");
+        touch(&root, "GPT_weights/anon-e10.ckpt");
+        touch(&root, "SoVITS_weights/anon_e4_s100.pth");
+        let candidates = scan_models(&root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].gpt_weights, "GPT_weights/anon-e10.ckpt");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_ignores_unpaired_weights() {
+        let root = temp_root("unpaired");
+        touch(&root, "GPT_weights_v4/仅有gpt-e15.ckpt");
+        touch(&root, "SoVITS_weights_v4/另一个角色_e4.pth");
+        assert!(scan_models(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_ignores_wrong_extensions() {
+        let root = temp_root("extensions");
+        touch(&root, "GPT_weights_v4/anon-e15.ckpt");
+        touch(&root, "GPT_weights_v4/notes.txt");
+        touch(&root, "SoVITS_weights_v4/anon_e4.pth");
+        touch(&root, "SoVITS_weights_v4/readme.md");
+        let candidates = scan_models(&root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].gpt_weights, "GPT_weights_v4/anon-e15.ckpt");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_missing_directories_is_empty() {
+        let root = temp_root("empty");
+        assert!(scan_models(&root).is_empty());
+        assert!(scan_models(Path::new("C:/definitely/not/here")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn normalize_model_name_drops_training_suffix() {
+        assert_eq!(normalize_model_name("爱音-e15.ckpt"), "爱音");
+        assert_eq!(normalize_model_name("爱音_e4_s436_l64.pth"), "爱音");
+        assert_eq!(normalize_model_name("素世(夹)-e15.ckpt"), "素世(夹)");
+        assert_eq!(normalize_model_name("Anon_e4.pth"), "anon");
+        assert_eq!(normalize_model_name("no-extension"), "no");
     }
 }

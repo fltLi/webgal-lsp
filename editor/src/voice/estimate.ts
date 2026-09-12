@@ -6,8 +6,6 @@
 // 用已完成的任务回归出「固定开销 + 每字符耗时」两个系数, 再据此给出剩余时间。
 // 测试 (x4) 与正式生成 (x32) 的耗时量级相差数倍, 必须分别校准。
 
-import type { VoiceTask } from './types';
-
 /** 最小样本数: 少于该数量时沿用先验系数 */
 const MIN_SAMPLES = 3;
 
@@ -30,6 +28,12 @@ const PRIOR: Record<'test' | 'generate', Coefficients> = {
 export interface Sample {
   chars: number;
   millis: number;
+}
+
+/** 估算所需的最小任务描述 */
+export interface EstimateTask {
+  kind: 'test' | 'generate';
+  params: { text: string };
 }
 
 /** 估算器 (每个会话一份; 不持久化, 因为换机器后系数完全不同) */
@@ -77,7 +81,7 @@ export class DurationEstimator {
   }
 
   /** 估算一组任务的总耗时 (毫秒) */
-  estimateAll(tasks: VoiceTask[]): number {
+  estimateAll(tasks: EstimateTask[]): number {
     return tasks.reduce((sum, task) => sum + this.estimate(task.kind, task.params.text.length), 0);
   }
 

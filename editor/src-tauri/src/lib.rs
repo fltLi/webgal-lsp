@@ -57,6 +57,7 @@ pub fn run() {
             service::snapshot::pack_snapshot,
             service::voice::voice_detect_runtime,
             service::voice::voice_default_launch_config,
+            service::voice::voice_list_models,
             service::voice::voice_launch,
             service::voice::voice_shutdown,
             service::voice::voice_status,
