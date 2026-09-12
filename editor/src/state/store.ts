@@ -259,6 +259,7 @@ export const useAppStore = create<AppStore>((set) => ({
         previewStage: null,
         voiceWorkbenchOpen: false,
         voiceModePaths: [],
+        voiceModeDisabled: [],
       });
     }
   },
@@ -295,12 +296,16 @@ export const useAppStore = create<AppStore>((set) => ({
       const closed = s.tabs.find((tab) => tab.id === id);
       if (closed?.kind === 'scene') delete diagnostics[closed.path];
       const closingWorkbench = closed?.kind === 'voice-workbench';
+      // 关闭场景卡时顺带清掉它的配音编辑模式, 避免残留到下次打开
+      const voiceModePaths =
+        closed?.kind === 'scene' ? s.voiceModePaths.filter((path) => path !== closed.path) : s.voiceModePaths;
       return {
         tabs,
         activeTabId: activeId,
         diagnostics,
-        // 关闭工作台即退出配音功能; 场景的配音编辑模式也随之复位
-        ...(closingWorkbench ? { voiceWorkbenchOpen: false, voiceModePaths: [] } : {}),
+        voiceModePaths,
+        // 关闭工作台即退出配音功能
+        ...(closingWorkbench ? { voiceWorkbenchOpen: false, voiceModePaths: [], voiceModeDisabled: [] } : {}),
       };
     }),
   activateTab: (id) =>
