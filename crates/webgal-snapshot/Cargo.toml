@@ -18,8 +18,8 @@ derive_more.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 
-walkdir = "2.5"
-zip = "8.6"
+walkdir.workspace = true
+zip.workspace = true
 indicatif = "0.18"
 console = "0.16"
 
