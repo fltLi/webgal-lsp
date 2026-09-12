@@ -274,6 +274,8 @@ export function EditorPage() {
           配音工作台与选项卡工作区共用一个列容器: 两者都是"编辑器工作区"的当前内容,
           因此必须放在 flex column 内, 否则作为行容器 .editor-main 的直接子项会被
           排到选项卡栏的右侧, 把选项卡栏挤成 0 宽。
+
+          状态栏两者共用: GSOV 状态就显示在这里, 因此在工作台页面上也必须存在。
         */}
         <div className="editor-workspace">
           {voiceWorkbenchOpen ? (
@@ -282,9 +284,9 @@ export function EditorPage() {
             <>
               <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
               <div className="editor-area">{renderActivePane()}</div>
-              <StatusBar />
             </>
           )}
+          <StatusBar />
         </div>
       </div>
 
