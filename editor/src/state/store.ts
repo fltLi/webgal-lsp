@@ -89,8 +89,6 @@ interface AppStore {
   cursor: { line: number; column: number } | null;
 
   // -------- 配音工作流 --------
-  /** 配音工作台选项卡是否打开 (它是全部配音 UI/状态的可见性总开关) */
-  voiceWorkbenchOpen: boolean;
   /** GSOV 服务状态 */
   voiceStatus: GsvStatus;
   /** GSOV 状态详情 (错误信息等) */
@@ -119,7 +117,6 @@ interface AppStore {
    */
   voiceModeDisabled: string[];
 
-  setVoiceWorkbenchOpen: (open: boolean) => void;
   /** 设置某个场景的配音编辑模式开关 */
   setVoiceMode: (path: string, enabled: boolean) => void;
   setVoiceStatus: (status: GsvStatus, detail?: string | null) => void;
@@ -212,7 +209,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
   cursor: null,
 
-  voiceWorkbenchOpen: false,
+  voiceQueuePending: 0,
+  voiceModePaths: [],
+  voiceModeDisabled: [],
   voiceStatus: 'stopped',
   voiceStatusDetail: null,
   voiceLogs: [],
@@ -221,9 +220,6 @@ export const useAppStore = create<AppStore>((set) => ({
   voiceCache: [],
   voiceAssignments: {},
   voiceTick: 0,
-  voiceQueuePending: 0,
-  voiceModePaths: [],
-  voiceModeDisabled: [],
 
   settingsOpen: false,
   unsavedDialog: false,
@@ -257,7 +253,6 @@ export const useAppStore = create<AppStore>((set) => ({
         previewSiteId: null,
         previewReady: false,
         previewStage: null,
-        voiceWorkbenchOpen: false,
         voiceModePaths: [],
         voiceModeDisabled: [],
       });
@@ -305,7 +300,7 @@ export const useAppStore = create<AppStore>((set) => ({
         diagnostics,
         voiceModePaths,
         // 关闭工作台即退出配音功能
-        ...(closingWorkbench ? { voiceWorkbenchOpen: false, voiceModePaths: [], voiceModeDisabled: [] } : {}),
+        ...(closingWorkbench ? { voiceModePaths: [], voiceModeDisabled: [] } : {}),
       };
     }),
   activateTab: (id) =>
@@ -340,16 +335,15 @@ export const useAppStore = create<AppStore>((set) => ({
 
   openVoiceWorkbench: () =>
     set((s) => {
-      // 打开前的活动选项卡: 若它是场景卡, 让它进入配音编辑模式
+      // 打开前的活动选项卡: 若它是场景卡, 让它进入配音编辑模式。
+      // 注意 state 仍是"工作台未打开"的状态, 不能走 autoVoiceMode (它要求工作台已打开);
+      // 新会话会清空"用户显式关闭"的记录, 因此可以直接开启。
       const previous = s.tabs.find((tab) => tab.id === s.activeTabId);
       const { tabs, activeId } = insertTab(s.tabs, makeWorkbenchTab(), s.activeTabId);
-      // 此处 state 仍是"工作台未打开"的状态, 不能走 autoVoiceMode (它要求工作台已打开);
-      // 新会话会清空"用户显式关闭"的记录, 因此可以直接开启。
       const shouldEnable = previous?.kind === 'scene' && !s.voiceModePaths.includes(previous.path);
       return {
         tabs,
         activeTabId: activeId,
-        voiceWorkbenchOpen: true,
         voiceModeDisabled: [],
         voiceModePaths: shouldEnable ? [...s.voiceModePaths, previous.path] : s.voiceModePaths,
       };
@@ -357,7 +351,7 @@ export const useAppStore = create<AppStore>((set) => ({
   closeVoiceWorkbench: () =>
     set((s) => {
       const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
-      return { tabs, activeTabId: activeId, voiceWorkbenchOpen: false, voiceModePaths: [], voiceModeDisabled: [] };
+      return { tabs, activeTabId: activeId, voiceModePaths: [], voiceModeDisabled: [] };
     }),
   openVoiceGuide: () =>
     set((s) => {
@@ -398,11 +392,6 @@ export const useAppStore = create<AppStore>((set) => ({
 
   // -------- 配音 --------
 
-  setVoiceWorkbenchOpen: (open) => {
-    const state = useAppStore.getState();
-    if (open) state.openVoiceWorkbench();
-    else state.closeVoiceWorkbench();
-  },
   setVoiceMode: (path, enabled) =>
     set((s) => {
       const has = s.voiceModePaths.includes(path);
@@ -446,12 +435,27 @@ export const useAppStore = create<AppStore>((set) => ({
 // -------- 派生读取 (供组件使用) --------
 
 /**
+ * 配音工作台是否打开。
+ *
+ * 它就是一个普通选项卡, 因此**不设独立开关**: 由选项卡是否存在于序列中推导,
+ * 从根上避免"开关与选项卡状态不一致"这类问题。
+ */
+export function isVoiceWorkbenchOpen(tabs: WorkbenchTabItem[]): boolean {
+  return tabs.some((tab) => tab.kind === 'voice-workbench');
+}
+
+/** 配音工作台选项卡是否处于激活状态 */
+export function isVoiceWorkbenchActive(state: AppStore): boolean {
+  return state.tabs.find((tab) => tab.id === state.activeTabId)?.kind === 'voice-workbench';
+}
+
+/**
  * 自动进入配音编辑模式: 返回该场景应被加入的路径 (无需改动时返回 `null`)。
  *
  * 尊重用户的显式关闭 (`voiceModeDisabled`), 否则关掉后一重新选中又会被打开。
  */
 function autoVoiceMode(state: AppStore, path: string): string | null {
-  if (!state.voiceWorkbenchOpen) return null;
+  if (!isVoiceWorkbenchOpen(state.tabs)) return null;
   if (state.voiceModePaths.includes(path)) return null;
   if (state.voiceModeDisabled.includes(path)) return null;
   return path;

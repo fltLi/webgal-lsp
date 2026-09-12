@@ -5,7 +5,7 @@
 // GSOV 状态**只在配音工作台打开时出现**: 未启用配音功能时, 状态栏保持干净;
 // 一旦工作台打开, 无论当前是否停在场景卡上, 都能在底部看到服务是否就绪。
 
-import { useAppStore } from '../state/store';
+import { isVoiceWorkbenchOpen, useAppStore } from '../state/store';
 
 const GSV_LABELS: Record<string, string> = {
   ready: '就绪',
@@ -20,7 +20,8 @@ export function StatusBar() {
   const cursor = useAppStore((s) => s.cursor);
   const diagnostics = useAppStore((s) => s.diagnostics);
   const novelStats = useAppStore((s) => s.novelStats);
-  const voiceWorkbenchOpen = useAppStore((s) => s.voiceWorkbenchOpen);
+  // 工作台是普通选项卡: 是否打开由选项卡序列推导
+  const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const voiceStatusDetail = useAppStore((s) => s.voiceStatusDetail);
   const voiceQueuePending = useAppStore((s) => s.voiceQueuePending);
@@ -51,7 +52,7 @@ export function StatusBar() {
               : '未连接'}
       </span>
 
-      {voiceWorkbenchOpen && (
+      {workbenchOpen && (
         <span className={`status-voice status-voice-${voiceStatus}`}>
           GSOV: {GSV_LABELS[voiceStatus] ?? voiceStatus}
           {voiceQueuePending > 0 && ` · 队列 ${voiceQueuePending}`}

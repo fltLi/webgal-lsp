@@ -24,7 +24,7 @@ import { useEffect, useRef, useState } from 'react';
 import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
 import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
-import { activeSceneDocumentOf, activeTabOf, useAppStore } from '../state/store';
+import { activeSceneDocumentOf, activeTabOf, isVoiceWorkbenchOpen, useAppStore } from '../state/store';
 import { requestCloseTab } from '../tabs/close';
 import { TabStrip } from '../tabs/TabStrip';
 import { makeNovelTab, type WorkbenchTabItem } from '../tabs/model';
@@ -48,7 +48,8 @@ export function EditorPage() {
   const projectName = useAppStore((s) => s.projectName);
   const activeTab = useAppStore(activeTabOf);
   const activeDoc = useAppStore(activeSceneDocumentOf);
-  const voiceWorkbenchOpen = useAppStore((s) => s.voiceWorkbenchOpen);
+  // 工作台是否打开由选项卡序列推导 (它就是一个普通选项卡, 没有独立开关)
+  const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const theme = useAppStore((s) => s.theme);
 
@@ -133,7 +134,7 @@ export function EditorPage() {
    * **只在配音工作台打开时出现**: 未启用配音功能时, 场景卡上不应出现任何配音痕迹。
    */
   const renderTabLeadingAction = (tab: WorkbenchTabItem) => {
-    if (tab.kind !== 'scene' || !voiceWorkbenchOpen) return null;
+    if (tab.kind !== 'scene' || !workbenchOpen) return null;
     const inVoiceMode = isSceneInVoiceMode(tab.path);
     return (
       <button
@@ -160,6 +161,8 @@ export function EditorPage() {
         return <GitDiffEditor tab={activeTab} />;
       case 'guidance':
         return <VoiceGuidePane />;
+      case 'voice-workbench':
+        return <VoiceWorkbench />;
       case 'novel':
         return <PreprocessTab id={activeTab.id} />;
       case 'scene':
@@ -189,9 +192,9 @@ export function EditorPage() {
 
         <Button appearance="subtle" icon={<DocumentTextRegular />} title="文本预处理" onClick={startNovelPreprocess} />
         <Button
-          appearance={voiceWorkbenchOpen ? 'primary' : 'subtle'}
+          appearance={workbenchOpen ? 'primary' : 'subtle'}
           icon={voiceStatus === 'starting' ? <Spinner size="tiny" /> : <MicRegular />}
-          title={voiceWorkbenchOpen ? '关闭配音工作台' : '打开配音工作台'}
+          title={workbenchOpen ? '关闭配音工作台' : '打开配音工作台'}
           onClick={onToggleVoiceWorkbench}
         />
         <Button appearance="subtle" icon={<ArchiveRegular />} title="生成快照" onClick={startSnapshot} />
@@ -271,21 +274,14 @@ export function EditorPage() {
         )}
 
         {/*
-          配音工作台与选项卡工作区共用一个列容器: 两者都是"编辑器工作区"的当前内容,
-          因此必须放在 flex column 内, 否则作为行容器 .editor-main 的直接子项会被
-          排到选项卡栏的右侧, 把选项卡栏挤成 0 宽。
+          配音工作台是**一个普通选项卡**: 与其它选项卡共用同一条选项卡栏与同一个
+          编辑区, 因此既不会把选项卡栏挤掉, 也不会出现"开关与选项卡状态不一致"。
 
-          状态栏两者共用: GSOV 状态就显示在这里, 因此在工作台页面上也必须存在。
+          状态栏由两个页面共用: GSOV 状态就显示在这里。
         */}
         <div className="editor-workspace">
-          {voiceWorkbenchOpen ? (
-            <VoiceWorkbench />
-          ) : (
-            <>
-              <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
-              <div className="editor-area">{renderActivePane()}</div>
-            </>
-          )}
+          <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
+          <div className="editor-area">{renderActivePane()}</div>
           <StatusBar />
         </div>
       </div>

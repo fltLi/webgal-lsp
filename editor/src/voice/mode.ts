@@ -2,21 +2,22 @@
 
 // 配音编辑模式的交互入口。
 //
-// 模式的**唯一事实来源**是 `store.voiceModePaths`, 而它的推进规则收敛在 store 内部:
-// * 打开配音工作台 -> 当前场景卡进入配音编辑模式;
-// * 工作台打开期间切换场景卡 -> 目标场景卡自动进入;
-// * 关闭工作台 -> 全部退出 (卡片上不再残留任何配音痕迹)。
+// 配音工作台是**一个普通选项卡**, 因此这里不需要任何"开关"状态:
+// * 打开工作台 = 打开 (或聚焦) 那个选项卡;
+// * 关闭工作台 = 关闭那个选项卡;
+// * "工作台是否打开" 一律由选项卡序列推导 (`isVoiceWorkbenchOpen`)。
 //
-// 因此这里只提供 UI 需要的读取与显式切换, 不做状态复制。
+// 场景的配音编辑模式规则收敛在 store 内部:
+// 工作台存在时, 当前场景卡自动进入; 关闭工作台即全部退出。
 
-import { activeSceneDocumentOf, useAppStore } from '../state/store';
+import { activeSceneDocumentOf, isVoiceWorkbenchOpen, isVoiceWorkbenchActive, useAppStore } from '../state/store';
 
-/** 打开配音工作台 (当前场景卡会自动进入配音编辑模式) */
+/** 打开配音工作台选项卡 (当前场景卡会自动进入配音编辑模式) */
 export function openVoiceWorkbench(): void {
   useAppStore.getState().openVoiceWorkbench();
 }
 
-/** 关闭配音工作台 (同时退出全部配音编辑模式) */
+/** 关闭配音工作台选项卡 (同时退出全部配音编辑模式) */
 export function closeVoiceWorkbench(): void {
   useAppStore.getState().closeVoiceWorkbench();
 }
@@ -24,8 +25,18 @@ export function closeVoiceWorkbench(): void {
 /** 切换配音工作台 */
 export function toggleVoiceWorkbench(): void {
   const store = useAppStore.getState();
-  if (store.voiceWorkbenchOpen) store.closeVoiceWorkbench();
+  if (isVoiceWorkbenchOpen(store.tabs)) store.closeVoiceWorkbench();
   else store.openVoiceWorkbench();
+}
+
+/** 配音工作台选项卡是否打开 */
+export function voiceWorkbenchOpen(): boolean {
+  return isVoiceWorkbenchOpen(useAppStore.getState().tabs);
+}
+
+/** 配音工作台选项卡是否处于激活状态 (即当前正显示它) */
+export function voiceWorkbenchActive(): boolean {
+  return isVoiceWorkbenchActive(useAppStore.getState());
 }
 
 /** 指定场景是否处于配音编辑模式 */

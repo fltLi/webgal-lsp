@@ -128,33 +128,39 @@ export function VoiceWorkbench() {
 
       {/* -------- 启动配置 -------- */}
       <div className="voice-config">
-        <Field label="GPT-SoVITS 整合包目录" className="voice-config-root">
-          <div className="voice-root-row">
-            <Input value={rootPath} readOnly placeholder="选择包含 api_v2.py 的整合包目录" />
-            <Button appearance="secondary" onClick={() => void pickRoot()} disabled={busy}>
-              选择…
-            </Button>
-            <Button
-              appearance="subtle"
-              title="在文件管理器中打开"
-              icon={<FolderOpenRegular />}
-              disabled={!rootPath}
-              onClick={() => void revealItemInDir(rootPath)}
-            />
-          </div>
-        </Field>
+        {/*
+          第一行: 整合包目录 + 启动/停止。
+          目录输入框按内容长度给一个合理宽度 (不占满整行), 右侧紧跟启停按钮 ——
+          用户填完路径后的下一步就是启动, 放同一行最顺手。
+        */}
+        <div className="voice-root-row">
+          <Field label="GPT-SoVITS 整合包目录" className="voice-root-field">
+            <div className="voice-root-input">
+              <Input value={rootPath} readOnly placeholder="选择包含 api_v2.py 的整合包目录" />
+              <Button appearance="secondary" onClick={() => void pickRoot()} disabled={busy}>
+                选择…
+              </Button>
+              <Button
+                appearance="subtle"
+                title="在文件管理器中打开"
+                icon={<FolderOpenRegular />}
+                disabled={!rootPath}
+                onClick={() => void revealItemInDir(rootPath)}
+              />
+            </div>
+          </Field>
 
-        {/* 启动/停止: 服务状态由底部状态栏承载, 这里只放操作入口 */}
-        <div className="voice-launch-actions">
-          {status === 'ready' || status === 'starting' ? (
-            <Button appearance="secondary" icon={<StopRegular />} disabled={busy} onClick={() => void stop()}>
-              停止服务
-            </Button>
-          ) : (
-            <Button appearance="primary" icon={<PlayRegular />} disabled={busy} onClick={() => void start()}>
-              启动服务
-            </Button>
-          )}
+          <div className="voice-launch-actions">
+            {status === 'ready' || status === 'starting' ? (
+              <Button appearance="secondary" icon={<StopRegular />} disabled={busy} onClick={() => void stop()}>
+                停止服务
+              </Button>
+            ) : (
+              <Button appearance="primary" icon={<PlayRegular />} disabled={busy} onClick={() => void start()}>
+                启动服务
+              </Button>
+            )}
+          </div>
         </div>
 
         {launch && (

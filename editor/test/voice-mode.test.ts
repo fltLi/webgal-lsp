@@ -3,15 +3,21 @@
 // 配音编辑模式的可见性与推进规则测试。
 //
 // 这些规则直接决定用户会不会"在不该看到麦克风的地方看到麦克风":
-// * 工作台关闭时, 任何场景卡都不显示配音开关;
-// * 工作台打开时, 当前场景卡自动进入配音编辑模式, 切换场景卡同样自动进入;
-// * 关闭工作台即整体退出。
+// * 配音工作台 (一个普通选项卡) 关闭时, 任何场景卡都不显示配音开关;
+// * 工作台选项卡存在时, 当前场景卡自动进入配音编辑模式, 切换场景卡同样自动进入;
+// * 关闭工作台选项卡即整体退出。
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useAppStore } from '../src/state/store';
 import { makeSceneTab } from '../src/tabs/model';
-import { activeSceneInVoiceMode, isSceneInVoiceMode, setSceneVoiceMode, toggleVoiceWorkbench } from '../src/voice/mode';
+import {
+  activeSceneInVoiceMode,
+  isSceneInVoiceMode,
+  setSceneVoiceMode,
+  toggleVoiceWorkbench,
+  voiceWorkbenchOpen,
+} from '../src/voice/mode';
 
 const sceneA = 'C:\\project\\game\\scene\\a.txt';
 const sceneB = 'C:\\project\\game\\scene\\b.txt';
@@ -21,8 +27,8 @@ function resetStore(): void {
     tabs: [],
     activeTabId: null,
     documents: [],
-    voiceWorkbenchOpen: false,
     voiceModePaths: [],
+    voiceModeDisabled: [],
   });
   for (const path of [sceneA, sceneB]) {
     useAppStore.getState().openDocument({
@@ -47,13 +53,13 @@ describe('配音编辑模式的可见性', () => {
     expect(activeSceneInVoiceMode()).toBe(false);
   });
 
-  it('打开工作台后当前场景已就位 (切回它即是配音编辑模式)', () => {
+  it('打开工作台选项卡后当前场景已就位 (切回它即是配音编辑模式)', () => {
     const sceneTabA = makeSceneTab(sceneA, 'a.txt');
     useAppStore.getState().openTab(sceneTabA);
     toggleVoiceWorkbench();
 
-    expect(useAppStore.getState().voiceWorkbenchOpen).toBe(true);
-    // 打开工作台后活动项是工作台本身 (它取代工作区), 因此此处没有"活动场景"
+    expect(voiceWorkbenchOpen()).toBe(true);
+    // 打开后活动项是工作台选项卡, 因此此刻没有"活动场景"
     expect(isSceneInVoiceMode(sceneA)).toBe(true);
 
     // 切回场景卡即进入配音编辑模式
@@ -97,7 +103,7 @@ describe('配音编辑模式的可见性', () => {
     expect(isSceneInVoiceMode(sceneA)).toBe(true);
 
     toggleVoiceWorkbench();
-    expect(useAppStore.getState().voiceWorkbenchOpen).toBe(false);
+    expect(voiceWorkbenchOpen()).toBe(false);
     expect(isSceneInVoiceMode(sceneA)).toBe(false);
     expect(useAppStore.getState().voiceModePaths).toEqual([]);
   });

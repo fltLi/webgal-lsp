@@ -356,7 +356,8 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
+  /* 左右内边距固定, 因此有没有图标都不会让标题贴边 */
+  padding: 7px 12px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -377,9 +378,30 @@ body.resizing {
   border-top: 2px solid var(--app-accent);
 }
 
-/* 配音相关选项卡在标题左侧留出模式开关的位置 */
+/*
+ * 场景选项卡最左侧可能有模式开关。没有图标时用固定占位保持各选项卡标题对齐,
+ * 避免"有无图标"导致文字起始位置参差。
+ */
 .tab-strip-item[data-kind='scene'] {
-  padding-left: 6px;
+  padding-left: 8px;
+}
+
+.tab-strip-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 图标缺失时不留下多余空隙 */
+  min-width: 0;
+}
+
+.tab-strip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--app-muted);
 }
 
 /* 拖拽排序反馈: 竖线画在真实的插入缝隙那一侧 */
@@ -394,19 +416,6 @@ body.resizing {
 /* 落到末尾时画在最右侧, 而不是最后一个选项卡的左边 */
 .tab-strip-item.drop-after {
   box-shadow: inset -2px 0 0 var(--app-accent);
-}
-
-.tab-strip-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.tab-strip-icon {
-  display: inline-flex;
-  align-items: center;
-  font-size: 14px;
-  color: var(--app-muted);
 }
 
 .tab-strip-dirty {
@@ -2161,20 +2170,38 @@ body.resizing {
   gap: 8px;
 }
 
+/*
+ * 启动配置第一行: 目录字段 (限宽, 不占满整行) + 启停按钮。
+ * 目录字段本身按内容长度给宽度上限, 避免"很短的值配一个通栏输入框"。
+ */
 .voice-root-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.voice-root-field {
+  max-width: 560px;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+
+.voice-root-input {
   display: flex;
   gap: 6px;
   align-items: center;
 }
 
-.voice-root-row > :first-child {
+.voice-root-input > :first-child {
   flex: 1;
+  min-width: 0;
 }
 
 .voice-config-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 300px));
+  gap: 8px 12px;
 }
 
 /* -------- 队列 -------- */
@@ -2976,6 +3003,7 @@ body.resizing {
 
 .voice-launch-actions {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
+  flex: none;
+  /* 与目录输入框底对齐 (Field 有 label, 因此由 voice-root-row 的 align-items 处理) */
 }
