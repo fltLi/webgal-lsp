@@ -9,7 +9,7 @@
 //   「移除」只清除当前语句的 `-vocal=` (不删文件、不清历史);
 // * 语音之外的参数 (文本) 随场景内容变化, 不随历史项回填。
 
-import { Button, Dropdown, Input, Option, Slider, Textarea, Tooltip } from '@fluentui/react-components';
+import { Button, Dropdown, Input, Option, Slider, Textarea } from '@fluentui/react-components';
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
@@ -214,14 +214,13 @@ export function VoiceSentencePanel({ cardId, dialogue, characters, refreshToken,
                 update({ seed: Number.isFinite(parsed) ? parsed : 0 });
               }}
             />
-            <Tooltip content="换一个随机种子" relationship="label">
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<ArrowSyncRegular />}
-                onClick={() => update({ seed: randomSeed() })}
-              />
-            </Tooltip>
+            <Button
+              size="small"
+              appearance="subtle"
+              title="换一个随机种子"
+              icon={<ArrowSyncRegular />}
+              onClick={() => update({ seed: randomSeed() })}
+            />
           </div>
         </label>
       </div>
@@ -366,16 +365,15 @@ export function VoiceSentencePanel({ cardId, dialogue, characters, refreshToken,
             取消
           </Button>
         ) : (
-          <Tooltip content="清除当前语句的 -vocal=（不删除音频与历史）" relationship="label">
-            <Button
-              appearance="secondary"
-              icon={<DeleteRegular />}
-              disabled={!hasVocal || Boolean(busy)}
-              onClick={() => void remove()}
-            >
-              移除
-            </Button>
-          </Tooltip>
+          <Button
+            appearance="secondary"
+            title="清除当前语句的 -vocal=（不删除音频与历史）"
+            icon={<DeleteRegular />}
+            disabled={!hasVocal || Boolean(busy)}
+            onClick={() => void remove()}
+          >
+            移除
+          </Button>
         )}
         <Button
           appearance="primary"

@@ -152,6 +152,21 @@ export interface NewCharacter {
   language: string;
 }
 
+/** 添加参考音频的入参 */
+export interface ReferenceInput {
+  /** 源音频路径 (会被拷贝进角色库) */
+  source: string;
+  /** 参考文本 (v4 必需, 须与音频逐字一致) */
+  text: string;
+  language: string;
+  /** 风格标签 */
+  tags: string[];
+  /** 裁剪区间起点 (秒); 与 `end` 同时给出才生效 */
+  start?: number;
+  /** 裁剪区间终点 (秒) */
+  end?: number;
+}
+
 export interface CacheEntry {
   hash: string;
   path: string;
@@ -330,16 +345,8 @@ export function voiceCreateCharacter(input: NewCharacter): Promise<Character> {
   return invoke<Character>('voice_create_character', { input });
 }
 
-export function voiceAddReference(
-  id: string,
-  source: string,
-  text: string,
-  language: string,
-  tags: string[],
-  start?: number,
-  end?: number
-): Promise<Character> {
-  return invoke<Character>('voice_add_reference', { id, source, text, language, tags, start, end });
+export function voiceAddReference(id: string, input: ReferenceInput): Promise<Character> {
+  return invoke<Character>('voice_add_reference', { id, input });
 }
 
 export function voiceRemoveReference(id: string, hash: string): Promise<Character> {

@@ -19,7 +19,6 @@ import {
   Tab,
   TabList,
   Textarea,
-  Tooltip,
 } from '@fluentui/react-components';
 import {
   ArrowClockwiseRegular,
@@ -147,9 +146,13 @@ export function VoiceConsole({ onOpenHelp }: Props) {
             启动
           </Button>
         )}
-        <Tooltip content="打开配音工作流说明" relationship="label">
-          <Button size="small" appearance="subtle" icon={<BookQuestionMarkRegular />} onClick={onOpenHelp} />
-        </Tooltip>
+        <Button
+          size="small"
+          appearance="subtle"
+          title="打开配音工作流说明"
+          icon={<BookQuestionMarkRegular />}
+          onClick={onOpenHelp}
+        />
       </div>
 
       {/* -------- 启动配置 -------- */}
@@ -160,14 +163,13 @@ export function VoiceConsole({ onOpenHelp }: Props) {
             <Button appearance="secondary" onClick={() => void pickRoot()} disabled={busy}>
               选择…
             </Button>
-            <Tooltip content="在文件管理器中打开" relationship="label">
-              <Button
-                appearance="subtle"
-                icon={<FolderOpenRegular />}
-                disabled={!rootPath}
-                onClick={() => void revealItemInDir(rootPath)}
-              />
-            </Tooltip>
+            <Button
+              appearance="subtle"
+              title="在文件管理器中打开"
+              icon={<FolderOpenRegular />}
+              disabled={!rootPath}
+              onClick={() => void revealItemInDir(rootPath)}
+            />
           </div>
         </Field>
 
@@ -382,24 +384,28 @@ export function VoiceConsole({ onOpenHelp }: Props) {
             )}
           </span>
           <span className="voice-actions-spacer" />
-          <Tooltip content="清理未被任何场景引用的缓存音频" relationship="label">
-            <Button size="small" appearance="subtle" icon={<WrenchRegular />} onClick={() => setChangeDialogOpen(true)}>
-              缓存与引用
-            </Button>
-          </Tooltip>
-          <Tooltip content="清空已完成的任务" relationship="label">
-            <Button
-              size="small"
-              appearance="subtle"
-              icon={<DismissRegular />}
-              onClick={() => {
-                voiceController.clearFinishedTasks();
-                setTab('queue');
-              }}
-            >
-              清理
-            </Button>
-          </Tooltip>
+          <Button
+            size="small"
+            appearance="subtle"
+            title="清理未被任何场景引用的缓存音频"
+            icon={<WrenchRegular />}
+            onClick={() => setChangeDialogOpen(true)}
+          >
+            缓存与引用
+          </Button>
+
+          <Button
+            size="small"
+            appearance="subtle"
+            title="清空已完成的任务"
+            icon={<DismissRegular />}
+            onClick={() => {
+              voiceController.clearFinishedTasks();
+              setTab('queue');
+            }}
+          >
+            清理
+          </Button>
         </div>
 
         {tab === 'queue' ? (

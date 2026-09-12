@@ -98,7 +98,14 @@ export function ReferencePickerDialog({ open, character, selectedHash, onPick, o
     setBusy(true);
     setError(null);
     try {
-      const updated = await voiceAddReference(character.id, path, pendingText.trim(), language, [], start, end);
+      const updated = await voiceAddReference(character.id, {
+        source: path,
+        text: pendingText.trim(),
+        language,
+        tags: [],
+        start,
+        end,
+      });
       setTrimSource(null);
       setPendingText('');
       voiceController.setCharacters(

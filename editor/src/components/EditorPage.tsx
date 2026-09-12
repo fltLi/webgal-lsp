@@ -45,7 +45,7 @@ export function EditorPage() {
   const openNovelTab = useAppStore((s) => s.openNovelTab);
   const activeDiffId = useAppStore((s) => s.activeDiffId);
   const diffTabs = useAppStore((s) => s.diffTabs);
-  const activeHelpId = useAppStore((s) => s.activeHelpId);
+  const activeGuidanceId = useAppStore((s) => s.activeGuidanceId);
   const voiceConsoleOpen = useAppStore((s) => s.voiceConsoleOpen);
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const voiceModePaths = useAppStore((s) => s.voiceModePaths);
@@ -117,12 +117,12 @@ export function EditorPage() {
   /** 打开配音工作流说明 (独立选项卡, 便于与场景对照阅读)。 */
   const openVoiceHelp = () => {
     const store = useAppStore.getState();
-    const existing = store.helpTabs.find((tab) => tab.id === 'voice-guide');
+    const existing = store.guidanceTabs.find((tab) => tab.id === 'voice-guide');
     if (existing) {
-      store.setActiveHelp(existing.id);
+      store.setActiveGuidance(existing.id);
       return;
     }
-    store.openHelpTab({ id: 'voice-guide', title: '配音工作流说明' });
+    store.openGuidanceTab({ id: 'voice-guide', title: '配音工作流说明' });
   };
 
   /** 生成快照: 先处理未保存更改, 再选择输出位置。 */
@@ -250,7 +250,11 @@ export function EditorPage() {
           <div className="editor-area">
             {activeDiff ? (
               <GitDiffEditor tab={activeDiff} />
-            ) : activeHelpId ? (
+            ) : voiceConsoleOpen ? (
+              <div className="voice-console-pane">
+                <VoiceConsole onOpenHelp={openVoiceHelp} />
+              </div>
+            ) : activeGuidanceId ? (
               <VoiceHelpTab />
             ) : activeNovelId ? (
               <PreprocessTab id={activeNovelId} />
@@ -264,12 +268,6 @@ export function EditorPage() {
           </div>
           <StatusBar />
         </div>
-
-        {voiceConsoleOpen && (
-          <div className="voice-console-pane">
-            <VoiceConsole onOpenHelp={openVoiceHelp} />
-          </div>
-        )}
       </div>
 
       {snapshot && (

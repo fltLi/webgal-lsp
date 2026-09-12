@@ -12,7 +12,6 @@ import {
   DialogSurface,
   DialogTitle,
   Input,
-  Tooltip,
 } from '@fluentui/react-components';
 import {
   ArrowDownloadRegular,
@@ -134,30 +133,27 @@ export function CharacterPickerDialog({ open, onClose, onError }: Props) {
                         {!character.enabled && ' · 未启用'}
                       </span>
                     </button>
-                    <Tooltip content={character.starred ? '取消星标' : '星标靠前'} relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={character.starred ? <StarFilled /> : <StarRegular />}
-                        onClick={() => void toggleStarred(character, !character.starred)}
-                      />
-                    </Tooltip>
-                    <Tooltip content="导出角色" relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<ArrowDownloadRegular />}
-                        onClick={() => void exportCharacter(character)}
-                      />
-                    </Tooltip>
-                    <Tooltip content="删除角色" relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<DeleteRegular />}
-                        onClick={() => void remove(character)}
-                      />
-                    </Tooltip>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      title={character.starred ? '取消星标' : '星标靠前'}
+                      icon={character.starred ? <StarFilled /> : <StarRegular />}
+                      onClick={() => void toggleStarred(character, !character.starred)}
+                    />
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      title="导出角色"
+                      icon={<ArrowDownloadRegular />}
+                      onClick={() => void exportCharacter(character)}
+                    />
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      title="删除角色"
+                      icon={<DeleteRegular />}
+                      onClick={() => void remove(character)}
+                    />
                   </div>
                 ))}
               </div>

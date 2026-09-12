@@ -75,9 +75,9 @@ interface AppStore {
   /** 活动文本预处理选项卡的编辑器统计 (供状态栏显示; null 表示无活动预处理选项卡)。 */
   novelStats: { chars: number; lines: number } | null;
 
-  /** 帮助选项卡 (配音工作流说明) */
-  helpTabs: NovelTab[];
-  activeHelpId: string | null;
+  /** 说明/帮助选项卡 (配音工作流说明) */
+  guidanceTabs: NovelTab[];
+  activeGuidanceId: string | null;
 
   /** git 仓库状态 (null 表示尚未加载)。 */
   gitStatus: GitStatus | null;
@@ -97,7 +97,7 @@ interface AppStore {
   cursor: { line: number; column: number } | null;
 
   // -------- 配音工作流 --------
-  /** 总控台是否打开 */
+  /** 配音总控台选项卡是否打开 */
   voiceConsoleOpen: boolean;
   /** GSOV 服务状态 */
   voiceStatus: GsvStatus;
@@ -115,6 +115,8 @@ interface AppStore {
   voiceAssignments: Record<string, Record<string, string>>;
   /** 递增令牌: 队列状态变化时触发订阅者重渲染 */
   voiceTick: number;
+  /** 待处理 + 运行中的配音任务数 (供总控台选项卡显示角标) */
+  voiceQueuePending: number;
   /** 处于配音模式的场景文件路径 */
   voiceModePaths: string[];
 
@@ -130,6 +132,7 @@ interface AppStore {
   upsertVoiceCache: (entry: CacheEntry) => void;
   setVoiceAssignment: (scenePath: string, assignments: Record<string, string>) => void;
   setVoiceTick: () => void;
+  setVoiceQueuePending: (count: number) => void;
 
   settingsOpen: boolean;
   unsavedDialog: boolean;
@@ -153,9 +156,9 @@ interface AppStore {
   closeNovelTab: (id: string) => void;
   setActiveNovel: (id: string) => void;
   setNovelStats: (stats: { chars: number; lines: number } | null) => void;
-  openHelpTab: (tab: NovelTab) => void;
-  closeHelpTab: (id: string) => void;
-  setActiveHelp: (id: string) => void;
+  openGuidanceTab: (tab: NovelTab) => void;
+  closeGuidanceTab: (id: string) => void;
+  setActiveGuidance: (id: string) => void;
   setGitStatus: (status: GitStatus | null) => void;
   openDiffTab: (tab: DiffTab) => void;
   closeDiffTab: (id: string) => void;
@@ -187,8 +190,8 @@ export const useAppStore = create<AppStore>((set) => ({
   activeNovelId: null,
   novelStats: null,
 
-  helpTabs: [],
-  activeHelpId: null,
+  guidanceTabs: [],
+  activeGuidanceId: null,
 
   gitStatus: null,
   diffTabs: [],
@@ -215,6 +218,7 @@ export const useAppStore = create<AppStore>((set) => ({
   voiceCache: [],
   voiceAssignments: {},
   voiceTick: 0,
+  voiceQueuePending: 0,
   voiceModePaths: [],
 
   settingsOpen: false,
@@ -266,7 +270,15 @@ export const useAppStore = create<AppStore>((set) => ({
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return { documents, activePath: doc.path, activeNovelId: null, activeDiffId: null, activeHelpId: null };
+      return {
+        documents,
+        activePath: doc.path,
+        activeNovelId: null,
+        activeDiffId: null,
+        activeGuidanceId: null,
+        // 总控台也是一个选项卡, 切到别的选项卡即离开它
+        voiceConsoleOpen: false,
+      };
     }),
   closeDocument: (path) =>
     set((s) => {
@@ -274,7 +286,7 @@ export const useAppStore = create<AppStore>((set) => ({
       const diagnostics = { ...s.diagnostics };
       delete diagnostics[path];
       if (s.activePath !== path) return { documents, diagnostics };
-      // 关闭的是活动文档: 优先切到最后一个文档, 否则回退到预处理/差异选项卡
+      // 关闭的是活动文档: 优先切到最后一个文档, 否则回退到预处理/差异/总控台选项卡
       if (documents.length > 0) {
         return { documents, diagnostics, activePath: documents[documents.length - 1].path };
       }
@@ -282,14 +294,23 @@ export const useAppStore = create<AppStore>((set) => ({
       if (novel) return { documents, diagnostics, activePath: null, activeNovelId: novel.id };
       const diff = s.diffTabs[s.diffTabs.length - 1];
       if (diff) return { documents, diagnostics, activePath: null, activeDiffId: diff.id };
+      if (s.voiceConsoleOpen) return { documents, diagnostics, activePath: null };
       return { documents, diagnostics, activePath: null };
     }),
-  setActiveDocument: (path) => set({ activePath: path, activeNovelId: null, activeDiffId: null }),
+  setActiveDocument: (path) =>
+    set({ activePath: path, activeNovelId: null, activeDiffId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
   openNovelTab: (tab) =>
     set((s) => {
       const exists = s.novelTabs.some((t) => t.id === tab.id);
       const novelTabs = exists ? s.novelTabs : [...s.novelTabs, tab];
-      return { novelTabs, activeNovelId: tab.id, activePath: null, activeDiffId: null };
+      return {
+        novelTabs,
+        activeNovelId: tab.id,
+        activePath: null,
+        activeDiffId: null,
+        activeGuidanceId: null,
+        voiceConsoleOpen: false,
+      };
     }),
   closeNovelTab: (id) =>
     set((s) => {
@@ -300,34 +321,52 @@ export const useAppStore = create<AppStore>((set) => ({
       if (doc) return { novelTabs, activeNovelId: null, activePath: doc.path };
       const diff = s.diffTabs[s.diffTabs.length - 1];
       if (diff) return { novelTabs, activeNovelId: null, activeDiffId: diff.id };
+      if (s.voiceConsoleOpen) return { novelTabs, activeNovelId: null };
       return { novelTabs, activeNovelId: null };
     }),
-  setActiveNovel: (id) => set({ activeNovelId: id, activePath: null, activeDiffId: null }),
+  setActiveNovel: (id) =>
+    set({ activeNovelId: id, activePath: null, activeDiffId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
   setNovelStats: (stats) => set({ novelStats: stats }),
-  openHelpTab: (tab) =>
+  openGuidanceTab: (tab) =>
     set((s) => {
-      const exists = s.helpTabs.some((t) => t.id === tab.id);
-      const helpTabs = exists ? s.helpTabs : [...s.helpTabs, tab];
-      return { helpTabs, activeHelpId: tab.id, activePath: null, activeNovelId: null, activeDiffId: null };
+      const exists = s.guidanceTabs.some((t) => t.id === tab.id);
+      const guidanceTabs = exists ? s.guidanceTabs : [...s.guidanceTabs, tab];
+      return {
+        guidanceTabs,
+        activeGuidanceId: tab.id,
+        activePath: null,
+        activeNovelId: null,
+        activeDiffId: null,
+        voiceConsoleOpen: false,
+      };
     }),
-  closeHelpTab: (id) =>
+  closeGuidanceTab: (id) =>
     set((s) => {
-      const helpTabs = s.helpTabs.filter((t) => t.id !== id);
-      if (s.activeHelpId !== id) return { helpTabs };
-      if (helpTabs.length > 0) return { helpTabs, activeHelpId: helpTabs[helpTabs.length - 1].id };
+      const guidanceTabs = s.guidanceTabs.filter((t) => t.id !== id);
+      if (s.activeGuidanceId !== id) return { guidanceTabs };
+      if (guidanceTabs.length > 0) return { guidanceTabs, activeGuidanceId: guidanceTabs[guidanceTabs.length - 1].id };
       const doc = s.documents[s.documents.length - 1];
-      if (doc) return { helpTabs, activeHelpId: null, activePath: doc.path };
+      if (doc) return { guidanceTabs, activeGuidanceId: null, activePath: doc.path };
       const novel = s.novelTabs[s.novelTabs.length - 1];
-      if (novel) return { helpTabs, activeHelpId: null, activeNovelId: novel.id };
-      return { helpTabs, activeHelpId: null };
+      if (novel) return { guidanceTabs, activeGuidanceId: null, activeNovelId: novel.id };
+      if (s.voiceConsoleOpen) return { guidanceTabs, activeGuidanceId: null };
+      return { guidanceTabs, activeGuidanceId: null };
     }),
-  setActiveHelp: (id) => set({ activeHelpId: id, activePath: null, activeNovelId: null, activeDiffId: null }),
+  setActiveGuidance: (id) =>
+    set({ activeGuidanceId: id, activePath: null, activeNovelId: null, activeDiffId: null, voiceConsoleOpen: false }),
   setGitStatus: (status) => set({ gitStatus: status }),
   openDiffTab: (tab) =>
     set((s) => {
       const exists = s.diffTabs.some((t) => t.id === tab.id);
       const diffTabs = exists ? s.diffTabs : [...s.diffTabs, tab];
-      return { diffTabs, activeDiffId: tab.id, activePath: null, activeNovelId: null };
+      return {
+        diffTabs,
+        activeDiffId: tab.id,
+        activePath: null,
+        activeNovelId: null,
+        activeGuidanceId: null,
+        voiceConsoleOpen: false,
+      };
     }),
   closeDiffTab: (id) =>
     set((s) => {
@@ -340,7 +379,8 @@ export const useAppStore = create<AppStore>((set) => ({
       if (novel) return { diffTabs, activeDiffId: null, activeNovelId: novel.id };
       return { diffTabs, activeDiffId: null };
     }),
-  setActiveDiff: (id) => set({ activeDiffId: id, activePath: null, activeNovelId: null }),
+  setActiveDiff: (id) =>
+    set({ activeDiffId: id, activePath: null, activeNovelId: null, activeGuidanceId: null, voiceConsoleOpen: false }),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),
@@ -390,6 +430,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setVoiceAssignment: (scenePath, assignments) =>
     set((s) => ({ voiceAssignments: { ...s.voiceAssignments, [scenePath]: assignments } })),
   setVoiceTick: () => set((s) => ({ voiceTick: s.voiceTick + 1 })),
+  setVoiceQueuePending: (count) => set({ voiceQueuePending: count }),
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSettingsCategory: (category) => set({ settingsCategory: category }),

@@ -5,7 +5,7 @@
 // 每条记录对应一次「测试」或「生成」; 正在生成的任务可取消。
 // 参数编辑不影响既有记录: 改动参数只会让"当前配置"变成新配置, 历史保持原样。
 
-import { Button, ProgressBar, Spinner, Tooltip } from '@fluentui/react-components';
+import { Button, ProgressBar, Spinner } from '@fluentui/react-components';
 import {
   ArrowDownloadRegular,
   CheckmarkCircleRegular,
@@ -113,11 +113,9 @@ export function VoiceHistory({ cardId, onChanged, onApplied }: Props) {
           <span className={`history-kind ${entry.kind}`}>{entry.kind === 'test' ? '测试 x4' : '生成 x32'}</span>
           <span className="history-time">{formatTime(entry.createdAt)}</span>
           {entry.applied && (
-            <Tooltip content="已应用到脚本" relationship="label">
-              <span className="history-applied">
-                <CheckmarkCircleRegular />
-              </span>
-            </Tooltip>
+            <span className="history-applied" title="已应用到脚本">
+              <CheckmarkCircleRegular />
+            </span>
           )}
         </div>
 
@@ -180,32 +178,31 @@ export function VoiceHistory({ cardId, onChanged, onApplied }: Props) {
           {failed.length > 0 && ` · ${failed.length} 未完成`}
         </span>
         <span className="voice-actions-spacer" />
-        <Tooltip content="删除全部测试记录" relationship="label">
-          <Button
-            size="small"
-            appearance="subtle"
-            disabled={!card.history.some((entry) => entry.kind === 'test')}
-            onClick={() => {
-              voiceController.dropAllHistory(cardId, 'test');
-              onChanged();
-            }}
-          >
-            清测试
-          </Button>
-        </Tooltip>
-        <Tooltip content="删除全部记录（不影响已应用的 -vocal=）" relationship="label">
-          <Button
-            size="small"
-            appearance="subtle"
-            disabled={card.history.length === 0}
-            onClick={() => {
-              voiceController.dropAllHistory(cardId);
-              onChanged();
-            }}
-          >
-            清空
-          </Button>
-        </Tooltip>
+        <Button
+          size="small"
+          appearance="subtle"
+          title="删除全部测试记录"
+          disabled={!card.history.some((entry) => entry.kind === 'test')}
+          onClick={() => {
+            voiceController.dropAllHistory(cardId, 'test');
+            onChanged();
+          }}
+        >
+          清测试
+        </Button>
+
+        <Button
+          size="small"
+          appearance="subtle"
+          title="删除全部记录（不影响已应用的 -vocal=）"
+          disabled={card.history.length === 0}
+          onClick={() => {
+            voiceController.dropAllHistory(cardId);
+            onChanged();
+          }}
+        >
+          清空
+        </Button>
       </div>
 
       <div className="history-list" data-tick={voiceTick}>

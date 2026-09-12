@@ -852,7 +852,11 @@ class VoiceController {
   }
 
   private emit(): void {
-    this.store().setVoiceTick();
+    const store = this.store();
+    store.setVoiceTick();
+    // 总控台选项卡角标: 待处理 + 运行中
+    const active = this.tasks.filter((task) => task.status === 'pending' || task.status === 'running').length;
+    if (store.voiceQueuePending !== active) store.setVoiceQueuePending(active);
   }
 }
 

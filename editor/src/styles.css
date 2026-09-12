@@ -2047,11 +2047,10 @@ body.resizing {
 
 /* ==================== 配音工作流 ==================== */
 
-/* -------- 总控台面板 -------- */
+/* -------- 总控台 (作为独立选项卡铺满编辑区) -------- */
 .voice-console-pane {
-  width: 520px;
-  min-width: 420px;
-  border-left: 1px solid var(--app-border);
+  height: 100%;
+  min-height: 0;
   background: var(--app-panel);
   display: flex;
   flex-direction: column;
@@ -2851,56 +2850,46 @@ body.resizing {
   color: var(--app-muted);
 }
 
-/* -------- 选项卡上的配音按钮 -------- */
+/* -------- 选项卡上的配音按钮 (位于选项卡最左侧) -------- */
 .editor-tab-voice {
   display: inline-flex;
   align-items: center;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0;
   color: var(--app-muted);
   font-size: 13px;
+  flex: none;
 }
 
 .editor-tab-voice:hover {
   color: var(--app-fg);
 }
+
 .editor-tab-voice.on {
   color: var(--app-accent);
 }
+
 .editor-tab.voice {
   border-bottom-color: var(--app-accent);
 }
 
-/* -------- 状态栏 GSOV 指示 -------- */
-.voice-status-button {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
+/* 总控台选项卡 */
+.editor-tab.console .editor-tab-name {
+  gap: 4px;
 }
 
-.voice-status-button.voice-ready {
-  color: #1a7f37;
-}
-.voice-status-button.voice-starting {
-  color: #b8860b;
-}
-.voice-status-button.voice-error {
-  color: #d1242f;
-}
-
-[data-theme='dark'] .voice-status-button.voice-ready {
-  color: #3fb950;
-}
-[data-theme='dark'] .voice-status-button.voice-starting {
-  color: #d29922;
-}
-[data-theme='dark'] .voice-status-button.voice-error {
-  color: #f85149;
+/* 队列角标: 待处理 + 运行中的任务数 */
+.editor-tab-badge {
+  background: var(--app-accent);
+  color: #ffffff;
+  border-radius: 9px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 15px;
+  min-width: 15px;
+  text-align: center;
 }
 
 .voice-merge-hint {

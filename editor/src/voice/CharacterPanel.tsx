@@ -5,7 +5,7 @@
 // 顶部为搜索 / 选择 / 新建; 列表按响应式网格排布 (窗口足够宽时两列)。
 // 参考音频的增删改在「选择角色」对话框内完成, 列表本身只展示与编辑角色元信息。
 
-import { Button, Dropdown, Field, Input, Option, Textarea, Tooltip } from '@fluentui/react-components';
+import { Button, Dropdown, Field, Input, Option, Textarea } from '@fluentui/react-components';
 import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
@@ -169,17 +169,20 @@ function CharacterCard({
         <span className="character-id" title="角色 ID（用于 game/vocal 下的目录名）">
           {draft.id}
         </span>
-        <Tooltip content={draft.starred ? '取消星标' : '星标（在选择列表中靠前）'} relationship="label">
-          <Button
-            size="small"
-            appearance="subtle"
-            icon={draft.starred ? <StarFilled /> : <StarRegular />}
-            onClick={() => void commit({ starred: !draft.starred })}
-          />
-        </Tooltip>
-        <Tooltip content="导出角色（不含模型选择）" relationship="label">
-          <Button size="small" appearance="subtle" icon={<ArrowDownloadRegular />} onClick={onExport} />
-        </Tooltip>
+        <Button
+          size="small"
+          appearance="subtle"
+          title={draft.starred ? '取消星标' : '星标（在选择列表中靠前）'}
+          icon={draft.starred ? <StarFilled /> : <StarRegular />}
+          onClick={() => void commit({ starred: !draft.starred })}
+        />
+        <Button
+          size="small"
+          appearance="subtle"
+          title="导出角色（不含模型选择）"
+          icon={<ArrowDownloadRegular />}
+          onClick={onExport}
+        />
       </div>
 
       <Field label="GSOV 模型（本地记录，不参与导出）">
@@ -225,16 +228,14 @@ function CharacterCard({
               ? '切换服务端权重会重载模型，通常无需手动操作（队列会按角色分组连续执行）'
               : 'GSOV 就绪后可切换服务端权重'}
           </span>
-          <Tooltip content="让 GSOV 立即加载上面的权重（高代价：重载模型并落盘配置）" relationship="label">
-            <Button
-              size="small"
-              appearance="secondary"
-              disabled={!canSwitchModel || switching || (!draft.model?.gptWeights && !draft.model?.sovitsWeights)}
-              onClick={() => void onSwitchModel(draft)}
-            >
-              {switching ? '切换中…' : '切换到该模型'}
-            </Button>
-          </Tooltip>
+          <Button
+            size="small"
+            appearance="secondary"
+            disabled={!canSwitchModel || switching || (!draft.model?.gptWeights && !draft.model?.sovitsWeights)}
+            onClick={() => void onSwitchModel(draft)}
+          >
+            {switching ? '切换中…' : '切换到该模型'}
+          </Button>
         </div>
       </Field>
 

@@ -759,17 +759,33 @@ pub async fn voice_create_character(
     library.save(character).map_err(|error| error.to_string())
 }
 
-/// 添加参考音频: 规范化后纳入角色库
+/// 添加参考音频的入参
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceInput {
+    /// 源音频路径 (任意用户可见位置, 会被拷贝进角色库)
+    pub source: String,
+    /// 参考文本 (v4 必需, 且须与音频逐字一致)
+    pub text: String,
+    /// 语言码
+    pub language: String,
+    /// 风格标签 (v0.5 仅 Ink 内部使用)
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 裁剪区间起点 (秒); 与 `end` 同时给出才生效
+    #[serde(default)]
+    pub start: Option<f64>,
+    /// 裁剪区间终点 (秒)
+    #[serde(default)]
+    pub end: Option<f64>,
+}
+
+/// 添加参考音频: 规范化 (3~10 秒约束) 后纳入角色库
 #[tauri::command]
 pub async fn voice_add_reference(
     app: tauri::AppHandle,
     id: String,
-    source: String,
-    text: String,
-    language: String,
-    tags: Vec<String>,
-    start: Option<f64>,
-    end: Option<f64>,
+    input: ReferenceInput,
 ) -> Result<library::Character, String> {
     let library = library_of(&app)?;
     let mut character = library.load(&id).map_err(|error| error.to_string())?;
@@ -778,14 +794,14 @@ pub async fn voice_add_reference(
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let staged = dir.join("staged.wav");
 
-    let range = match (start, end) {
+    let range = match (input.start, input.end) {
         (Some(start), Some(end)) => Some((start, end)),
         _ => None,
     };
-    audio::normalize_reference(Path::new(&source), &staged, range)?;
+    audio::normalize_reference(Path::new(&input.source), &staged, range)?;
 
     let reference = library
-        .adopt_reference(&id, &staged, text, language, tags)
+        .adopt_reference(&id, &staged, input.text, input.language, input.tags)
         .map_err(|error| error.to_string())?;
     let _ = std::fs::remove_file(&staged);
 
