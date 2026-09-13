@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use webgal_language_core::{
     element::FigureId,
-    sentence::{PrimarySentence, Sentence, SentenceInfo},
+    sentence::{PrimarySentence, Sentence},
 };
 
 /// 语句身份哈希长度
@@ -72,27 +72,8 @@ pub fn parse_say_lines(scene: &str) -> Vec<SayLine> {
     let mut current_speaker: Option<String> = None;
 
     for (index, raw) in scene.lines().enumerate() {
-        /*
-         * 注释行必须显式跳过。
-         *
-         * WebGAL 的解析器**不认** `//` 行注释: 它没有 `-参数` 时分不出命令式语句与
-         * 对话, 于是 `// 这是注释` 会被整行当成**对话内容** (speaker = None)。
-         * 结果就是注释行出现在对话列表里、还继承了上一条的说话者, 让用户看到莫名其妙的
-         * 条目。更糟的是此后"第 N 条对话"与"文件第 N 行"彻底错开 —— 光标点中的行、
-         * 高亮的行、面板显示的对话三者互相错位。
-         *
-         * 语言核心的 `SentenceInfo::is_empty()` 只覆盖"整行皆空"的情况 (空行), 因此
-         * 这里再显式判一次 `//` 行注释。文本预处理按行处理时不涉及这条路径。
-         */
-        if raw.trim_start().starts_with("//") {
-            continue;
-        }
-        let info = SentenceInfo::from_str(raw);
-        // 空行 / 只有注释的行
-        if info.is_empty() {
-            continue;
-        }
-        let Sentence::Say(say) = info.sentence else {
+        // 逐行解析: 只取对话语句, 其余 (空行 / 演出 / 控制) 直接跳过
+        let Sentence::Say(say) = Sentence::from_str(raw).sentence else {
             continue;
         };
 
@@ -289,20 +270,18 @@ label:loop;
     #[test]
     fn reported_line_matches_the_file_line_it_was_parsed_from() {
         /*
-         * 行号错位是"光标点中的行 / 高亮的行 / 面板显示的对话"三者错开这一类 bug 的根源,
+         * 行号错位会让"光标点中的行 / 高亮的行 / 面板显示的对话"三者互相错开,
          * 因此这里直接**回读原文本校验**: 对每一条对话, 用它报出的 `line` 去原文里取
          * 那一行, 必须能解析出同一条对话。
          *
-         * 场景刻意包含空行 / 注释 / 非对话语句 (它们最容易让行号偏移一位)。
+         * 场景刻意包含空行与各种非对话语句 —— 它们最容易让行号偏移一位。
          */
-        let scene = "\
-// 场景注释
+        let scene = r"
 bgm:The des Alizes.flac;
-
 changeFigure:ext/anon/model.json -id=anon -next;
 千早爱音:你爱我吗？ -figureId=anon;
 
-// 中间来一行注释
+wait:1000;
 长崎素世:唉？ -figureId=soyo;
 next:对话;
 :素世抿了一口红茶。;
@@ -326,22 +305,22 @@ next:对话;
             assert_eq!(reparsed[0].text, say.text, "第 {} 行内容不符", say.line);
         }
 
+        // 逐行核对 (0 起): 空行 / 资源语句 / 控制语句都不应出现在结果里
+        assert_eq!(
+            lines.iter().map(|item| item.line).collect::<Vec<_>>(),
+            vec![3, 6, 7, 8, 9, 10]
+        );
+
+        assert_eq!(lines[0].text, "你爱我吗？");
+        assert_eq!(lines[1].text, "唉？");
+        // `next:对话;` 是显式说话者, 内容为「对话」
+        assert_eq!(lines[2].text, "对话");
+        // 显式旁白 (`:内容;`) 不继承前面的说话者
+        assert_eq!(lines[3].speaker, None);
+        assert!(!lines[3].speaker_inherited);
         // 省略说话者的裸行继承上一条 (这一条只能整段解析才看得出来)
         assert_eq!(lines[5].speaker.as_deref(), Some("千早爱音"));
         assert!(lines[5].speaker_inherited);
-
-        // 注释行绝对不能出现在结果里
-        assert!(
-            lines.iter().all(|item| !item.text.contains("//")),
-            "{:#?}",
-            lines
-        );
-
-        // 逐行核对 (0 起): 注释行/空行/资源语句都不应出现在结果里
-        assert_eq!(
-            lines.iter().map(|item| item.line).collect::<Vec<_>>(),
-            vec![4, 7, 8, 9, 10, 11]
-        );
     }
 
     #[test]

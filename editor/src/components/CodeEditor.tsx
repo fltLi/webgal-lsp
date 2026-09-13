@@ -128,34 +128,38 @@ export function CodeEditor({
     };
 
     /*
-     * 恢复光标。
+     * 光标: 挂载时恢复, 移动时上报, 卸载时记档。
      *
-     * 编辑器只挂载活动文档, 卸载时若不记档, 切走再切回来光标就回到第一行。这里在
-     * 挂载时把该文档上次的位置恢复回来 (并在下面持续记录)。注意要在注册
-     * `onDidChangeCursorPosition` **之前**设置, 否则恢复动作会先触发一次同步。
+     * 顺序很重要 —— 先恢复位置, 再注册监听, 否则恢复动作会先触发一次误同步。
      */
     const remembered = useAppStore.getState().cursors[path];
     if (remembered) {
-      editor.setPosition({ lineNumber: remembered.line, column: remembered.column });
-      editor.revealLineInCenterIfOutsideViewport(remembered.line);
+      // 文件可能在别处被改短, 因此夹到当前实际行数内
+      const maxLine = Math.max(1, model.getLineCount());
+      const line = Math.min(Math.max(1, remembered.line), maxLine);
+      editor.setPosition({ lineNumber: line, column: remembered.column });
+      editor.revealLineInCenterIfOutsideViewport(line);
     }
+
+    /** 把当前光标同时写进"状态栏用的光标"与"本档留档" */
+    const publishCursor = () => {
+      const position = editor.getPosition();
+      if (!position) return;
+      const store = useAppStore.getState();
+      store.setCursor({ path, line: position.lineNumber, column: position.column });
+      store.rememberCursor(path, { line: position.lineNumber, column: position.column });
+    };
 
     // 光标移动 -> 状态栏位置 + 跨行时触发预览同步
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
-      const store = useAppStore.getState();
-      const position = { line: e.position.lineNumber, column: e.position.column };
-      store.setCursor({ path, ...position });
-      store.rememberCursor(path, position);
+      publishCursor();
       if (e.position.lineNumber !== lastSyncLine) {
         lastSyncLine = e.position.lineNumber;
         scheduleSync();
       }
     });
-    // 补一次初始记录: 编辑器创建时的初始位置不会触发上面的事件
-    const initial = editor.getPosition();
-    if (initial) {
-      useAppStore.getState().setCursor({ path, line: initial.lineNumber, column: initial.column });
-    }
+    // 编辑器创建时不会触发上面的事件, 因此主动上报一次初始位置
+    publishCursor();
 
     let unbindModel: (() => void) | null = null;
     let unsubscribeDiagnostics: (() => void) | null = null;
@@ -335,6 +339,17 @@ export function CodeEditor({
       if (unsubscribeGit) unsubscribeGit();
       if (saveTimer) clearTimeout(saveTimer);
       if (syncTimer) clearTimeout(syncTimer);
+      /*
+       * 卸载前记下光标。
+       *
+       * 编辑器只挂载活动文档, 不记档的话切走再切回来就回到第一行 —— 普通卡与配音卡
+       * 都受影响。收尾时再记一次是必须的: 用户可能只是"点一下"某行就切走, 期间没有
+       * 再次移动光标, 但位置已经变了。
+       */
+      const position = editor.getPosition();
+      if (position) {
+        useAppStore.getState().rememberCursor(path, { line: position.lineNumber, column: position.column });
+      }
       highlightDecorations.current = null;
       editorRef.current = null;
       editor.dispose();

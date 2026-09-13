@@ -87,15 +87,11 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
   /*
    * 光标位置变化 -> 定位当前对话。
    *
-   * 判定必须按语句的 `[首行, 首行 + 行数)` 区间, 而不是"行号相等":
-   * WebGAL 语句可以跨行, 只比首行会出现"光标在对话上一行/下一行才识别"的错乱。
-   */
-  /*
-   * 光标位置变化 -> 定位当前对话。
+   * Monaco 给的是 1 起算的行号, 后端给的是 0 起算, 因此这里减一之后**直接按行号
+   * 精确查找** (`dialogueAtLine` 就是一次 `find`)。
    *
-   * 编辑器只挂载活动文档, 因此这里只认**属于本卡的**光标记录 (`cursor.path`):
-   * 否则切卡瞬间上一条记录的行号会被本文档继承, 于是选中错误的行 —— 表现就是
-   * "光标点中的行 / 高亮的行 / 面板显示的对话"三者错位。
+   * 只认属于本卡的光标记录 (`cursor.path`): 编辑器只挂载活动文档, 不带路径的话
+   * 切卡瞬间上一条记录的行号会被本文档继承。
    */
   const cursor = useAppStore((state) => state.cursor);
   useEffect(() => {
@@ -111,6 +107,7 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
     return <div className="scene-voice-loading">正在解析场景…</div>;
   }
 
+  // 选中的就是卡片当前对话那一行 (命中对话 => 高亮该行)
   const dialogue: SayLine | null = dialogueAtLine(card.dialogues, card.cursorLine ?? -1);
 
   return (
@@ -118,7 +115,7 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
       <div className="scene-voice-editor">
         {/*
           只读编辑器: 配音卡只负责"读场景 + 选中语句", 编辑一律回到普通场景卡完成。
-          当前语句整行高亮, 让"正在为哪一句配音"一目了然。
+          命中对话时整行高亮, 让"正在为哪一句配音"一目了然。
         */}
         <CodeEditor
           doc={doc}
