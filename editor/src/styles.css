@@ -2765,6 +2765,17 @@ body.resizing {
   font-size: 12px;
 }
 
+/* TEMP-DEBUG: 行号定位用的临时读数, 定位完成后连同标记一起删除 */
+.scene-voice-debug {
+  flex: none;
+  padding: 2px 10px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  color: #d13438;
+  background: rgba(209, 52, 56, 0.08);
+  border-bottom: 1px solid rgba(209, 52, 56, 0.3);
+}
+
 /* 参考音频下拉: 点开即弹出选择对话框 (带搜索与试听) */
 .voice-reference-trigger {
   width: 100%;

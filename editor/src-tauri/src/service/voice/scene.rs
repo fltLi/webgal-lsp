@@ -324,6 +324,42 @@ next:对话;
     }
 
     #[test]
+    fn reports_lines_for_a_transform_heavy_scene() {
+        // 大量 setTransform/changeFigure 里含 JSON (带冒号与引号), 用它们核对行号不被带偏。
+        let scene = r#"bgm:The des Alizes.flac;
+setTransform:{"alpha":0.0} -target=stage-main -duration=0 -next;
+changeBg:角色生活地点/mygo/素世家客厅（晚上）.png -transform={"position":{"x":-1800}} -next;
+changeFigure:ext/居家服素世/model.json -left -id=soyo -transform={"position":{"x":-1440}} -next;
+changeFigure:ext/眼镜爱音/model.wmdl -right -id=anon -expression=sad01 -next;
+:;
+setTransform:{"alpha":1.0} -target=stage-main -duration=1700 -next;
+changeFigure:ext/眼镜爱音/model.wmdl -id=anon -motion=nf03 -next;
+:爱音躺在沙发上，如往常一样翻看着手机。;
+changeFigure:ext/眼镜爱音/model.wmdl -id=anon -motion=nf04 -next;
+:但每翻几次屏幕，她都要歪头看一看坐在自己对面沙发上的恋人。;
+setTransform:{"position":{"x":0}} -target=bg-main -duration=1700 -next;
+setTransform:{"position":{"x":1440}} -target=anon -duration=1700 -next;
+setTransform:{"position":{"x":440}} -target=soyo -duration=1700 -next;
+changeFigure:ext/居家服素世/model.json -id=soyo -motion=soyo_nf03 -next;
+长崎素世:小爱音？ -figureId=soyo;
+changeFigure:ext/居家服素世/model.json -id=soyo -motion=soyo_nf04 -next;
+:素世抿了一口红茶，明显感觉到了爱音表现出来的异样。;
+changeFigure:ext/居家服素世/model.json -id=soyo -motion=soyo_nf02 -next;
+长崎素世:我有什么不对劲的地方吗？ -figureId=soyo;
+setTransform:{"position":{"x":-1800}} -target=bg-main -duration=1700 -next;
+"#;
+        let lines = parse_say_lines(scene);
+        assert_eq!(
+            lines.iter().map(|item| item.line).collect::<Vec<_>>(),
+            vec![8, 10, 15, 17, 19],
+            "{:#?}",
+            lines
+        );
+        assert_eq!(lines[0].text, "爱音躺在沙发上，如往常一样翻看着手机。");
+        assert_eq!(lines[4].text, "我有什么不对劲的地方吗？");
+    }
+
+    #[test]
     fn rewrite_sets_vocal_and_keeps_other_parts() {
         let line = "千早爱音:你爱我吗？ -figureId=anon -when=a>1; 这是注释";
         let rewritten = rewrite_line(line, Some("anon/a1b2c3.wav")).unwrap();
