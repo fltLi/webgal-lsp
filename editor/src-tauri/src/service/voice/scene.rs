@@ -72,22 +72,25 @@ pub fn parse_say_lines(scene: &str) -> Vec<SayLine> {
     let mut current_speaker: Option<String> = None;
 
     for (index, raw) in scene.lines().enumerate() {
-        // 逐行解析: 只取对话语句, 其余 (空行 / 演出 / 控制) 直接跳过
+        /*
+         * 逐行解析, 判定对话的**唯一依据**是 `Sentence::Say`。
+         *
+         * 不再按内容过滤: `:;` / `-sayPlaceHolder` 这类占位语句同样是 `SaySentence`
+         * (command 为空 -> content 为空), 它们照样占一行、照样进列表。自己另立一条
+         * "内容为空就跳过"的规则只会让对话序号与文件行号错开。
+         */
         let Sentence::Say(say) = Sentence::from_str(raw).sentence else {
             continue;
         };
 
         let text = say.content.join("|");
-        // 空内容占位语句 (`-sayPlaceHolder`, `:;`) 不参与配音
-        if text.trim().is_empty() {
-            continue;
-        }
 
         // 说话者归属。
         //
-        // * `Some(name)` - 显式说话者;
-        // * `Some("")` - 显式空说话者 (`:内容;`), 表示旁白, **不继承**;
-        // * `None` - 省略说话者的语法糖 (裸 `内容;`), 继承上一条显式说话者。
+        // `SaySentence::speaker` 的取值语义 (由语言核心的解析决定, 不要自己另定规则):
+        // * `Some(name)`  - 显式说话者 (`爱音:内容;`);
+        // * `Some("")`    - 显式空说话者 (`:内容;` / `:;`), 即旁白, **不继承**;
+        // * `None`        - 省略说话者的语法糖 (裸 `内容;`), 继承上一条显式说话者。
         let (speaker, speaker_inherited) = match say.speaker {
             Some(speaker) => {
                 if !speaker.is_empty() {
@@ -228,11 +231,23 @@ label:loop;
     }
 
     #[test]
-    fn skips_empty_and_placeholder_lines() {
+    fn keeps_placeholder_lines_because_they_are_still_say_sentences() {
+        /*
+         * 判定对话的唯一依据是 `Sentence::Say` —— 不按内容过滤。
+         *
+         * `:;` 与 `-sayPlaceHolder` 都是合法的 SaySentence (command 为空 -> content
+         * 为空), 它们照样占一行、照样进列表。自己加一条"内容为空就跳过"的规则会让
+         * 后续所有对话的序号与文件行号错开一位。
+         */
         let scene = ":;\n: ;\n爱音: -sayPlaceHolder;\n爱音:真的有内容;\n";
         let lines = parse_say_lines(scene);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].text, "真的有内容");
+        assert_eq!(
+            lines.iter().map(|item| item.line).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert!(lines[..3].iter().all(|item| item.text.is_empty()));
+        assert_eq!(lines[3].text, "真的有内容");
+        assert_eq!(lines[3].speaker.as_deref(), Some("爱音"));
     }
 
     #[test]
@@ -351,12 +366,16 @@ setTransform:{"position":{"x":-1800}} -target=bg-main -duration=1700 -next;
         let lines = parse_say_lines(scene);
         assert_eq!(
             lines.iter().map(|item| item.line).collect::<Vec<_>>(),
-            vec![8, 10, 15, 17, 19],
+            vec![5, 8, 10, 15, 17, 19],
             "{:#?}",
             lines
         );
-        assert_eq!(lines[0].text, "爱音躺在沙发上，如往常一样翻看着手机。");
-        assert_eq!(lines[4].text, "我有什么不对劲的地方吗？");
+        // 第 5 行是 `:;` 占位语句 —— 它同样是 SaySentence, 因此照样在列表里
+        assert_eq!(lines[0].line, 5);
+        assert_eq!(lines[0].text, "");
+        assert!(lines[0].speaker.is_none());
+        assert_eq!(lines[1].text, "爱音躺在沙发上，如往常一样翻看着手机。");
+        assert_eq!(lines[5].text, "我有什么不对劲的地方吗？");
     }
 
     #[test]
@@ -426,6 +445,9 @@ setTransform:{"position":{"x":-1800}} -target=bg-main -duration=1700 -next;
             vec![0, 1, 2, 3]
         );
         assert!(lines.iter().all(|item| item.line_count == 1));
+        for (i, x) in lines.iter().enumerate() {
+            eprintln!("DBG[{i}] line={} speaker={:?} text={:?}", x.line, x.speaker, x.text);
+        }
     }
 
     #[test]
@@ -475,34 +497,41 @@ setTransform:{\"position\":{\"x\":0}} -target=bg-main -next;
 ";
         let lines = parse_say_lines(scene);
 
-        // 只有对话语句入选, 且每行一条
+        // 判定依据只有 `Sentence::Say`: `:;` 占位语句同样在列表里 (第 3 与第 9 行)
         assert_eq!(
             lines.iter().map(|item| item.line).collect::<Vec<_>>(),
-            vec![4, 5, 7, 8, 10, 11]
+            vec![3, 4, 5, 7, 8, 9, 10, 11]
         );
         assert!(lines.iter().all(|item| item.line_count == 1));
 
-        // 第 4 行旁白 (显式空说话者, 不继承)
+        // 第 3 行 `:;` 占位 (空内容, 无说话者)
+        assert_eq!(lines[0].text, "");
         assert_eq!(lines[0].speaker, None);
-        assert!(!lines[0].speaker_inherited);
-        assert_eq!(lines[0].text, "爱音躺在沙发上，如往常一样翻看着手机。");
+
+        // 第 4 行旁白 (显式空说话者, 不继承)
+        assert_eq!(lines[1].speaker, None);
+        assert!(!lines[1].speaker_inherited);
+        assert_eq!(lines[1].text, "爱音躺在沙发上，如往常一样翻看着手机。");
 
         // 第 6 行带 figureId 的台词
-        assert_eq!(lines[1].speaker.as_deref(), Some("长崎素世"));
-        assert_eq!(lines[1].figure.as_deref(), Some("soyo"));
+        assert_eq!(lines[2].speaker.as_deref(), Some("长崎素世"));
+        assert_eq!(lines[2].figure.as_deref(), Some("soyo"));
 
-        // 第 8 行台词, 第 9 行是省略说话者的裸行 (继承爱音)
-        assert_eq!(lines[3].speaker.as_deref(), Some("千早爱音"));
-        assert!(!lines[3].speaker_inherited);
-
-        // 第 11 行旁白同样不继承之前的说话者
-        assert_eq!(lines[4].speaker, None);
+        // 第 8 行台词, 第 9 行是 `:;` 占位, 第 10 行是省略说话者的裸行
+        assert_eq!(lines[4].speaker.as_deref(), Some("千早爱音"));
         assert!(!lines[4].speaker_inherited);
+        assert_eq!(lines[5].line, 9);
+        assert_eq!(lines[5].text, "");
+        // `:;` 的说话者是空串 (旁白), 因此不做继承
+        assert_eq!(lines[5].speaker, None);
+        assert!(!lines[5].speaker_inherited);
 
-        // 资源语句与占位语句都不出现
-        assert!(lines
-            .iter()
-            .all(|item| !matches!(item.line, 0 | 1 | 2 | 3 | 6 | 9)));
+        // 第 11 行是显式说话者的台词, 与它上面的 `:;` / 旁白无关
+        assert_eq!(lines[7].speaker.as_deref(), Some("千早爱音"));
+        assert!(!lines[7].speaker_inherited);
+
+        // 资源语句与控制语句不出现
+        assert!(lines.iter().all(|item| !matches!(item.line, 0 | 1 | 2 | 6)));
     }
 
     #[test]
