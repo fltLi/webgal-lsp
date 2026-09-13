@@ -9,7 +9,7 @@
 //   「移除」只清除当前语句的 `-vocal=` (不删文件、不清历史);
 // * 语音之外的参数 (文本) 随场景内容变化, 不随历史项回填。
 
-import { Button, Input, Slider, Textarea } from '@fluentui/react-components';
+import { Button, Input, Textarea } from '@fluentui/react-components';
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Character, SayLine } from '../commands/voice';
 import { Select, toOptions } from '../components/Select';
 import { voiceController } from './controller';
+import { NumberInput } from './NumberInput';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
 import { GENERATE_SAMPLE_STEPS, LANGUAGE_LABELS, PARAM_TICKS, randomSeed, type VoiceParams } from './types';
 
@@ -223,86 +224,54 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
 
       <div className="voice-row">
         <label className="voice-field">
-          <span className="voice-label">
-            温度 <span className="voice-value">{params.temperature.toFixed(2)}</span>
-          </span>
-          <Slider
-            className="voice-control"
-            min={PARAM_TICKS.temperature.min}
-            max={PARAM_TICKS.temperature.max}
-            step={PARAM_TICKS.temperature.step}
+          <span className="voice-label">温度</span>
+          <NumberInput
             value={params.temperature}
-            onChange={(_, data) => update({ temperature: round1(data.value) })}
+            tick={PARAM_TICKS.temperature}
+            onCommit={(temperature) => update({ temperature })}
           />
         </label>
         <label className="voice-field">
-          <span className="voice-label">
-            语速 <span className="voice-value">{params.speedFactor.toFixed(2)}</span>
-          </span>
-          <Slider
-            className="voice-control"
-            min={PARAM_TICKS.speedFactor.min}
-            max={PARAM_TICKS.speedFactor.max}
-            step={PARAM_TICKS.speedFactor.step}
+          <span className="voice-label">语速</span>
+          <NumberInput
             value={params.speedFactor}
-            onChange={(_, data) => update({ speedFactor: round2(data.value) })}
+            tick={PARAM_TICKS.speedFactor}
+            onCommit={(speedFactor) => update({ speedFactor })}
           />
         </label>
-      </div>
-
-      <div className="voice-advanced">
-        <Button
-          appearance="subtle"
-          size="small"
-          icon={<SettingsRegular />}
-          onClick={() => setAdvancedOpen((open) => !open)}
-        >
-          高级设置 {advancedOpen ? '▴' : '▾'}
-        </Button>
+        {/* 高级设置的开关放在语速右边: 同一行更紧凑, 也少一行高度 */}
+        <div className="voice-field voice-field-advanced">
+          <span className="voice-label">&nbsp;</span>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<SettingsRegular />}
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            高级设置 {advancedOpen ? '▴' : '▾'}
+          </Button>
+        </div>
       </div>
 
       {advancedOpen && (
         <div className="voice-advanced-body">
           <div className="voice-row">
             <label className="voice-field">
-              <span className="voice-label">
-                topK <span className="voice-value">{params.topK}</span>
-              </span>
-              <Slider
-                className="voice-control"
-                min={PARAM_TICKS.topK.min}
-                max={PARAM_TICKS.topK.max}
-                step={PARAM_TICKS.topK.step}
-                value={params.topK}
-                onChange={(_, data) => update({ topK: Math.round(data.value) })}
-              />
+              <span className="voice-label">topK</span>
+              <NumberInput value={params.topK} tick={PARAM_TICKS.topK} integer onCommit={(topK) => update({ topK })} />
             </label>
             <label className="voice-field">
-              <span className="voice-label">
-                topP <span className="voice-value">{params.topP.toFixed(2)}</span>
-              </span>
-              <Slider
-                className="voice-control"
-                min={PARAM_TICKS.topP.min}
-                max={PARAM_TICKS.topP.max}
-                step={PARAM_TICKS.topP.step}
-                value={params.topP}
-                onChange={(_, data) => update({ topP: round2(data.value) })}
-              />
+              <span className="voice-label">topP</span>
+              <NumberInput value={params.topP} tick={PARAM_TICKS.topP} onCommit={(topP) => update({ topP })} />
             </label>
           </div>
           <div className="voice-row">
             <label className="voice-field">
-              <span className="voice-label">
-                重复惩罚 <span className="voice-value">{params.repetitionPenalty.toFixed(2)}</span>
-              </span>
-              <Slider
-                className="voice-control"
-                min={PARAM_TICKS.repetitionPenalty.min}
-                max={PARAM_TICKS.repetitionPenalty.max}
-                step={PARAM_TICKS.repetitionPenalty.step}
+              <span className="voice-label">重复惩罚</span>
+              <NumberInput
                 value={params.repetitionPenalty}
-                onChange={(_, data) => update({ repetitionPenalty: round2(data.value) })}
+                tick={PARAM_TICKS.repetitionPenalty}
+                onCommit={(repetitionPenalty) => update({ repetitionPenalty })}
               />
             </label>
           </div>
@@ -379,14 +348,6 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
       />
     </div>
   );
-}
-
-function round1(value: number): number {
-  return Math.round(value * 20) / 20;
-}
-
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
 }
 
 function referenceLabel(character: Character | null, hash: string | null): string {

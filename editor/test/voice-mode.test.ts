@@ -192,6 +192,29 @@ describe('配音编辑模式: 麦克风开关的可见性', () => {
     ).toBe(false);
   });
 
+  it('切换选项卡会清空光标记录 (避免新卡继承旧卡的行号)', () => {
+    const { tabA, tabB } = openTwoScenes();
+    toggleVoiceWorkbench();
+    useAppStore.getState().setCursor({ path: sceneB, line: 12, column: 1 });
+    expect(useAppStore.getState().cursor?.line).toBe(12);
+
+    useAppStore.getState().activateTab(tabA.id);
+    expect(useAppStore.getState().cursor).toBeNull();
+    expect(tabB.id).not.toBe(tabA.id);
+  });
+
+  it('每个文档各自记住光标位置', () => {
+    const { tabA, tabB } = openTwoScenes();
+    useAppStore.getState().rememberCursor(sceneA, { line: 7, column: 1 });
+    useAppStore.getState().rememberCursor(sceneB, { line: 20, column: 3 });
+    expect(useAppStore.getState().cursors[sceneA]).toEqual({ line: 7, column: 1 });
+    expect(useAppStore.getState().cursors[sceneB]).toEqual({ line: 20, column: 3 });
+    // 切卡不清空留档 (切回来要能恢复)
+    useAppStore.getState().activateTab(tabA.id);
+    useAppStore.getState().activateTab(tabB.id);
+    expect(useAppStore.getState().cursors[sceneA]).toEqual({ line: 7, column: 1 });
+  });
+
   it('开关的开启与关闭是幂等的单入口 (不再被自动规则覆盖)', () => {
     const { tabA } = openTwoScenes();
     toggleVoiceWorkbench();

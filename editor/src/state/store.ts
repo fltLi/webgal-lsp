@@ -86,7 +86,20 @@ interface AppStore {
   previewReady: boolean;
   previewStage: StageSnapshot | null;
 
-  cursor: { line: number; column: number } | null;
+  /**
+   * 当前光标位置 (状态栏显示 / 配音卡定位用)。
+   *
+   * 它是**全局**的一份"最后观察到的位置", 因此带上了所属文档路径: 切卡时编辑器会
+   * 重新挂载, 若不带路径, 上一条记录的行号会被新文档继承 (配音卡据此选中错误的行)。
+   */
+  cursor: { path: string; line: number; column: number } | null;
+  /**
+   * 每个文档各自的光标位置, 切走再切回来时恢复。
+   *
+   * 编辑器是"只挂载活动文档"的, 卸载时若不留档, 光标就回到第一行 —— 普通卡与
+   * 配音卡都有这个问题。
+   */
+  cursors: Record<string, { line: number; column: number }>;
 
   // -------- 配音工作流 --------
   /** GSOV 服务状态 */
@@ -176,7 +189,9 @@ interface AppStore {
   setPreview: (
     patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady' | 'previewStage'>>
   ) => void;
-  setCursor: (cursor: { line: number; column: number } | null) => void;
+  setCursor: (cursor: { path: string; line: number; column: number } | null) => void;
+  /** 记下某个文档的光标位置 (切走再切回来时恢复) */
+  rememberCursor: (path: string, cursor: { line: number; column: number }) => void;
   setSettingsOpen: (open: boolean) => void;
   setSettingsCategory: (category: SettingsCategory) => void;
   setUnsavedDialog: (open: boolean) => void;
@@ -209,6 +224,7 @@ export const useAppStore = create<AppStore>((set) => ({
   previewStage: null,
 
   cursor: null,
+  cursors: {},
 
   voiceQueuePending: 0,
   voiceModePaths: [],
@@ -409,6 +425,12 @@ export const useAppStore = create<AppStore>((set) => ({
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   setCursor: (cursor) => set({ cursor }),
+  rememberCursor: (path, cursor) =>
+    set((s) => {
+      const previous = s.cursors[path];
+      if (previous && previous.line === cursor.line && previous.column === cursor.column) return {};
+      return { cursors: { ...s.cursors, [path]: cursor } };
+    }),
 
   // -------- 配音 --------
 

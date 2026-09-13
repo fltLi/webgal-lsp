@@ -127,14 +127,35 @@ export function CodeEditor({
       }, 150);
     };
 
+    /*
+     * 恢复光标。
+     *
+     * 编辑器只挂载活动文档, 卸载时若不记档, 切走再切回来光标就回到第一行。这里在
+     * 挂载时把该文档上次的位置恢复回来 (并在下面持续记录)。注意要在注册
+     * `onDidChangeCursorPosition` **之前**设置, 否则恢复动作会先触发一次同步。
+     */
+    const remembered = useAppStore.getState().cursors[path];
+    if (remembered) {
+      editor.setPosition({ lineNumber: remembered.line, column: remembered.column });
+      editor.revealLineInCenterIfOutsideViewport(remembered.line);
+    }
+
     // 光标移动 -> 状态栏位置 + 跨行时触发预览同步
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
-      useAppStore.getState().setCursor({ line: e.position.lineNumber, column: e.position.column });
+      const store = useAppStore.getState();
+      const position = { line: e.position.lineNumber, column: e.position.column };
+      store.setCursor({ path, ...position });
+      store.rememberCursor(path, position);
       if (e.position.lineNumber !== lastSyncLine) {
         lastSyncLine = e.position.lineNumber;
         scheduleSync();
       }
     });
+    // 补一次初始记录: 编辑器创建时的初始位置不会触发上面的事件
+    const initial = editor.getPosition();
+    if (initial) {
+      useAppStore.getState().setCursor({ path, line: initial.lineNumber, column: initial.column });
+    }
 
     let unbindModel: (() => void) | null = null;
     let unsubscribeDiagnostics: (() => void) | null = null;

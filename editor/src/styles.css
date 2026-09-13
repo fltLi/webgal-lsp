@@ -2859,6 +2859,19 @@ body.resizing {
 .voice-advanced {
   display: flex;
 }
+
+/* 高级设置开关与语速同排: 同一行更紧凑 */
+.voice-field-advanced {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+/* 数值输入框右侧的范围提示 (灰字, 不抢注意力) */
+.voice-number-range {
+  font-size: 10px;
+  color: var(--app-muted);
+  white-space: nowrap;
+}
 .voice-advanced-body {
   display: flex;
   flex-direction: column;
@@ -2903,6 +2916,34 @@ body.resizing {
   overflow: hidden;
   padding: 8px 10px;
   gap: 6px;
+}
+
+/*
+ * 配音记录列表: 滚动条做细并压暗。
+ *
+ * 这个列表天生需要滚动 (记录会越攒越多), 但默认的粗滚动条在窄栏里非常突兀。
+ * 做成细滚动条既保留"还能往下翻"的提示, 又不抢视觉。
+ */
+.history-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-border) transparent;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border-radius: 4px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: var(--app-muted);
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .history-toolbar {

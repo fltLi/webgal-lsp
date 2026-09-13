@@ -90,14 +90,21 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
    * 判定必须按语句的 `[首行, 首行 + 行数)` 区间, 而不是"行号相等":
    * WebGAL 语句可以跨行, 只比首行会出现"光标在对话上一行/下一行才识别"的错乱。
    */
-  const cursorLine = useAppStore((state) => state.cursor?.line ?? null);
+  /*
+   * 光标位置变化 -> 定位当前对话。
+   *
+   * 编辑器只挂载活动文档, 因此这里只认**属于本卡的**光标记录 (`cursor.path`):
+   * 否则切卡瞬间上一条记录的行号会被本文档继承, 于是选中错误的行 —— 表现就是
+   * "光标点中的行 / 高亮的行 / 面板显示的对话"三者错位。
+   */
+  const cursor = useAppStore((state) => state.cursor);
   useEffect(() => {
-    if (!isActiveTab || cursorLine === null) return;
+    if (!isActiveTab || !cursor || cursor.path !== docPath) return;
     const current = voiceController.getCard(docPath);
     if (!current) return;
-    const hit = dialogueAtLine(current.dialogues, cursorLine - 1);
+    const hit = dialogueAtLine(current.dialogues, cursor.line - 1);
     voiceController.setCursorLine(docPath, hit ? hit.line : null);
-  }, [cursorLine, isActiveTab, docPath]);
+  }, [cursor, isActiveTab, docPath]);
 
   if (!doc) return null;
   if (!card) {

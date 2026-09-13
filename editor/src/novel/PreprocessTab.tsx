@@ -92,9 +92,10 @@ export function PreprocessTab({ id }: { id: string }) {
     sessionRef.current = sess;
     setSession(sess);
 
-    // 状态栏光标位置同步。
+    // 状态栏光标位置同步 (带文档标识, 避免被别的卡继承)。
+    // 预处理卡是"非文档"编辑器, 因此不进 `cursors` 留档表。
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
-      useAppStore.getState().setCursor({ line: e.position.lineNumber, column: e.position.column });
+      useAppStore.getState().setCursor({ path: `novel:${id}`, line: e.position.lineNumber, column: e.position.column });
     });
 
     return () => {
