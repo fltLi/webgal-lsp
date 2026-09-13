@@ -2,31 +2,34 @@
 
 // 编辑角色对话框。
 //
-// 角色的全部可编辑内容都在这里: 名称 / ID / 星标 / 启用 / 两个 GSOV 模型 / 描述,
+// 角色的全部可编辑内容都在这里: 名称 / ID / 两个 GPT-SoVITS 模型 / 描述,
 // 以及**下方的参考音频编辑列表** (增删与试听)。
 //
-// 为什么要把参考音频编辑放进来: 之前它藏在「选择角色」对话框里, 而那个对话框的职责
-// 是"挑选参与配音的角色", 点一行就跳去编辑参考音频并不符合直觉。角色信息与它的
-// 参考音频本来就该在同一个地方编辑。
+// 两个刻意的交互决定:
+// * **改动即时生效**, 没有"保存"按钮 —— 输入框失焦、下拉选中、开关切换都会立刻落盘,
+//   底部按钮只是"关闭"。用户填完就能直接看到列表里的变化。
+// * 参考音频列表**自己滚动**, 而不是把整个对话框撑长: 整页滚动时标题栏与
+//   "添加参考音频"按钮都会跑出视野。
 
-import { Button, Field, Input, Switch, Textarea } from '@fluentui/react-components';
-import { AddRegular, ArrowDownloadRegular, DeleteRegular, PlayRegular, StopRegular } from '@fluentui/react-icons';
+import { Button, Field, Input, Textarea } from '@fluentui/react-components';
+import { AddRegular, ArrowDownloadRegular, DeleteRegular } from '@fluentui/react-icons';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
 import type { Character, ModelCandidate, ReferenceAudio } from '../commands/voice';
-import { voiceExportCharacter, voiceListCharacters, voiceReadAudio, voiceRemoveReference } from '../commands/voice';
+import { voiceExportCharacter, voiceListCharacters, voiceRemoveReference } from '../commands/voice';
 import { AppDialog } from '../components/AppDialog';
 import { Select } from '../components/Select';
-import { voiceController } from './controller';
 import { useAppStore } from '../state/store';
-import { VoiceReferenceDialog } from './VoiceReferenceDialog';
+import { AddReferenceDialog } from './AddReferenceDialog';
+import { AudioButton } from './AudioButton';
+import { voiceController } from './controller';
 
 interface Props {
   character: Character;
   models: ModelCandidate[];
   onClose: () => void;
-  /** 内容已变化 (调用方可据此刷新自己持有的角色快照) */
+  /** 内容已变化 (调用方据此刷新自己持有的角色快照) */
   onChanged: () => void;
   onError: (error: string | null) => void;
 }
@@ -42,6 +45,7 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
     savedId.current = character.id;
   }, [character.id, character.updatedAt]);
 
+  /** 立即落盘 (没有"保存"按钮) */
   const commit = async (patch: Partial<Character>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
@@ -95,9 +99,11 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
     await voiceExportCharacter(character.id, destination);
   };
 
-  const modelName = (weights: string | null | undefined): string => {
+  /** 权重路径的后缀名 (权重文件名的可读部分) */
+  const suffixOf = (weights: string | null | undefined): string => {
     if (!weights) return '';
-    return models.find((item) => item.gptWeights === weights || item.sovitsWeights === weights)?.name ?? weights;
+    const name = weights.replace(/\\/g, '/').split('/').pop() ?? weights;
+    return name;
   };
 
   return (
@@ -115,7 +121,7 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
         }
         footer={
           <Button appearance="primary" onClick={onClose}>
-            完成
+            关闭
           </Button>
         }
       >
@@ -139,19 +145,6 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
             />
           </Field>
 
-          <div className="role-edit-switches">
-            <Switch
-              checked={draft.starred}
-              label="星标靠前"
-              onChange={(_, data) => void commit({ starred: data.checked })}
-            />
-            <Switch
-              checked={draft.enabled}
-              label="参与配音"
-              onChange={(_, data) => void commit({ enabled: data.checked })}
-            />
-          </div>
-
           <Field label="GPT-SoVITS 模型" className="role-edit-span">
             <div className="role-edit-models">
               <Select
@@ -159,13 +152,9 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
                 value={
                   models.some((item) => item.gptWeights === draft.model?.gptWeights) ? draft.model!.gptWeights! : ''
                 }
-                title={modelName(draft.model?.gptWeights) || '未指定 GPT 权重'}
-                options={models.map((item) => ({ value: item.gptWeights, label: item.name }))}
-                onChange={(gptWeights) =>
-                  void commit({
-                    model: { ...(draft.model ?? {}), gptWeights },
-                  })
-                }
+                title={suffixOf(draft.model?.gptWeights) || '未指定 GPT 权重'}
+                options={models.map((item) => ({ value: item.gptWeights, label: suffixOf(item.gptWeights) }))}
+                onChange={(gptWeights) => void commit({ model: { ...(draft.model ?? {}), gptWeights } })}
               />
               <Select
                 placeholder="选择 SoVITS 权重"
@@ -174,13 +163,9 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
                     ? draft.model!.sovitsWeights!
                     : ''
                 }
-                title={modelName(draft.model?.sovitsWeights) || '未指定 SoVITS 权重'}
-                options={models.map((item) => ({ value: item.sovitsWeights, label: item.name }))}
-                onChange={(sovitsWeights) =>
-                  void commit({
-                    model: { ...(draft.model ?? {}), sovitsWeights },
-                  })
-                }
+                title={suffixOf(draft.model?.sovitsWeights) || '未指定 SoVITS 权重'}
+                options={models.map((item) => ({ value: item.sovitsWeights, label: suffixOf(item.sovitsWeights) }))}
+                onChange={(sovitsWeights) => void commit({ model: { ...(draft.model ?? {}), sovitsWeights } })}
               />
             </div>
           </Field>
@@ -196,7 +181,7 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
           </Field>
         </div>
 
-        {/* 参考音频编辑列表 */}
+        {/* 参考音频编辑列表: 自己滚动, 不把整个对话框撑长 */}
         <div className="role-edit-references">
           <div className="role-edit-references-head">
             <span className="voice-label">参考音频（{draft.references.length}）</span>
@@ -206,7 +191,7 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
             </Button>
           </div>
 
-          <div className="dialog-scroll">
+          <div className="dialog-scroll reference-list">
             {draft.references.length === 0 ? (
               <p className="voice-dialog-empty">暂无参考音频。参考文本必须与音频逐字一致, 时长 3~10 秒。</p>
             ) : (
@@ -220,7 +205,10 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
                       {reference.tags.length > 0 && ` · ${reference.tags.join(' / ')}`}
                     </div>
                   </div>
-                  <AudioButton path={voiceController.referencePathFor(character.id, reference.file)} />
+                  <AudioButton
+                    path={voiceController.referencePathFor(character.id, reference.file)}
+                    label={reference.text}
+                  />
                   <Button
                     size="small"
                     appearance="subtle"
@@ -236,58 +224,13 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
         </div>
       </AppDialog>
 
-      <VoiceReferenceDialog
-        open={addOpen}
-        character={draft}
-        selectedHash={null}
-        onPick={() => {}}
-        onClose={() => setAddOpen(false)}
-        onCharactersChanged={() => void reload(character.id)}
-      />
+      {addOpen && (
+        <AddReferenceDialog
+          character={draft}
+          onClose={() => setAddOpen(false)}
+          onAdded={() => void reload(character.id)}
+        />
+      )}
     </>
-  );
-}
-
-/** 试听按钮 (全局互斥播放) */
-function AudioButton({ path }: { path: string }) {
-  const [playing, setPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-      audioRef.current = null;
-    };
-  }, []);
-
-  const toggle = async () => {
-    if (playing) {
-      audioRef.current?.pause();
-      setPlaying(false);
-      return;
-    }
-    try {
-      const dataUrl = await voiceReadAudio(path);
-      document.querySelectorAll<HTMLAudioElement>('audio[data-voice-preview]').forEach((element) => element.pause());
-      const audio = new Audio(dataUrl);
-      audio.dataset['voicePreview'] = 'true';
-      audio.onended = () => setPlaying(false);
-      audio.onerror = () => setPlaying(false);
-      audioRef.current = audio;
-      await audio.play();
-      setPlaying(true);
-    } catch {
-      setPlaying(false);
-    }
-  };
-
-  return (
-    <Button
-      size="small"
-      appearance="subtle"
-      icon={playing ? <StopRegular /> : <PlayRegular />}
-      title="试听"
-      onClick={() => void toggle()}
-    />
   );
 }

@@ -7,14 +7,23 @@
 // 直觉, 也让这个对话框的职责变得含糊。
 
 import { Button, Checkbox, Input } from '@fluentui/react-components';
-import { ArrowUploadRegular, FolderOpenRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import {
+  ArrowDownloadRegular,
+  ArrowUploadRegular,
+  DeleteRegular,
+  FolderOpenRegular,
+  StarFilled,
+  StarRegular,
+} from '@fluentui/react-icons';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character } from '../commands/voice';
+import { voiceExportCharacter } from '../commands/voice';
 import { AppDialog } from '../components/AppDialog';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
+import { ListImportDialog } from './ListImportDialog';
 
 interface Props {
   open: boolean;
@@ -25,8 +34,8 @@ interface Props {
 export function RolePickerDialog({ open, onClose, onError }: Props) {
   const characters = useAppStore((state) => state.voiceCharacters);
   const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [listImportOpen, setListImportOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -73,38 +82,28 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     }
   };
 
-  /**
-   * 从训练切分产物批量导入角色。
-   *
-   * 依次选择**文本清单所在目录**与**音频目录**: GPT-SoVITS 的切分流程常把清单与音频
-   * 放在不同位置, 由用户明确指定比自动猜测可靠。
-   */
-  const importFromList = async () => {
-    setMessage(null);
-    const listDir = await openDialog({ directory: true, multiple: false, title: '选择文本清单目录（含 .list 文件）' });
-    if (typeof listDir !== 'string') return;
-    const audioDir = await openDialog({ directory: true, multiple: false, title: '选择音频目录' });
-    if (typeof audioDir !== 'string') return;
-
-    setBusy(true);
+  const remove = async (character: Character) => {
     try {
-      const result = await voiceController.importFromList(listDir, audioDir);
-      setMessage(
-        `已导入 ${result.imported} 条参考音频，涉及 ${result.characters.length} 个角色` +
-          (result.skipped > 0 ? `，跳过 ${result.skipped} 条` : '')
-      );
+      await voiceController.deleteCharacter(character.id);
     } catch (caught) {
       report(caught);
-    } finally {
-      setBusy(false);
     }
+  };
+
+  const exportCharacter = async (character: Character) => {
+    const destination = await saveDialog({
+      defaultPath: `${character.name}.zip`,
+      filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
+    });
+    if (typeof destination !== 'string') return;
+    await voiceExportCharacter(character.id, destination);
   };
 
   return (
     <>
       <AppDialog
         title="选择角色"
-        description="勾选参与配音的角色。点击角色名可管理它的参考音频。"
+        description="勾选参与配音的角色。角色信息请在「编辑角色」里改。"
         size="large"
         height={600}
         compact
@@ -119,24 +118,18 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
         <div className="dialog-toolbar">
           <Input
             className="dialog-toolbar-grow"
-            placeholder="搜索角色名或别名…"
+            placeholder="搜索角色…"
             value={query}
             onChange={(_, data) => setQuery(data.value)}
           />
-          <Button
-            appearance="secondary"
-            icon={<ArrowUploadRegular />}
-            disabled={busy}
-            onClick={() => void importCharacter()}
-          >
+          <Button appearance="secondary" icon={<ArrowUploadRegular />} onClick={() => void importCharacter()}>
             导入角色
           </Button>
           <Button
             appearance="secondary"
             icon={<FolderOpenRegular />}
-            disabled={busy}
             title="从训练切分产物的文本清单与音频批量导入角色"
-            onClick={() => void importFromList()}
+            onClick={() => setListImportOpen(true)}
           >
             从清单导入
           </Button>
@@ -167,10 +160,35 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
                 icon={character.starred ? <StarFilled /> : <StarRegular />}
                 onClick={() => void toggleStarred(character, !character.starred)}
               />
+              <Button
+                size="small"
+                appearance="subtle"
+                title="导出角色"
+                icon={<ArrowDownloadRegular />}
+                onClick={() => void exportCharacter(character)}
+              />
+              <Button
+                size="small"
+                appearance="subtle"
+                className="danger-icon"
+                title="删除角色"
+                icon={<DeleteRegular />}
+                onClick={() => void remove(character)}
+              />
             </div>
           ))}
         </div>
       </AppDialog>
+
+      {listImportOpen && (
+        <ListImportDialog
+          onClose={() => setListImportOpen(false)}
+          onImported={setMessage}
+          onError={(error) => {
+            if (error) report(error);
+          }}
+        />
+      )}
     </>
   );
 }

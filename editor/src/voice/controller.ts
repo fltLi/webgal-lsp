@@ -788,12 +788,12 @@ class VoiceController {
   }
 
   /**
-   * 从 GPT-SoVITS 切片产物 (.list + 音频目录) 批量导入角色与参考音频。
+   * 从 GPT-SoVITS 切片产物批量导入角色与参考音频。
    *
-   * 目录选择由调用方完成, 这里只负责导入并重新读取角色列表。
+   * 清单文件与音频目录各自独立选择, 匹配按**文件名**进行。
    */
-  async importFromList(listDir: string, audioDir: string): Promise<ListImportReport> {
-    const report = await voiceImportCharactersFromList(listDir, audioDir);
+  async importFromList(listPath: string, audioDir: string): Promise<ListImportReport> {
+    const report = await voiceImportCharactersFromList(listPath, audioDir);
     this.setCharacters(await voiceListCharacters());
     return report;
   }

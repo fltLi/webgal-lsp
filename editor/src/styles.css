@@ -356,12 +356,8 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  /*
-   * 所有选项卡左右内边距**完全一致**, 且**不为任何东西预留槽位**。
-   * 一旦给"可能出现的图标"留白, 没有图标的选项卡标题前面就会多出一段死留白。
-   * 配音开关的占位靠 `.tab-strip-action.hidden` 自己做 (见下), 与标题留白无关。
-   */
-  padding: 8px 10px;
+  /* 左右内边距固定; 左侧略大一点, 让纯文本标题不贴边 */
+  padding: 8px 12px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -2569,6 +2565,33 @@ body.resizing {
   max-width: 100%;
 }
 
+/* 两个模型以标签形式展示 (只看文件名后缀, 完整路径放 title) */
+.character-tile-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.character-tile-model {
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--app-muted);
+  background: var(--app-hover);
+  border-radius: 3px;
+}
+
+/* 试听中: 进入 active 态, 一眼看出正在播放哪一个 */
+.audio-button.playing.fui-Button {
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+}
+
 /* 图标型危险按钮 (删除角色): 平时保持中性, 悬停才变红 */
 .danger-icon.fui-Button:hover {
   color: #d13438;
@@ -2610,9 +2633,23 @@ body.resizing {
   gap: 8px;
 }
 
-.role-edit-references {
+/*
+ * 参考音频列表自己滚动。
+ *
+ * 三条缺一不可:
+ * * `.dialog-compact .dialog-body > *` 会把直接子项设成 `flex: none`, 因此这里必须
+ *   用同等或更高特异性把 `flex: 1` 抢回来;
+ * * `min-height: 0` 让它在 flex 容器里真的能被压缩;
+ * * `overflow-y: auto` 才是滚动条出现的地方。
+ * 少了任何一条, 内容都会把对话框整体撑高 —— 于是滚动条跑到**整个对话框**上,
+ * 标题栏和"添加参考音频"按钮一起被滚走。
+ */
+.dialog-compact .dialog-body > .role-edit-references {
   flex: 1;
   min-height: 0;
+}
+
+.role-edit-references {
   display: flex;
   flex-direction: column;
   gap: 6px;

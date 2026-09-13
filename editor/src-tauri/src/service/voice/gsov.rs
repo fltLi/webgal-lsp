@@ -124,29 +124,32 @@ impl GsvClient {
 
     /// 就绪探针。
     ///
-    /// 使用无参数的 `GET /tts`: 服务端会在参数校验阶段立即返回 400 (`text is required`),
-    /// 因此**不会触发任何推理**, 是当前最廉价的存活探测方式。
-    /// 模型加载完成前端口不接受连接, 据此区分 "启动中" 与 "已就绪"。
+    /// 使用 `GET /control?command=ping`:
+    /// * 它是只读的, 不认识 `ping` 时服务端也只是原样返回, **不会触发任何推理**;
+    /// * 服务端加载完成前端口不接受连接, 据此区分 "启动中" 与 "已就绪"。
+    ///
+    /// **不能用 `GET /tts` 探测**: 该处理器会对 `text_lang.lower()` 求值, 缺参数时
+    /// 直接抛 `AttributeError` 变成 **500**, 而不是 `check_params` 的 400。
+    /// 曾经依赖 "400 text is required" 判就绪, 结果服务完全正常也被判为未就绪。
+    /// 这里只要求"HTTP 层有响应且不是 5xx", 与服务端版本无关。
     pub async fn probe(&self) -> Result<()> {
         let response = self
             .http
-            .get(format!("{}/tts", self.base))
+            .get(format!("{}/control", self.base))
+            .query(&[("command", "ping")])
             .timeout(PROBE_TIMEOUT)
             .send()
             .await?;
         let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        // 400 且带参数校验信息 = 服务已就绪
-        if status.as_u16() == 400 {
+        if status.is_server_error() {
             let body = response.text().await.unwrap_or_default();
-            if body.contains("text is required") || body.contains("ref_audio_path is required") {
-                return Ok(());
-            }
-            return Err(GsvError::NotReady(body));
+            return Err(GsvError::NotReady(if body.is_empty() {
+                format!("HTTP {status}")
+            } else {
+                body
+            }));
         }
-        Err(GsvError::NotReady(format!("HTTP {status}")))
+        Ok(())
     }
 
     /// 执行一次推理, 返回 WAV 字节流

@@ -873,20 +873,20 @@ pub async fn voice_import_character(
 /// 单个角色最多导入的参考音频条数 (避免一次导入上万条)
 const LIST_IMPORT_LIMIT: usize = 48;
 
-/// 从 GPT-SoVITS 切片产物 (.list + 音频目录) 批量导入角色与参考音频。
+/// 从 GPT-SoVITS 切片产物 (`.list` 清单 + 音频目录) 批量导入角色与参考音频。
 ///
-/// 用户分别提供**配置目录** (内含每角色一个 `.list`) 与**音频目录**。
+/// 用户分别提供**清单文件**与**音频目录** (两者位置无关)。
 #[tauri::command]
 pub async fn voice_import_characters_from_list(
     app: tauri::AppHandle,
-    list_dir: String,
+    list_path: String,
     audio_dir: String,
 ) -> Result<library::ListImportReport, String> {
     let library = library_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         library
             .import_from_list(
-                Path::new(&list_dir),
+                Path::new(&list_path),
                 Path::new(&audio_dir),
                 LIST_IMPORT_LIMIT,
             )

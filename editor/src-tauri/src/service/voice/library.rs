@@ -120,6 +120,44 @@ pub fn parse_list_line(line: &str) -> Option<ListRecord> {
 }
 
 /// 在音频索引中按文件名反查 (索引键为小写文件名)
+/// 深度遍历音频目录, 建立 "文件名 (小写) -> 路径" 索引。
+///
+/// 按**文件名**而不是相对路径匹配: 清单里写的路径来自训练机, 与用户当前指定的
+/// 音频目录不一定对得上, 文件名才是稳定标识。
+fn index_audio_files(audio_dir: &Path) -> std::collections::HashMap<String, PathBuf> {
+    let mut index = std::collections::HashMap::new();
+    for entry in walkdir::WalkDir::new(audio_dir)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let is_audio = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "wav" | "flac" | "mp3" | "ogg"
+                )
+            })
+            .unwrap_or(false);
+        if !is_audio {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            // 同名文件只保留第一个 (遍历顺序即 WalkDir 的深度优先顺序)
+            index
+                .entry(name.to_lowercase())
+                .or_insert_with(|| path.to_path_buf());
+        }
+    }
+    index
+}
+
+/// 在音频索引里查找清单中的音频路径 (按文件名匹配)
 fn lookup_audio(
     index: &std::collections::HashMap<String, PathBuf>,
     record_audio: &str,
@@ -328,26 +366,29 @@ impl Library {
 
     /// 从 GPT-SoVITS 的切片产物导入角色与参考音频。
     ///
-    /// 输入是训练/切片流程留下的两个目录:
-    /// * `list_dir` - 每个角色一个 `.list` 文件, 每行形如
+    /// 输入是一份 `.list` 文本清单与一个音频目录 (两者位置无关, 由用户分别指定):
+    /// * `list_path` - 清单文件, 每行形如
     ///   `音频相对路径|说话者|语言|文本` (路径形如 `output\slicer_opt\<角色>\<文件>.wav`);
-    /// * `audio_dir` - 已切好的音频, 按角色分目录存放。
+    /// * `audio_dir` - 已切好的音频, 可任意层级嵌套。
+    ///
+    /// 匹配方式是**按文件名**: 先深度遍历音频目录建立 "文件名(小写) -> 路径" 索引,
+    /// 再用清单里那条路径的文件名去查。这样清单里写的是哪台机器的路径都无所谓。
     ///
     /// 导入规则:
-    /// * 说话者即角色名 (不存在则新建角色);
+    /// * 说话者即角色名 (不存在则新建角色); 清单没有说话者时退回清单文件名;
     /// * 语言取 `.list` 中的标识 (如 `JA` -> `ja`), 无法识别时退回 `auto`;
     /// * 每段音频都按参考音频约束规范化 (过短补静音、过长按静音边界裁剪);
     /// * 同一角色的参考音频数量上限由 `max_per_character` 限制, 避免导入上万条。
     pub fn import_from_list(
         &self,
-        list_dir: &Path,
+        list_path: &Path,
         audio_dir: &Path,
         max_per_character: usize,
     ) -> Result<ListImportReport> {
-        if !list_dir.is_dir() {
+        if !list_path.is_file() {
             return Err(LibraryError::Invalid(format!(
-                "配置目录不存在: {}",
-                list_dir.display()
+                "清单文件不存在: {}",
+                list_path.display()
             )));
         }
         if !audio_dir.is_dir() {
@@ -361,139 +402,107 @@ impl Library {
         let staging_root = self.root.join(".import-staging");
         std::fs::create_dir_all(&staging_root)?;
 
-        // 音频索引: 文件名 (小写) -> 绝对路径, 供 .list 中的相对路径反查
-        let mut audio_index: std::collections::HashMap<String, PathBuf> =
-            std::collections::HashMap::new();
-        for entry in walkdir::WalkDir::new(audio_dir)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
-            if !entry.file_type().is_file() {
+        // 音频索引: 文件名 (小写) -> 绝对路径, 供清单里的相对路径反查
+        let audio_index = index_audio_files(audio_dir);
+
+        let text = std::fs::read_to_string(list_path)?;
+        // 角色优先取清单内的说话者; 无说话者时退回清单文件名
+        let file_stem = list_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("character")
+            .to_string();
+
+        // 逐行解析并按说话者聚合
+        let mut by_speaker: std::collections::BTreeMap<String, Vec<ListRecord>> =
+            std::collections::BTreeMap::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
                 continue;
             }
-            let path = entry.path();
-            let is_audio = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| {
-                    matches!(
-                        ext.to_ascii_lowercase().as_str(),
-                        "wav" | "flac" | "mp3" | "ogg"
-                    )
-                })
-                .unwrap_or(false);
-            if !is_audio {
-                continue;
-            }
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                audio_index.insert(name.to_lowercase(), path.to_path_buf());
+            match parse_list_line(line) {
+                Some(record) => {
+                    let speaker = if record.speaker.trim().is_empty() {
+                        file_stem.clone()
+                    } else {
+                        record.speaker.trim().to_string()
+                    };
+                    by_speaker.entry(speaker).or_default().push(record);
+                }
+                None => report.skipped += 1,
             }
         }
 
-        for entry in std::fs::read_dir(list_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("list") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path)?;
-            // 角色优先取 .list 内的说话者; 无说话者时退回文件名
-            let file_stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("character")
-                .to_string();
+        for (speaker, records) in by_speaker {
+            let existing = self.find_by_name(&speaker)?;
+            let mut character = match existing {
+                Some(character) => character,
+                None => {
+                    let root = &self.root;
+                    std::fs::create_dir_all(root)?;
+                    let now = now_millis();
+                    Character {
+                        id: unique_id(root, &speaker),
+                        name: speaker.clone(),
+                        // 描述刻意留空: 它是给"AI 融入编辑流程"用的角色说明,
+                        // 自动写一句"由某路径导入"只会污染这份信息。
+                        description: String::new(),
+                        language: "auto".into(),
+                        references: Vec::new(),
+                        model: None,
+                        starred: false,
+                        enabled: true,
+                        created_at: now,
+                        updated_at: now,
+                    }
+                }
+            };
 
-            // 逐行解析并按说话者聚合
-            let mut by_speaker: std::collections::BTreeMap<String, Vec<ListRecord>> =
-                std::collections::BTreeMap::new();
-            for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() {
+            let dir = self.character_dir(&character.id);
+            std::fs::create_dir_all(&dir)?;
+            let staged = staging_root.join("staged.wav");
+
+            let mut kept: std::collections::HashSet<String> = character
+                .references
+                .iter()
+                .map(|reference| reference.hash.clone())
+                .collect();
+
+            for record in records {
+                if character.references.len() >= max_per_character {
+                    report.skipped += 1;
                     continue;
                 }
-                match parse_list_line(line) {
-                    Some(record) => {
-                        let speaker = if record.speaker.trim().is_empty() {
-                            file_stem.clone()
-                        } else {
-                            record.speaker.trim().to_string()
-                        };
-                        by_speaker.entry(speaker).or_default().push(record);
-                    }
-                    None => report.skipped += 1,
+                let Some(audio_path) = lookup_audio(&audio_index, &record.audio) else {
+                    report.skipped += 1;
+                    continue;
+                };
+                // 规范化 (过短补尾、过长裁剪) 后入库
+                let Ok(normalized) = super::audio::normalize_reference(&audio_path, &staged, None)
+                else {
+                    report.skipped += 1;
+                    continue;
+                };
+                if !kept.insert(normalized.hash.clone()) {
+                    report.skipped += 1;
+                    continue;
                 }
+                let reference = self.adopt_reference(
+                    &character.id,
+                    &staged,
+                    record.text,
+                    normalize_language(&record.language),
+                    vec!["导入".to_string()],
+                )?;
+                character.references.push(reference);
+                report.imported += 1;
             }
 
-            for (speaker, records) in by_speaker {
-                let existing = self.find_by_name(&speaker)?;
-                let mut character = match existing {
-                    Some(character) => character,
-                    None => {
-                        let root = &self.root;
-                        std::fs::create_dir_all(root)?;
-                        let now = now_millis();
-                        Character {
-                            id: unique_id(root, &speaker),
-                            name: speaker.clone(),
-                            description: format!("由 {} 导入", path.display()),
-                            language: "auto".into(),
-                            references: Vec::new(),
-                            model: None,
-                            starred: false,
-                            enabled: true,
-                            created_at: now,
-                            updated_at: now,
-                        }
-                    }
-                };
-
-                let dir = self.character_dir(&character.id);
-                std::fs::create_dir_all(&dir)?;
-                let staged = staging_root.join("staged.wav");
-
-                let mut kept: std::collections::HashSet<String> = character
-                    .references
-                    .iter()
-                    .map(|reference| reference.hash.clone())
-                    .collect();
-
-                for record in records {
-                    if character.references.len() >= max_per_character {
-                        report.skipped += 1;
-                        continue;
-                    }
-                    let Some(audio_path) = lookup_audio(&audio_index, &record.audio) else {
-                        report.skipped += 1;
-                        continue;
-                    };
-                    // 规范化 (过短补尾、过长裁剪) 后入库
-                    let Ok(normalized) =
-                        super::audio::normalize_reference(&audio_path, &staged, None)
-                    else {
-                        report.skipped += 1;
-                        continue;
-                    };
-                    if !kept.insert(normalized.hash.clone()) {
-                        report.skipped += 1;
-                        continue;
-                    }
-                    let reference = self.adopt_reference(
-                        &character.id,
-                        &staged,
-                        record.text,
-                        normalize_language(&record.language),
-                        vec!["导入".to_string()],
-                    )?;
-                    character.references.push(reference);
-                    report.imported += 1;
-                }
-
-                let _ = std::fs::remove_file(&staged);
-                if !character.references.is_empty() {
-                    report.characters.push(character.name.clone());
-                    self.save(character)?;
-                }
+            let _ = std::fs::remove_file(&staged);
+            if !character.references.is_empty() {
+                report.characters.push(character.name.clone());
+                self.save(character)?;
             }
         }
 
@@ -706,13 +715,18 @@ pub fn resolve_audio_path(project: &Path, vocal: &str) -> PathBuf {
     path
 }
 
-/// 生成可用作文件名/id 的 slug (保留中日韩字符, 其余折叠为 `-`)
+/// 生成可用作文件名/id 的 slug。
+///
+/// **只保留 ASCII 字母与数字**: 角色 id 会成为磁盘上的目录名 (`game/vocal/<id>/`) 与
+/// 配置文件名, 中文 id 在跨工具、跨平台时很容易出问题, 而且用户想手改也不好输入。
+/// 中文名会被折叠成空, 由 [`unique_id`] 退回 `character` / `character-<时间戳>`。
+/// 角色名本身不受影响 —— 界面上显示与解析用的始终是名字。
 pub fn slugify(name: &str) -> String {
     let mut out = String::new();
     let mut last_dash = false;
     for ch in name.trim().chars() {
-        if ch.is_alphanumeric() {
-            out.push(ch);
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
             last_dash = false;
         } else if !last_dash && !out.is_empty() {
             out.push('-');
@@ -922,11 +936,23 @@ mod tests {
     }
 
     #[test]
-    fn slugify_keeps_cjk_and_folds_symbols() {
-        assert_eq!(slugify("千早爱音"), "千早爱音");
-        assert_eq!(slugify("素世（不夹）"), "素世-不夹");
-        assert_eq!(slugify("  A B / C  "), "A-B-C");
+    fn slugify_keeps_ascii_and_drops_cjk() {
+        // id 会成为磁盘上的目录名, 因此只用 ASCII; 中文名由 unique_id 兜底为 character*
+        assert_eq!(slugify("千早爱音"), "");
+        assert_eq!(slugify("素世（不夹）"), "");
+        assert_eq!(slugify("ANON"), "anon");
+        assert_eq!(slugify("  A B / C  "), "a-b-c");
+        assert_eq!(slugify("anon_01"), "anon-01");
         assert_eq!(slugify("《》"), "");
+    }
+
+    #[test]
+    fn unique_id_falls_back_to_ascii_for_cjk_names() {
+        let root = temp_library("slug").root().to_path_buf();
+        std::fs::create_dir_all(&root).unwrap();
+        let id = unique_id(&root, "千早爱音");
+        assert!(id.starts_with("character"));
+        assert!(id.is_ascii());
     }
 
     #[test]

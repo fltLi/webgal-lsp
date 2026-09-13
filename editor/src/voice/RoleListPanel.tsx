@@ -2,19 +2,15 @@
 
 // 角色列表: 管理 GSOV 模型 + 参考音频组合。
 //
-// 列表本身**只展示信息**, 不提供任何就地编辑 —— 一行里塞满输入框与按钮会造成很大
-// 的认知压力。所有编辑都在「编辑角色」对话框里完成 (点卡片即打开), 那里有足够的
-// 空间放角色信息与参考音频列表。
-//
-// 导入 (zip 与训练切分清单) 也统一放在那个对话框与「选择角色」里, 这里只留日常操作。
+// 列表本身**只展示信息**, 不提供任何就地编辑, 也没有针对单个角色的操作按钮 ——
+// 一行里塞满输入框与按钮会造成很大的认知压力。所有编辑都在「编辑角色」对话框里
+// 完成 (点卡片即打开); 导出与删除在「选择角色」对话框里。
 
 import { Button, Input } from '@fluentui/react-components';
-import { AddRegular, ArrowDownloadRegular, DeleteRegular, PersonEditRegular, StarFilled } from '@fluentui/react-icons';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { AddRegular, PersonEditRegular, StarFilled } from '@fluentui/react-icons';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, ModelCandidate } from '../commands/voice';
-import { voiceExportCharacter } from '../commands/voice';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { RoleEditDialog } from './RoleEditDialog';
@@ -55,21 +51,25 @@ export function RoleListPanel() {
     }
   };
 
-  const exportCharacter = async (character: Character) => {
-    const destination = await saveDialog({
-      defaultPath: `${character.name}.zip`,
-      filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
-    });
-    if (typeof destination !== 'string') return;
-    await voiceExportCharacter(character.id, destination);
-  };
-
-  const remove = async (character: Character) => {
+  /**
+   * 「选择角色」= 取消当前选择, 然后打开挑选对话框。
+   *
+   * 这两件事本来就是同一个动作的两半: 侧边栏展示的是"已选中的角色",
+   * 挑选对话框是"重新决定选哪些"。先清空再挑, 免得用户在对话框里看到的勾选状态
+   * 与自己的预期不一致。
+   */
+  const deselectAndPick = async () => {
+    setError(null);
     try {
-      await voiceController.deleteCharacter(character.id);
+      await Promise.all(
+        characters
+          .filter((item) => item.enabled)
+          .map((item) => voiceController.persistCharacter({ ...item, enabled: false }))
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
+    setPickerOpen(true);
   };
 
   /** 打开编辑对话框时始终取最新的一份角色数据 */
@@ -90,7 +90,16 @@ export function RoleListPanel() {
         <Button appearance="primary" icon={<AddRegular />} onClick={() => void create()}>
           新建角色
         </Button>
-        <Button appearance="secondary" icon={<PersonEditRegular />} onClick={() => setPickerOpen(true)}>
+        {/*
+          「选择角色」在打开挑选对话框之前先把所有角色取消勾选 —— 侧边栏里显示的
+          本来就只是"已选中的角色", 因此让它们全部退出就是"取消选择"这个动作。
+        */}
+        <Button
+          appearance="secondary"
+          icon={<PersonEditRegular />}
+          disabled={!characters.some((item) => item.enabled)}
+          onClick={() => void deselectAndPick()}
+        >
           选择角色
         </Button>
       </div>
@@ -102,7 +111,7 @@ export function RoleListPanel() {
           <p className="voice-dialog-empty">还没有角色。先「新建角色」或导入一份角色配置。</p>
         )}
         {characters.length > 0 && enabled.length === 0 && (
-          <p className="voice-dialog-empty">没有已启用的角色。请在「选择角色」中勾选需要参与配音的角色。</p>
+          <p className="voice-dialog-empty">没有已启用的角色。点「选择角色」勾选需要参与配音的角色。</p>
         )}
         {enabled.map((character) => (
           <div key={character.id} className="character-tile">
@@ -117,25 +126,18 @@ export function RoleListPanel() {
                 {character.starred && <StarFilled className="character-tile-star" />}
               </span>
               <span className="character-tile-meta">
-                {character.id} · 参考音频 {character.references.length} · 模型{' '}
-                {character.model?.gptWeights ? '已指定' : '未指定'}
+                {character.id} · 参考音频 {character.references.length}
+                {character.description.trim() && ` · ${character.description.trim()}`}
+              </span>
+              <span className="character-tile-models">
+                <span className="character-tile-model" title={character.model?.gptWeights ?? '未指定'}>
+                  GPT {suffixOf(character.model?.gptWeights)}
+                </span>
+                <span className="character-tile-model" title={character.model?.sovitsWeights ?? '未指定'}>
+                  SoVITS {suffixOf(character.model?.sovitsWeights)}
+                </span>
               </span>
             </button>
-            <Button
-              size="small"
-              appearance="subtle"
-              title="导出角色"
-              icon={<ArrowDownloadRegular />}
-              onClick={() => void exportCharacter(character)}
-            />
-            <Button
-              size="small"
-              appearance="subtle"
-              className="danger-icon"
-              title="删除角色"
-              icon={<DeleteRegular />}
-              onClick={() => void remove(character)}
-            />
           </div>
         ))}
       </div>
@@ -162,4 +164,10 @@ function matchesQuery(character: Character, query: string): boolean {
   if (!query.trim()) return true;
   const needle = query.trim().toLowerCase();
   return character.name.toLowerCase().includes(needle) || character.id.toLowerCase().includes(needle);
+}
+
+/** 权重路径的可读后缀 (只取文件名) */
+function suffixOf(weights: string | null | undefined): string {
+  if (!weights) return '未指定';
+  return weights.replace(/\\/g, '/').split('/').pop() ?? weights;
 }
