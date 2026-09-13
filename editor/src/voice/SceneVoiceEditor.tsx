@@ -85,30 +85,40 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
   }, [isActiveTab, docPath]);
 
   /*
-   * 光标位置变化 -> 定位当前对话。
+   * 光标位置变化 -> 把"当前对话行"记进卡片。
    *
-   * Monaco 给的是 1 起算的行号, 后端给的是 0 起算, 因此这里减一之后**直接按行号
-   * 精确查找** (`dialogueAtLine` 就是一次 `find`)。
+   * 数据流与文本预处理 (`session.onCursorLine` -> `findIndex`) 保持一致:
+   * 光标行由编辑器实时给出 (1 起算), 减一后**精确查找**对话列表。
    *
    * 只认属于本卡的光标记录 (`cursor.path`): 编辑器只挂载活动文档, 不带路径的话
    * 切卡瞬间上一条记录的行号会被本文档继承。
    */
   const cursor = useAppStore((state) => state.cursor);
+  const liveLine = cursor && cursor.path === docPath ? cursor.line - 1 : null;
   useEffect(() => {
-    if (!isActiveTab || !cursor || cursor.path !== docPath) return;
+    if (!isActiveTab || liveLine === null) return;
     const current = voiceController.getCard(docPath);
     if (!current) return;
-    const hit = dialogueAtLine(current.dialogues, cursor.line - 1);
+    const hit = dialogueAtLine(current.dialogues, liveLine);
     voiceController.setCursorLine(docPath, hit ? hit.line : null);
-  }, [cursor, isActiveTab, docPath]);
+  }, [liveLine, isActiveTab, docPath]);
 
   if (!doc) return null;
   if (!card) {
     return <div className="scene-voice-loading">正在解析场景…</div>;
   }
 
-  // 选中的就是卡片当前对话那一行 (命中对话 => 高亮该行)
-  const dialogue: SayLine | null = dialogueAtLine(card.dialogues, card.cursorLine ?? -1);
+  /*
+   * 显示用的对话**由光标实时推导**, 而不是读卡片里那个可变字段。
+   *
+   * 存字段会引入"派生状态过期"这一类 bug: 只要有任何一次渲染读到的是旧值, 高亮与
+   * 面板就会指向别的行。这里直接在渲染时用同一个光标行去查同一个列表, 两者天然一致。
+   * 卡片字段只在光标不属于本卡时 (例如刚切回来、编辑器还没上报) 作为回退值。
+   */
+  const dialogue: SayLine | null =
+    liveLine !== null
+      ? dialogueAtLine(card.dialogues, liveLine)
+      : dialogueAtLine(card.dialogues, card.cursorLine ?? -1);
 
   return (
     <div className="scene-voice">
@@ -128,9 +138,8 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
         {/* TEMP-DEBUG: 行号对不上时用来定位, 定位完成后整块删除 */}
         <div className="scene-voice-debug">
           <div>
-            光标行(1起算)={cursor && cursor.path === docPath ? cursor.line : '—'} 卡片cursorLine(0起算)=
-            {card.cursorLine ?? '—'} 高亮行={dialogue ? dialogue.line : '—'} 卡片对话总数={card.dialogues.length}{' '}
-            卡片前五行=[
+            光标行(1起算)={cursor && cursor.path === docPath ? cursor.line : '—'} liveLine(0起算)=
+            {liveLine ?? '—'} 高亮行={dialogue ? dialogue.line : '—'} 卡片对话总数={card.dialogues.length} 卡片前五行=[
             {card.dialogues
               .slice(0, 5)
               .map((item) => item.line)
@@ -138,8 +147,7 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
             ]
           </div>
           <div>
-            doc总行数={doc.content.split('\n').length} 首行=[{doc.content.split('\n')[0]?.slice(0, 30)}] 第9行=[
-            {doc.content.split('\n')[8]?.slice(0, 45)}] 第10行=[{doc.content.split('\n')[9]?.slice(0, 45)}]
+            doc总行数={doc.content.split('\n').length} 命中文本=[{dialogue ? dialogue.text.slice(0, 36) : '—'}]
           </div>
         </div>
         {dialogue ? (
