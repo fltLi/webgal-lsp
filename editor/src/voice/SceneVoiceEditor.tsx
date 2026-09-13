@@ -152,6 +152,7 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
             />
             <VoiceTakeList
               cardId={docPath}
+              line={dialogue.line}
               onChanged={() => setRefreshToken((token) => token + 1)}
               onApplied={() => setRefreshToken((token) => token + 1)}
             />

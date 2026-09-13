@@ -108,7 +108,10 @@ export interface VoiceTask {
   /** 完成后的缓存条目 */
   audioHash?: string;
   audioPath?: string;
+  /** 生成的音频时长 (秒) —— 注意这不是"任务耗时" */
   duration?: number;
+  /** 这一次请求的**实测响应时间** (毫秒, 从发出到返回) */
+  elapsed?: number;
   error?: string;
   createdAt: number;
   startedAt?: number;
@@ -132,7 +135,10 @@ export interface HistoryEntry {
   /** 生成的音频哈希 (已落盘时存在) */
   audioHash?: string;
   audioPath?: string;
+  /** 生成的音频时长 (秒) —— 注意这不是"任务耗时" */
   duration?: number;
+  /** 这一次请求的**实测响应时间** (毫秒, 从发出到返回) */
+  elapsed?: number;
   error?: string;
   createdAt: number;
   /** 开始推理的时刻 (进度条按它推算已用时间) */

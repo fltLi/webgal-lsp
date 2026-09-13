@@ -2836,9 +2836,9 @@ body.resizing {
  */
 .voice-field-character,
 .voice-field-language {
-  /* 等长; 取值要放得下"千早爱音"与"自动（多语种）"这类完整标签, 再窄就截断了 */
-  flex: 0 1 164px;
-  min-width: 148px;
+  /* 等长; 取值要放得下"千早爱音"与"自动（多语种）"这类完整标签 */
+  flex: 0 1 148px;
+  min-width: 132px;
 }
 .voice-field-reference {
   flex: 1 1 180px;
@@ -2852,7 +2852,12 @@ body.resizing {
 }
 .voice-field-seed {
   /* 比其它数值框宽: 10 位种子 + 右侧的原生步进器 + 一个"换随机种子" */
-  flex: 0 1 160px;
+  flex: 0 1 176px;
+  /*
+   * `margin-right: auto` 把后面几个字段推到行尾: 种子留在左边, 温度 / 语速 /
+   * 高级设置 靠右对齐。
+   */
+  margin-right: auto;
 }
 .voice-field-number {
   flex: 0 1 112px;
@@ -3227,6 +3232,15 @@ input[type='number'].voice-control {
 .history-applied-note {
   font-size: 11px;
   color: var(--app-muted);
+}
+
+/* 未能对齐到任何语句的残留记录: 历史按当前对话过滤后, 它们需要一个清理入口 */
+.history-unaligned {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #b8860b;
 }
 .history-message {
   font-size: 11px;

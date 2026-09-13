@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Character, SayLine } from '../commands/voice';
 import { Select, toOptions } from '../components/Select';
 import { voiceController } from './controller';
+import { formatDuration } from './estimate';
 import { useVoiceCard } from './hooks';
 import { NumberInput, type NumberTick } from './NumberInput';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
@@ -146,12 +147,19 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
     }
   };
 
+  /**
+   * 从操作台取消正在跑的这一条。
+   *
+   * 取消后这条记录会从历史里移除 (任务队列里仍看得到), 因此这里要**主动把参数源标成
+   * "已同步"** —— 否则选中项一变, 面板会重新取一遍默认参数, 用户刚调好的那套配置就被
+   * 冲掉了。取消的是这次生成, 不是这套配置。
+   */
   const cancel = () => {
-    if (selected) {
-      voiceController.cancel(selected.id);
-      setMessage('已取消');
-      onChanged();
-    }
+    if (!selected) return;
+    voiceController.cancel(selected.id);
+    syncedSource.current = sourceKeyOf(null);
+    setMessage('已取消这一条（记录已从本句历史移除，队列里仍可见）');
+    onChanged();
   };
 
   /*
@@ -160,26 +168,19 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
    * 两件事都是刻意的: 空行既占位又看不出当前是什么状态; 而"新配置/已生成"这类信息
    * 贴在按钮下面时, 读起来像按钮的补充说明 —— 放到上面才能和下面的参数区连成一句。
    */
+  const stepLabel = selected ? `${selected.kind === 'test' ? '测试' : '生成'} x${selected.params.sampleSteps}` : '';
   const statusText = running
     ? selected?.status === 'pending'
-      ? '已加入队列，等待执行'
-      : `正在生成（${selected?.kind === 'test' ? '测试' : '生成'} x${selected?.params.sampleSteps}）…`
+      ? `已加入队列，等待执行（${stepLabel}）`
+      : `正在生成（${stepLabel}）…`
     : isNewConfiguration
       ? '当前为新配置，尚未生成'
-      : selected && (selected.status === 'failed' || selected.status === 'canceled')
-        ? '该配置上次未生成成功，可点开右侧记录查看原因'
+      : selected?.status === 'failed'
+        ? '这次生成失败了，点开右侧记录可以看完整报错'
         : selected
-          ? `当前配置已生成（${selected.kind === 'test' ? '测试' : '生成'} x${selected.params.sampleSteps}${
-              selected.duration !== undefined ? ` · ${selected.duration.toFixed(2)}s` : ''
-            }）`
+          ? `当前配置已生成（${stepLabel}${selected.elapsed !== undefined ? ` · 响应 ${formatDuration(selected.elapsed)}` : ''}）`
           : '当前配置与历史记录一致，可直接应用';
-  const statusTone = running
-    ? 'run'
-    : isNewConfiguration
-      ? 'new'
-      : selected && (selected.status === 'failed' || selected.status === 'canceled')
-        ? 'fail'
-        : 'ok';
+  const statusTone = running ? 'run' : isNewConfiguration ? 'new' : selected?.status === 'failed' ? 'fail' : 'ok';
 
   return (
     <div className="voice-sentence-panel">

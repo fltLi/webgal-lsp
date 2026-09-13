@@ -373,12 +373,22 @@ class VoiceController {
    * **运行中也允许取消**: 推理本身没有中断接口, 因此取消的含义是"这一条不要了" ——
    * 结果返回后直接丢弃 (音频已进缓存, 由缓存清理回收), 队列继续往下跑。若不允许取消
    * 运行中的任务, 界面上的取消按钮在任务开始后就变成摆设。
+   *
+   * 取消后**从历史里删掉这一条** (任务队列里保留, 以便看清"它确实被撤下了"):
+   * 用户主动撤下的东西不该继续以一条"未生成成功"的记录留在操作台上 —— 那既占位置,
+   * 又让人分不清"失败"和"我取消的"。
    */
   cancel(taskId: string): void {
     const task = this.tasks.find((item) => item.id === taskId);
     if (!task || (task.status !== 'pending' && task.status !== 'running')) return;
     task.status = 'canceled';
-    this.updateHistory(task);
+
+    const card = this.cards.get(task.cardId);
+    if (card) {
+      card.history = card.history.filter((entry) => entry.id !== taskId);
+      if (card.selectedHistoryId === taskId) card.selectedHistoryId = null;
+      this.syncCard(card);
+    }
     this.emit();
   }
 
@@ -457,21 +467,21 @@ class VoiceController {
         seed: task.params.seed,
       });
 
+      /*
+       * 实测响应时间: 从发出请求到拿回响应。**这才是"任务耗时"** —— 响应体里给的
+       * `duration` 是生成出来的音频有多长 (秒), 两者常常差一个量级 (例如响应 48 秒、
+       * 音频 3.96 秒), 混在一起显示会让人以为任务只跑了 4 秒。
+       */
+      task.elapsed = Date.now() - (task.startedAt ?? Date.now());
+
       // 推理期间被取消: 结果直接丢弃 (推理无法中断, 只能不要这个结果)
       if (!this.isCanceled(task.id)) {
         task.status = 'done';
         task.audioHash = result.entry.hash;
         task.audioPath = result.entry.path;
         task.duration = result.duration;
-        /*
-         * 校准样本 = 这一次请求的实测往返耗时 (API 响应时间), 按**采样步数**归档。
-         * 排队等待不计入 (startedAt 是发出请求的时刻)。
-         */
-        estimator.observe(
-          task.params.sampleSteps,
-          task.params.text.length,
-          Date.now() - (task.startedAt ?? Date.now())
-        );
+        // 校准样本就是上面那个实测响应时间, 按**采样步数**归档
+        estimator.observe(task.params.sampleSteps, task.params.text.length, task.elapsed);
         this.store().upsertVoiceCache(result.entry);
       }
     } catch (error) {
@@ -508,6 +518,7 @@ class VoiceController {
     entry.audioHash = task.audioHash;
     entry.audioPath = task.audioPath;
     entry.duration = task.duration;
+    entry.elapsed = task.elapsed;
     entry.error = task.error;
     entry.finishedAt = task.finishedAt;
     this.syncCard(card);
@@ -612,11 +623,39 @@ class VoiceController {
     this.emit();
   }
 
-  dropAllHistory(id: string, kind?: 'test' | 'generate'): void {
+  /**
+   * 删除**某一条对话**的历史记录 (可选只删测试)。
+   *
+   * 历史是按对话组织的 (操作台上看到的就只有当前这一句的记录), 因此批量删除也只在
+   * 这一句的范围内生效 —— 否则"清空"会顺手删掉别的对话的记录, 与眼前所见不符。
+   */
+  dropHistoryByLine(id: string, line: number, kind?: 'test' | 'generate'): void {
     const card = this.cards.get(id);
     if (!card) return;
-    card.history = kind ? card.history.filter((entry) => entry.kind !== kind) : [];
-    card.selectedHistoryId = null;
+    const removed = card.history.filter((entry) => entry.line === line && (!kind || entry.kind === kind));
+    if (removed.length === 0) return;
+    const removedIds = new Set(removed.map((entry) => entry.id));
+    card.history = card.history.filter((entry) => !removedIds.has(entry.id));
+    if (card.selectedHistoryId && removedIds.has(card.selectedHistoryId)) card.selectedHistoryId = null;
+    this.syncCard(card);
+    this.emit();
+  }
+
+  /**
+   * 清理"没能对齐到任何语句"的记录。
+   *
+   * 历史按当前对话过滤之后, 这类记录不在任何对话的列表里, 需要一个明确的入口回收,
+   * 否则它们只会永远占着内存与"未完成"计数。
+   */
+  dropUnalignedHistory(id: string): void {
+    const card = this.cards.get(id);
+    if (!card) return;
+    const kept = card.history.filter((entry) => entry.line !== null);
+    if (kept.length === card.history.length) return;
+    card.history = kept;
+    if (card.selectedHistoryId && !kept.some((entry) => entry.id === card.selectedHistoryId)) {
+      card.selectedHistoryId = null;
+    }
     this.syncCard(card);
     this.emit();
   }

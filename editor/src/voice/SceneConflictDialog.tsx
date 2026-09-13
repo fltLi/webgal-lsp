@@ -15,7 +15,7 @@ import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { hashText, normalizeEol } from './controller';
 
-export type ChangeDecision = 'keep-editor' | 'take-disk' | 'merge-git' | 'backup-and-take-disk';
+export type ChangeDecision = 'keep-editor' | 'take-disk' | 'merge-git' | 'backup-and-take-disk' | 'defer';
 
 interface Props {
   open: boolean;
@@ -83,14 +83,41 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
     }
   };
 
-  /** 保留编辑器内容: 磁盘仍是旧的, 卡片标记为与磁盘不一致 */
+  /**
+   * 保留编辑器内容 —— **并把编辑器里的内容写回磁盘**。
+   *
+   * 只"保留"而不写盘是不行的: 磁盘上仍是那份被外部改过的内容, 下一次变更检测 (定时轮询 /
+   * 窗口获得焦点) 会再次判定为"外部修改", 于是弹窗一遍又一遍地来, 用户只会觉得自己的选择
+   * 没生效。既然选定了这一份, 就以它为最终结果: 写盘 + 同步基准哈希 + 清掉脏标记。
+   */
   const keepEditor = async () => {
     const current = useAppStore.getState().documents.find((doc) => doc.path === scenePath)?.content;
-    if (current !== undefined) {
+    if (current === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await fs.writeText(scenePath, current);
+      useAppStore.getState().updateDocument(scenePath, { content: current, dirty: false });
+      voiceController.setDiskHash(cardId, hashText(normalizeEol(current)));
       await voiceController.refreshCard(cardId, current);
       await voiceController.realignCard(cardId);
+      onResolved('keep-editor');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
     }
-    onResolved('keep-editor');
+  };
+
+  /**
+   * 暂不决定 (Esc / 点遮罩)。
+   *
+   * 不动磁盘, 也不改编辑器内容, 但把基准对齐到**当前磁盘这份**, 否则定时轮询会在几秒后
+   * 把同一个弹窗再弹一次 —— 那样按 Esc 就等于没按。
+   */
+  const defer = () => {
+    if (diskPreview !== null) voiceController.setDiskHash(cardId, hashText(normalizeEol(diskPreview)));
+    onResolved('defer');
   };
 
   /*
@@ -98,7 +125,7 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
    *
    * 之前把"保留编辑器内容"单独摆在正文里, 另外两项在底栏的两端, 于是同一组三选一被拆
    * 成了三处, 视线要在弹窗里来回找。现在: 底栏左侧是少用的"备份后加载磁盘", 右侧依次
-   * 是三个裁决 —— 保留编辑器 / 用 git 合并 / 加载磁盘。
+   * 是三个裁决 —— 保留编辑器（覆盖磁盘）/ 用 git 合并 / 加载磁盘。
    */
   return (
     <AppDialog
@@ -106,7 +133,7 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
       description={<code>{scenePath}</code>}
       size="medium"
       height="auto"
-      onClose={() => onResolved('keep-editor')}
+      onClose={defer}
       footerLeading={
         <Button
           appearance="subtle"
@@ -119,8 +146,13 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
       }
       footer={
         <>
-          <Button appearance="secondary" disabled={busy} onClick={() => void keepEditor()}>
-            保留编辑器内容
+          <Button
+            appearance="secondary"
+            disabled={busy}
+            title="用编辑器里的内容覆盖磁盘文件（此后以这一份为准）"
+            onClick={() => void keepEditor()}
+          >
+            保留编辑器内容（覆盖磁盘）
           </Button>
           <Button
             appearance="secondary"
@@ -140,8 +172,9 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
         {inRepository
           ? '这份文件在磁盘上被改过（例如切换分支、外部编辑器或另一个窗口），编辑器里这一份与它不同。'
           : '这份文件在磁盘上被改过（例如外部编辑器或另一个窗口），编辑器里这一份与它不同。'}
-        「保留编辑器内容」沿用内存中的这一份, 「加载磁盘内容」改用磁盘上的那一份, 「用 git 合并」打开差异页逐块取舍。
-        无论选哪一项, Ink 之后都会把配音历史重新对齐到最终的对话列表。
+        「保留编辑器内容」会把编辑器里的这一份**写回磁盘**（此后以它为准, 不会再反复询问）,
+        「加载磁盘内容」改用磁盘上的那一份, 「用 git 合并」打开差异页逐块取舍。 无论选哪一项, Ink
+        之后都会把配音历史重新对齐到最终的对话列表; 按 Esc 表示暂不决定。
       </p>
       {error && <p className="voice-error">{error}</p>}
     </AppDialog>

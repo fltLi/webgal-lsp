@@ -14,7 +14,7 @@
 // 两栏内的分组都做成**分页**, 而不是把所有字段堆成一长条: 字段一多就必须滚动,
 // 而滚动会把"启动服务"这类关键操作推到视野之外。
 
-import { Button, Field, Input, Spinner } from '@fluentui/react-components';
+import { Button, Field, Input } from '@fluentui/react-components';
 import {
   ArrowClockwiseRegular,
   ArrowDownloadRegular,
@@ -35,7 +35,7 @@ import { Select, toOptions } from '../components/Select';
 import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
-import { formatEta } from './estimate';
+import { formatDuration, formatEta } from './estimate';
 import { errorSummary } from './errorText';
 import { PriorityButton } from './PriorityButton';
 import { queueView } from './queue';
@@ -322,8 +322,6 @@ export function VoiceWorkbench() {
                   )}
                 </div>
               )}
-
-              {running && <p className="prompt-hint">服务运行中，启动配置已锁定（停止服务后可修改）。</p>}
             </>
           ) : (
             <div className="workbench-grid">
@@ -424,12 +422,9 @@ export function VoiceWorkbench() {
                   <span className="voice-task-character">{task.characterName}</span>
                   <span className="voice-task-status">
                     {task.status === 'pending' && '等待中'}
-                    {task.status === 'running' && (
-                      <>
-                        <Spinner size="extra-tiny" /> 生成中
-                      </>
-                    )}
-                    {task.status === 'done' && '已完成'}
+                    {task.status === 'running' && '生成中'}
+                    {task.status === 'done' &&
+                      `已完成${task.elapsed !== undefined ? ` · 响应 ${formatDuration(task.elapsed)}` : ''}`}
                     {task.status === 'failed' && '失败'}
                     {task.status === 'canceled' && '已取消'}
                   </span>

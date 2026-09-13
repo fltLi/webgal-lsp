@@ -39,6 +39,8 @@ export function CodeEditor({
   const highlightDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   /** 当前编辑器承载的文档路径 (外部内容回灌前要确认没认错文档) */
   const editorPathRef = useRef<string | null>(null);
+  /** 主 effect 里的"同步预览"函数 (外部内容回灌后要触发一次) */
+  const syncRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -94,8 +96,13 @@ export function CodeEditor({
       }
     });
 
+    /**
+     * 把编辑器里的内容写回磁盘。
+     *
+     * `readOnly` (配音卡) 下也允许: 配音「应用」在关闭自动保存时只会更新文档与 Monaco,
+     * 落盘要靠用户自己 —— 那时 Ctrl+S 必须有效, 否则改动永远留在内存里。
+     */
     const saveDoc = async () => {
-      if (readOnly) return;
       const text = editor.getValue();
       try {
         await fs.writeText(path, text);
@@ -111,15 +118,18 @@ export function CodeEditor({
       saveTimer = setTimeout(() => void saveDoc(), 600);
     };
 
-    if (!readOnly) {
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        void saveDoc();
-      });
-    }
+    // Ctrl+S 在两种模式下都注册 (配音卡本身不能编辑, 但文档可能是脏的)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      void saveDoc();
+    });
 
-    // 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)
+    /*
+     * 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)。
+     *
+     * 配音卡**也要同步**: "点一句对话 -> 预览跳到那一句"正是配音时最需要的反馈;
+     * 之前这里对只读编辑器直接 return, 于是开着实时预览也没反应。
+     */
     const scheduleSync = () => {
-      if (readOnly) return;
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = setTimeout(async () => {
         if (!useAppStore.getState().settings.autoSyncPreview) return;
@@ -129,6 +139,8 @@ export function CodeEditor({
         if (position) void previewClient.syncScene(path, position.lineNumber);
       }, 150);
     };
+    // 供"外部内容回灌"那一段在替换完内容后触发一次同步
+    syncRef.current = scheduleSync;
 
     /*
      * 光标: 挂载时恢复, 移动时上报, 卸载时记档。
@@ -356,6 +368,7 @@ export function CodeEditor({
       highlightDecorations.current = null;
       editorRef.current = null;
       editorPathRef.current = null;
+      syncRef.current = null;
       editor.dispose();
     };
   }, [doc.path]);
@@ -366,18 +379,27 @@ export function CodeEditor({
    * 编辑器只在挂载时读一次 `doc.content`, 之后文档被别处改掉, 画面上仍是旧文本 ——
    * 用户看到的就是"点了应用却什么都没变"。以 store 为准回灌即可解决。
    *
-   * * 编辑器自己敲的字不会走到这里 (两边内容相等, 直接返回), 因此不打断输入;
-   * * `setValue` 会清空撤销栈: 外部整体替换本就无法与之合并, 这是应有的语义。
+   * 光改 model 还不够, 必须**把这次变化告诉语言服务与预览**:
+   * * 只读的配音卡没有绑定 `bindModel`, 因此不会自动发 `didChange` —— 不补这一下,
+   *   Monaco 里就是"文本换了、语法高亮与诊断还停在旧文本上";
+   * * 预览按"场景 + 语句号"同步, 内容变了也该主动推一次。
+   *
+   * 编辑器自己敲的字不会走到这里 (两边内容相等, 直接返回), 因此不打断输入。
+   * `setValue` 会清空撤销栈: 外部整体替换本就无法与之合并, 这是应有的语义。
    */
   useEffect(() => {
     const editor = editorRef.current;
     const model = editor?.getModel();
     if (!editor || !model || editorPathRef.current !== doc.path) return;
     if (model.getValue() === doc.content) return;
+
     const position = editor.getPosition();
     model.setValue(doc.content);
     if (position) editor.setPosition(position);
-  }, [doc.content, doc.path]);
+
+    lspClient.changeDocument(doc.path, doc.content, model.getVersionId());
+    syncRef.current?.();
+  }, [doc.content, doc.path, readOnly]);
 
   /*
    * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。

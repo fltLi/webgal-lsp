@@ -2,13 +2,16 @@
 
 // 语句配音历史 (配音卡操作台右侧)。
 //
+// **历史是按"当前这一句对话"组织的**, 不是整个场景共用一份: 换一句对话就该换一批记录,
+// 否则左右两边说的不是同一件事 (左边是这一句的配置, 右边却混着一整幕的记录)。
+//
 // 每条记录对应一次「测试」或「生成」; 排队中 / 生成中的任务可以取消, 排队中的还能改
 // 优先级。参数编辑不影响既有记录: 改动参数只会让"当前配置"变成新配置, 历史保持原样。
 //
-// 卡片布局: 第一行是"这条记录是什么"(类型 / 优先级 / 时间) + 操作图标, 因此操作与
-// 基本信息**同一行**, 不再单独占一行高度。
+// 卡片布局: 第一行是"这条记录是什么"(类型 / 时间) + 操作图标, 因此操作与基本信息
+// **同一行**, 不再单独占一行高度。
 
-import { Button, Spinner } from '@fluentui/react-components';
+import { Button } from '@fluentui/react-components';
 import {
   ArrowDownRegular,
   ArrowDownloadRegular,
@@ -30,6 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import { voiceController } from './controller';
 import { AudioButton } from './AudioButton';
 import { errorSummary } from './errorText';
+import { formatDuration } from './estimate';
 import { useVoiceCard, useVoiceTick } from './hooks';
 import { PriorityButton } from './PriorityButton';
 import { TaskProgress } from './TaskProgress';
@@ -40,6 +44,8 @@ import { writeFile } from '@tauri-apps/plugin-fs';
 
 interface Props {
   cardId: string;
+  /** 当前光标所在对话的行号: 历史只显示这一句的记录 */
+  line: number;
   onChanged: () => void;
   onApplied: () => void;
 }
@@ -50,7 +56,7 @@ interface MenuState {
   entry: HistoryEntry;
 }
 
-export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
+export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
   // 订阅队列变化 (卡片本身从 store 读, 因此选中记录 / 任务回填都会触发重渲染)
   const voiceTick = useVoiceTick();
   const card = useVoiceCard(cardId);
@@ -72,13 +78,15 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
 
   if (!card) return null;
 
-  const active = card.history.filter((entry) => entry.status === 'pending' || entry.status === 'running');
-  const done = card.history.filter((entry) => entry.status === 'done');
-  const failed = card.history.filter((entry) => entry.status === 'failed' || entry.status === 'canceled');
+  /** 本句的记录 (历史只针对当前对话) */
+  const entries = card.history.filter((entry) => entry.line === line);
+  const active = entries.filter((entry) => entry.status === 'pending' || entry.status === 'running');
+  const done = entries.filter((entry) => entry.status === 'done');
+  const failed = entries.filter((entry) => entry.status === 'failed');
+  /** 未能对齐到任何语句的残留记录 (过滤之后它们不在任何列表里, 需要一个清理入口) */
+  const unaligned = card.history.filter((entry) => entry.line === null).length;
 
-  const entryOfLine = (line: number | null) =>
-    line === null ? null : (card.history.find((entry) => entry.line === line && entry.applied) ?? null);
-  const appliedEntry = entryOfLine(card.cursorLine);
+  const appliedEntry = card.history.find((entry) => entry.line === line && entry.applied) ?? null;
 
   const togglePriority = (entry: HistoryEntry) => {
     voiceController.setPriority(entry.id, entry.priority === 'immediate' ? 'normal' : 'immediate');
@@ -187,22 +195,23 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
 
         <div className="history-meta">
           <span>{entry.characterName || '未指定角色'}</span>
-          {entry.line === null && <span className="history-warn">未对齐</span>}
           {entry.alignment === 'speakerChanged' && <span className="history-warn">归属可能已变</span>}
           {entry.params.seed >= 0 && <span>种子 {entry.params.seed}</span>}
-          {entry.duration !== undefined && <span>{entry.duration.toFixed(2)}s</span>}
+          {/*
+            `响应` = 这一次请求的实测往返时间 (任务耗时); `音频` = 生成出来的音频有多长。
+            两者差一个量级很常见, 因此都要写清名目, 不能只甩一个 "3.96s"。
+          */}
+          {entry.elapsed !== undefined && <span>响应 {formatDuration(entry.elapsed)}</span>}
+          {entry.duration !== undefined && <span>音频 {entry.duration.toFixed(2)}s</span>}
         </div>
 
         {inFlight && (
           <div className="history-progress">
-            {entry.status === 'running' ? (
-              <TaskProgress steps={entry.params.sampleSteps} text={entry.text} startedAt={entry.startedAt} />
-            ) : (
-              <>
-                <Spinner size="extra-tiny" />
-                <TaskProgress steps={entry.params.sampleSteps} text={entry.text} />
-              </>
-            )}
+            <TaskProgress
+              steps={entry.params.sampleSteps}
+              text={entry.text}
+              startedAt={entry.status === 'running' ? entry.startedAt : undefined}
+            />
           </div>
         )}
 
@@ -239,15 +248,15 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           {failed.length > 0 && ` · ${failed.length} 未完成`}
         </span>
         <span className="voice-actions-spacer" />
-        {/* 批量清理只留图标 (与工作台队列一致, 文案放悬浮提示) */}
+        {/* 批量清理只留图标 (与工作台队列一致, 文案放悬浮提示); 只作用于**当前这一句** */}
         <Button
           size="small"
           appearance="subtle"
           icon={<FilterDismissRegular />}
-          title="删除全部测试记录"
-          disabled={!card.history.some((entry) => entry.kind === 'test')}
+          title="删除本句的全部测试记录"
+          disabled={!entries.some((entry) => entry.kind === 'test')}
           onClick={() => {
-            voiceController.dropAllHistory(cardId, 'test');
+            voiceController.dropHistoryByLine(cardId, line, 'test');
             onChanged();
           }}
         />
@@ -255,19 +264,37 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           size="small"
           appearance="subtle"
           icon={<BroomRegular />}
-          title="删除全部记录（不影响已应用的 -vocal=）"
-          disabled={card.history.length === 0}
+          title="删除本句的全部记录（不影响已应用的 -vocal=）"
+          disabled={entries.length === 0}
           onClick={() => {
-            voiceController.dropAllHistory(cardId);
+            voiceController.dropHistoryByLine(cardId, line);
             onChanged();
           }}
         />
       </div>
 
       <div className="history-list" data-tick={voiceTick}>
-        {card.history.length === 0 && <p className="history-empty">尚未生成。点击「测试」快速试听，或直接「生成」。</p>}
-        {card.history.map(renderEntry)}
+        {entries.length === 0 && (
+          <p className="history-empty">本句还没有记录。点击「测试」快速试听，或直接「生成」。</p>
+        )}
+        {entries.map(renderEntry)}
       </div>
+
+      {unaligned > 0 && (
+        <div className="history-unaligned">
+          <span>{unaligned} 条记录未能对齐到任何语句</span>
+          <Button
+            size="small"
+            appearance="subtle"
+            icon={<BroomRegular />}
+            title="删除这些无法对齐的残留记录"
+            onClick={() => {
+              voiceController.dropUnalignedHistory(cardId);
+              onChanged();
+            }}
+          />
+        </div>
+      )}
 
       {appliedEntry && (
         <div className="history-applied-note">当前语句已应用：{appliedEntry.audioHash?.slice(0, 8)}</div>
@@ -366,22 +393,22 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           <button
             className="danger-text"
             onClick={() => {
-              voiceController.dropAllHistory(cardId, 'test');
+              voiceController.dropHistoryByLine(cardId, line, 'test');
               setMenu(null);
               onChanged();
             }}
           >
-            <FilterDismissRegular /> 删除全部测试
+            <FilterDismissRegular /> 删除本句全部测试
           </button>
           <button
             className="danger-text"
             onClick={() => {
-              voiceController.dropAllHistory(cardId);
+              voiceController.dropHistoryByLine(cardId, line);
               setMenu(null);
               onChanged();
             }}
           >
-            <BroomRegular /> 删除全部
+            <BroomRegular /> 删除本句全部
           </button>
         </div>
       )}
