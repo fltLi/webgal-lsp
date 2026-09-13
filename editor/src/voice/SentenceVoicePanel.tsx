@@ -15,6 +15,7 @@ import {
   CheckmarkRegular,
   ChevronDownRegular,
   DeleteRegular,
+  DismissRegular,
   FlashRegular,
   MicRecordRegular,
   SettingsRegular,
@@ -388,7 +389,13 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
           </Button>
           <span className="voice-actions-spacer" />
           {running ? (
-            <Button appearance="secondary" icon={<DeleteRegular />} onClick={cancel}>
+            /* 取消 = 撤下这一条, 用叉; 「移除」才是"从脚本里拿掉", 仍用垃圾桶 */
+            <Button
+              appearance="secondary"
+              icon={<DismissRegular />}
+              title="取消（推理无法中断，返回后丢弃结果）"
+              onClick={cancel}
+            >
               取消
             </Button>
           ) : (

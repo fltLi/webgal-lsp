@@ -2824,17 +2824,15 @@ body.resizing {
 
 /*
  * 字段宽度是三行布局的一部分:
- *   第一行 角色 | 语言 | 参考音频   —— 角色只比语言宽一点, 参考音频吃掉剩余宽度
+ *   第一行 角色 | 语言 | 参考音频   —— 角色与语言等长, 参考音频吃掉剩余宽度
  *   第二行 文本                     —— 独占一行
  *   第三行 种子 | 温度 | 语速 | 高级设置
  * 都用 `flex-basis` 定一个"理想宽度": 面板变窄时先按比例收缩, 实在放不下就由
  * `.voice-row` 折行 (宁可折行, 也不要把数字框挤到只剩标签)。
  */
-.voice-field-character {
-  flex: 0 1 140px;
-}
+.voice-field-character,
 .voice-field-language {
-  flex: 0 1 118px;
+  flex: 0 1 124px;
 }
 .voice-field-reference {
   flex: 1 1 180px;
@@ -2847,13 +2845,12 @@ body.resizing {
   flex: 0 0 auto;
 }
 .voice-field-seed {
-  /* 输入框两侧各一个加减按钮, 右边还有一个"换随机种子" */
+  /* 比其它数值框宽: 10 位种子 + 右侧的原生步进器 + 一个"换随机种子" */
   flex: 0 1 160px;
 }
 .voice-field-number {
-  /* [−][数值][+] */
-  flex: 0 1 122px;
-  min-width: 112px;
+  flex: 0 1 112px;
+  min-width: 104px;
 }
 
 .voice-label {
@@ -2901,28 +2898,17 @@ body.resizing {
   align-items: center;
 }
 
-/* 数值框: [−] 输入框 [+] (刻度由 NumberInput 的 tick.step 决定) */
-.voice-number {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+.voice-seed .voice-control {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
-.voice-number .voice-control {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-}
-
-.voice-number-step.fui-Button {
-  flex: none;
-  min-width: 22px;
-  padding: 0 2px;
-}
-
-.voice-seed .voice-number {
-  flex: 1 1 auto;
+/*
+ * 数值框的加减是**原生步进器** (`<input type="number">` 悬停时出现在右内侧),
+ * 与设置里的字号输入框一致。这里只保证它不被裁掉、并且宽度够用。
+ */
+input[type='number'].voice-control {
+  padding-right: 2px;
 }
 .voice-reference-name {
   flex: 1;
@@ -2943,12 +2929,6 @@ body.resizing {
   margin-left: auto;
 }
 
-/* 数值输入框右侧的范围提示 (灰字, 不抢注意力) */
-.voice-number-range {
-  font-size: 10px;
-  color: var(--app-muted);
-  white-space: nowrap;
-}
 .voice-advanced-body {
   display: flex;
   flex-direction: column;
@@ -3115,62 +3095,34 @@ body.resizing {
 }
 
 /*
- * 队列优先级标记 (历史记录与工作台队列共用)。
- * 排队中时是一个按钮 (可点着改), 其余状态是同样外观的 span (只展示)。
+ * 队列优先级按钮: 单图标, 箭头指"点了会怎样" (上=提升为优先, 下=降为常规)。
+ * 与相邻的「取消」保持同一尺寸与观感。
  */
-.priority-chip {
+.priority-button {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   flex: none;
-  padding: 0 4px;
-  border: 1px solid var(--app-border);
-  border-radius: 3px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
   background: none;
-  font: inherit;
-  font-size: 10px;
-  line-height: 15px;
   color: var(--app-muted);
-}
-
-span.priority-chip {
-  cursor: default;
-}
-
-button.priority-chip {
+  font-size: 14px;
   cursor: pointer;
 }
 
-button.priority-chip:hover {
-  border-color: var(--app-accent);
-  color: var(--app-accent);
+.priority-button:hover {
+  background: var(--app-hover);
+  color: var(--app-fg);
 }
 
-.priority-chip.immediate {
-  border-color: #b8860b;
-  color: #b8860b;
-}
-
-[data-theme='dark'] .priority-chip.immediate {
-  border-color: #d7a12c;
-  color: #d7a12c;
-}
-
-/* 危险操作 (删除 / 取消): 平时就是红的 */
-.danger-text.fui-Button,
-.danger-text.fui-Button:hover {
-  color: #d13438;
-}
-
-.danger-text.fui-Button:hover {
-  background: rgba(209, 52, 56, 0.12);
-}
-
-[data-theme='dark'] .danger-text.fui-Button,
-[data-theme='dark'] .danger-text.fui-Button:hover {
-  color: #f1707b;
-}
-
+/*
+ * 危险操作只有**右键菜单**里那一组染红 (删除 / 删除全部测试 / 删除全部)。
+ * 界面上的删除图标保持中性 —— 一排红色垃圾桶比"图标本身"更吵。
+ */
 .context-menu button.danger-text {
   color: #d13438;
 }

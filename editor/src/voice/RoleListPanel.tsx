@@ -52,23 +52,15 @@ export function RoleListPanel() {
   };
 
   /**
-   * 「选择角色」= 取消当前选择, 然后打开挑选对话框。
+   * 「选择角色」= 打开挑选对话框。
    *
-   * 这两件事本来就是同一个动作的两半: 侧边栏展示的是"已选中的角色",
-   * 挑选对话框是"重新决定选哪些"。先清空再挑, 免得用户在对话框里看到的勾选状态
-   * 与自己的预期不一致。
+   * **不要先清空**: 曾经这里在打开对话框前把所有角色取消勾选 ("先清空再挑"),
+   * 结果是对话框里一个都没勾 (用户看到的正是"里面没有选中的"), 而只要不进对话框
+   * 挨个勾回来, 关掉它就会让**所有手动指定的角色一起失效** —— 侧边栏与场景卡里的
+   * 归属都变成未选择。勾选状态本来就是对话框的内容, 直接打开、原样显示即可。
    */
-  const deselectAndPick = async () => {
+  const openPicker = () => {
     setError(null);
-    try {
-      await Promise.all(
-        characters
-          .filter((item) => item.enabled)
-          .map((item) => voiceController.updateCharacter(item.id, { enabled: false }))
-      );
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    }
     setPickerOpen(true);
   };
 
@@ -91,11 +83,11 @@ export function RoleListPanel() {
           新建角色
         </Button>
         {/*
-          「选择角色」在打开挑选对话框之前先把所有角色取消勾选 —— 侧边栏里显示的
-          本来就只是"已选中的角色", 因此让它们全部退出就是"取消选择"这个动作。
-          任何情况下都**不禁用**: 一个永远可点的入口比一个灰掉的按钮好懂得多。
+          「选择角色」直接打开挑选对话框, 对话框里显示的就是当前勾选状态;
+          在里面改一个就生效一个, 什么都不改地关掉则一切照旧。任何情况下都**不禁用**:
+          一个永远可点的入口比一个灰掉的按钮好懂得多。
         */}
-        <Button appearance="secondary" icon={<PersonEditRegular />} onClick={() => void deselectAndPick()}>
+        <Button appearance="secondary" icon={<PersonEditRegular />} onClick={openPicker}>
           选择角色
         </Button>
       </div>

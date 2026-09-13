@@ -78,11 +78,6 @@ export function priorityOf(kind: TaskKind): TaskPriority {
   return kind === 'test' ? 'immediate' : 'normal';
 }
 
-/** 优先级的显示名 */
-export function priorityLabel(priority: TaskPriority): string {
-  return priority === 'immediate' ? '优先' : '常规';
-}
-
 export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'canceled';
 
 /** 一条配音任务 (参数为不可变快照) */

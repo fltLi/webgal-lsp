@@ -263,8 +263,12 @@ class VoiceController {
        * 回填会把面板上的步数带成 x4 —— 点一次测试, 正式生成的档位就掉下去了。
        */
       sampleSteps: (selected?.kind === 'generate' ? selected.params.sampleSteps : null) ?? defaults.generateSampleSteps,
-      // 文本始终跟随场景 (历史项可能属于改过的文本)
-      text: line.text,
+      /*
+       * 文本是参数的一部分, **可以改** (操作台上的文本框就是干这个的):
+       * 选中历史项时回填它当时合成的文本, 否则默认用场景里的这一句。
+       * 不要在每次取参数时无条件写回 `line.text` —— 那会把用户刚改的文本抹掉。
+       */
+      text: selected?.params.text ?? line.text,
     };
   }
 
@@ -296,12 +300,18 @@ class VoiceController {
 
     const character = this.characterById(params.characterId);
     const reference = character?.references.find((item) => item.hash === params.referenceHash) ?? null;
-    // 快照记录**实际使用**的步数 (测试固定走测试步数), 因此历史项显示的就是真跑过的档位;
-    // 步数不参与"配置身份"的比对 (见 `paramsKey`)。
+    /*
+     * 快照 = 用户此刻配置的这一份, **包括文本框里改过的文本**。
+     *
+     * 步数记录实际使用的档位 (测试固定走测试步数), 因此历史项显示的就是真跑过的;
+     * 步数不参与"配置身份"的比对 (见 `paramsKey`)。
+     *
+     * 刻意不再用 `line.text` 覆盖文本: 那样用户在文本框里改完再点生成, 送进模型的
+     * 还是场景原文 —— 界面上写着改后的文本, 音频却是原文, 属于静默丢输入。
+     */
     const snapshot: VoiceParams = {
       ...params,
       sampleSteps: kind === 'test' ? this.settings.testSampleSteps : params.sampleSteps,
-      text: line.text,
     };
 
     const task: VoiceTask = {
@@ -314,7 +324,8 @@ class VoiceController {
       line: line.line,
       lineHash: line.hash,
       speaker: line.speaker,
-      text: line.text,
+      // 展示与估算用**实际合成的文本** (用户改过就用改过的), 不是场景原文
+      text: snapshot.text,
       characterId: character?.id ?? null,
       characterName: character?.name ?? '未指定角色',
       params: snapshot,
@@ -329,7 +340,7 @@ class VoiceController {
       status: 'pending',
       line: line.line,
       speaker: line.speaker,
-      text: line.text,
+      text: snapshot.text,
       characterId: task.characterId,
       characterName: task.characterName,
       params: snapshot,
@@ -958,9 +969,9 @@ class VoiceController {
     const line = card.dialogues.find((dialogue) => dialogue.line === entry.line);
     if (!line) return null;
 
-    // 复用原参数 (文本跟随当前场景内容), 优先级沿用原记录 —— 用户把它调成"优先"是
-    // 有意的, 重试不该悄悄降回去
-    return this.enqueue(cardId, entry.kind, line, { ...entry.params, text: line.text }, entry.priority);
+    // 复用原记录的全部参数 (含当时合成的文本), 优先级也沿用 —— 用户把它调成"优先"
+    // 是有意的, 重试不该悄悄降回去
+    return this.enqueue(cardId, entry.kind, line, { ...entry.params }, entry.priority);
   }
 
   /** 该场景当前是否处于配音编辑模式 */

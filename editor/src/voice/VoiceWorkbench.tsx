@@ -37,7 +37,7 @@ import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { formatEta } from './estimate';
 import { errorSummary } from './errorText';
-import { PriorityChip } from './PriorityChip';
+import { PriorityButton } from './PriorityButton';
 import { queueView } from './queue';
 import { RoleListPanel } from './RoleListPanel';
 import { TaskProgress } from './TaskProgress';
@@ -386,7 +386,6 @@ export function VoiceWorkbench() {
                   onClick={() => setChangeDialogOpen(true)}
                 />
                 <Button
-                  className="danger-text"
                   size="small"
                   appearance="subtle"
                   title="清空已完成的任务"
@@ -421,15 +420,6 @@ export function VoiceWorkbench() {
                   <span className={`history-kind ${task.kind}`}>
                     {task.kind === 'test' ? '测试' : '生成'} x{task.params.sampleSteps}
                   </span>
-                  <PriorityChip
-                    priority={task.priority}
-                    onToggle={
-                      task.status === 'pending'
-                        ? () =>
-                            voiceController.setPriority(task.id, task.priority === 'immediate' ? 'normal' : 'immediate')
-                        : undefined
-                    }
-                  />
                   <span className="voice-task-text">{task.text || '（空）'}</span>
                   <span className="voice-task-character">{task.characterName}</span>
                   <span className="voice-task-status">
@@ -443,7 +433,15 @@ export function VoiceWorkbench() {
                     {task.status === 'failed' && '失败'}
                     {task.status === 'canceled' && '已取消'}
                   </span>
-                  {/* 未完成的任务可以取消 (X); 已完成的任务没有可取消的东西 */}
+                  {/* 排队中可以改优先级 (单图标: 上=提升 / 下=降低), 未完成的都可以取消 */}
+                  {task.status === 'pending' && (
+                    <PriorityButton
+                      priority={task.priority}
+                      onToggle={() =>
+                        voiceController.setPriority(task.id, task.priority === 'immediate' ? 'normal' : 'immediate')
+                      }
+                    />
+                  )}
                   {(task.status === 'pending' || task.status === 'running') && (
                     <Button
                       size="small"

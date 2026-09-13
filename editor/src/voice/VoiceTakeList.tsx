@@ -31,7 +31,7 @@ import { voiceController } from './controller';
 import { AudioButton } from './AudioButton';
 import { errorSummary } from './errorText';
 import { useVoiceCard, useVoiceTick } from './hooks';
-import { PriorityChip } from './PriorityChip';
+import { PriorityButton } from './PriorityButton';
 import { TaskProgress } from './TaskProgress';
 import type { HistoryEntry } from './types';
 import { VoiceErrorDialog } from './VoiceErrorDialog';
@@ -134,10 +134,6 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           <span className={`history-kind ${entry.kind}`}>
             {entry.kind === 'test' ? '测试' : '生成'} x{entry.params.sampleSteps}
           </span>
-          <PriorityChip
-            priority={entry.priority}
-            onToggle={entry.status === 'pending' ? () => togglePriority(entry) : undefined}
-          />
           <span className="history-time">{formatTime(entry.createdAt)}</span>
           {entry.applied && (
             <span className="history-applied" title="已应用到脚本">
@@ -149,25 +145,30 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
             {inFlight ? (
               /*
                 生成中的项**不提供播放/删除**: 还没有音频可放, 也不该在跑的时候把记录
-                删掉。留下的两件事是"改优先级"(仅排队中) 和"取消"。
+                删掉。留下的两件事是"改优先级"(仅排队中, 单图标: 上=提升 / 下=降低)
+                与"取消"。
               */
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<DismissRegular />}
-                title={
-                  entry.status === 'running' ? '取消（推理无法中断，返回后丢弃结果）' : '取消（还没开始，直接撤下）'
-                }
-                onClick={() => {
-                  voiceController.cancel(entry.id);
-                  onChanged();
-                }}
-              />
+              <>
+                {entry.status === 'pending' && (
+                  <PriorityButton priority={entry.priority} onToggle={() => togglePriority(entry)} />
+                )}
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<DismissRegular />}
+                  title={
+                    entry.status === 'running' ? '取消（推理无法中断，返回后丢弃结果）' : '取消（还没开始，直接撤下）'
+                  }
+                  onClick={() => {
+                    voiceController.cancel(entry.id);
+                    onChanged();
+                  }}
+                />
+              </>
             ) : (
               <>
                 {entry.status === 'done' && entry.audioPath && <AudioButton path={entry.audioPath} />}
                 <Button
-                  className="danger-text"
                   size="small"
                   appearance="subtle"
                   icon={<DeleteRegular />}
@@ -238,9 +239,8 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           {failed.length > 0 && ` · ${failed.length} 未完成`}
         </span>
         <span className="voice-actions-spacer" />
-        {/* 批量清理只留图标 (与工作台队列一致, 文案放悬浮提示); 两项都是删除, 用危险色 */}
+        {/* 批量清理只留图标 (与工作台队列一致, 文案放悬浮提示) */}
         <Button
-          className="danger-text"
           size="small"
           appearance="subtle"
           icon={<FilterDismissRegular />}
@@ -252,7 +252,6 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           }}
         />
         <Button
-          className="danger-text"
           size="small"
           appearance="subtle"
           icon={<BroomRegular />}
