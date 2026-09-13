@@ -18,7 +18,7 @@ import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
 import { voiceController } from './controller';
-import { AudioButton } from './VoiceReferenceDialog';
+import { AudioButton } from './AudioButton';
 import type { HistoryEntry } from './types';
 import { useAppStore } from '../state/store';
 import { fs } from '../lib/fs';
