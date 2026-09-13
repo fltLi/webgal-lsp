@@ -2408,6 +2408,12 @@ body.resizing {
   padding: 4px 6px;
   border-radius: 4px;
   background: var(--app-bg);
+  /* 失败任务的报错整行独占 (见 `.voice-task-error`), 因此允许换行 */
+  flex-wrap: wrap;
+}
+
+.voice-task-error {
+  flex: 1 0 100%;
 }
 
 .voice-task-text {
@@ -2765,17 +2771,6 @@ body.resizing {
   font-size: 12px;
 }
 
-/* TEMP-DEBUG: 行号定位用的临时读数, 定位完成后连同标记一起删除 */
-.scene-voice-debug {
-  flex: none;
-  padding: 2px 10px;
-  font-family: Consolas, monospace;
-  font-size: 11px;
-  color: #d13438;
-  background: rgba(209, 52, 56, 0.08);
-  border-bottom: 1px solid rgba(209, 52, 56, 0.3);
-}
-
 /* 参考音频下拉: 点开即弹出选择对话框 (带搜索与试听) */
 .voice-reference-trigger {
   width: 100%;
@@ -2801,6 +2796,8 @@ body.resizing {
   display: flex;
   gap: 8px;
   align-items: flex-end;
+  /* 面板被压窄时宁可折行, 也不要把数字框挤到只剩标签 */
+  flex-wrap: wrap;
 }
 
 .voice-field {
@@ -2811,14 +2808,37 @@ body.resizing {
   flex: 1;
 }
 
+/*
+ * 字段宽度是三行布局的一部分:
+ *   第一行 角色 | 语言 | 参考音频   —— 参考音频要看清文本与时长, 由它吃掉剩余宽度
+ *   第二行 文本                     —— 独占一行
+ *   第三行 种子 | 温度 | 语速 | 高级设置
+ * 都用 `flex-basis` 定一个"理想宽度": 面板变窄时先按比例收缩, 实在放不下就由
+ * `.voice-row` 折行 (宁可折行, 也不要把数字框挤到只剩标签)。
+ */
 .voice-field-character {
-  flex: 1.2;
+  flex: 0 1 190px;
+}
+.voice-field-language {
+  flex: 0 1 120px;
 }
 .voice-field-reference {
-  flex: 1.4;
+  flex: 1 1 180px;
+}
+.voice-field-text {
+  /*
+   * 不吸收剩余高度: 剩下的空间留给页脚的 `margin-top: auto`。
+   * 让文本框吃掉空隙的话, 框会吊在字段顶部、下面留一大片空白, 看起来像没画完。
+   */
+  flex: 0 0 auto;
 }
 .voice-field-seed {
-  flex: 0.8;
+  flex: 1 1 150px;
+}
+.voice-field-number {
+  flex: 0 1 116px;
+  /* 数字框右侧还有范围提示, 再窄就读不出来了 */
+  min-width: 100px;
 }
 
 .voice-label {
@@ -2871,10 +2891,11 @@ body.resizing {
   display: flex;
 }
 
-/* 高级设置开关与语速同排: 同一行更紧凑 */
+/* 高级设置开关与语速同排: 同一行更紧凑; 靠右让"参数 -> 更多参数"的关系看得出来 */
 .voice-field-advanced {
   flex: 0 0 auto;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 /* 数值输入框右侧的范围提示 (灰字, 不抢注意力) */
@@ -2892,6 +2913,20 @@ body.resizing {
   border-radius: 6px;
 }
 
+/*
+ * 页脚: 状态行 + 操作按钮。
+ *
+ * 用一条分隔线与上面的参数区隔开, 并整体沉到面板底部 (`margin-top: auto`) —— 否则
+ * 参数区一长, 状态行和按钮就贴着「高级设置」, 看起来像是那一行的附属说明。
+ */
+.voice-footer {
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--app-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .voice-actions {
   display: flex;
   gap: 6px;
@@ -2900,13 +2935,30 @@ body.resizing {
 .voice-status-line {
   min-height: 16px;
   font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.voice-hint-new {
+.voice-status-new {
   color: var(--app-muted);
+}
+.voice-status-ok {
+  color: #1a7f37;
+}
+[data-theme='dark'] .voice-status-ok {
+  color: #3fb950;
+}
+.voice-status-run {
+  color: var(--app-accent);
+}
+.voice-status-fail {
+  color: #d1242f;
+}
+[data-theme='dark'] .voice-status-fail {
+  color: #f85149;
 }
 .voice-message {
   color: var(--app-accent);
-  margin-left: 8px;
 }
 .voice-error {
   color: #d1242f;
@@ -3072,6 +3124,77 @@ body.resizing {
 .history-message {
   font-size: 11px;
   color: var(--app-accent);
+}
+
+/*
+ * 报错入口 (历史卡片与工作台任务项共用): 只占一行。
+ *
+ * GSOV 的原始报错有几十行 (颜色转义 + 横幅 + 堆栈 + 搜索路径), 以前整段铺在卡片里,
+ * 一个失败项就能占满整栏。这里压成一行摘要, 全文点开弹窗看。
+ */
+.error-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(209, 52, 56, 0.08);
+  color: #d1242f;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.error-chip:hover {
+  background: rgba(209, 52, 56, 0.16);
+}
+
+[data-theme='dark'] .error-chip {
+  color: #f85149;
+}
+
+.error-chip-icon {
+  flex: none;
+}
+
+.error-chip-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-chip-more {
+  flex: none;
+  opacity: 0.75;
+}
+
+/* -------- 报错详情弹窗 -------- */
+.voice-error-detail {
+  margin: 0;
+  max-height: 210px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.voice-error-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b8860b;
 }
 
 /* -------- 右键菜单 -------- */

@@ -24,6 +24,8 @@ interface Props {
   tick: NumberTick;
   /** 只接受整数 (topK) */
   integer?: boolean;
+  /** 不显示右侧范围提示 (取值范围本身没有意义时, 例如种子) */
+  hideRange?: boolean;
   disabled?: boolean;
   onCommit: (value: number) => void;
 }
@@ -36,7 +38,7 @@ function decimalsOf(tick: NumberTick, integer: boolean | undefined): number {
   return dot < 0 ? 0 : text.length - dot - 1;
 }
 
-export function NumberInput({ value, tick, integer, disabled, onCommit }: Props) {
+export function NumberInput({ value, tick, integer, hideRange, disabled, onCommit }: Props) {
   const decimals = decimalsOf(tick, integer);
   const [text, setText] = useState(value.toFixed(decimals));
 
@@ -62,7 +64,7 @@ export function NumberInput({ value, tick, integer, disabled, onCommit }: Props)
       value={text}
       disabled={disabled}
       inputMode="decimal"
-      contentAfter={<span className="voice-number-range">{`${tick.min}~${tick.max}`}</span>}
+      contentAfter={hideRange ? undefined : <span className="voice-number-range">{`${tick.min}~${tick.max}`}</span>}
       onChange={(_, data) => setText(data.value)}
       onBlur={commit}
       onKeyDown={(event) => {

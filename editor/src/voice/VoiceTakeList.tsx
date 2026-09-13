@@ -10,6 +10,7 @@ import {
   ArrowDownloadRegular,
   CheckmarkCircleRegular,
   DeleteRegular,
+  ErrorCircleRegular,
   FolderOpenRegular,
   StopRegular,
 } from '@fluentui/react-icons';
@@ -19,7 +20,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { voiceController } from './controller';
 import { AudioButton } from './AudioButton';
+import { errorSummary } from './errorText';
 import type { HistoryEntry } from './types';
+import { VoiceErrorDialog } from './VoiceErrorDialog';
 import { useAppStore } from '../state/store';
 import { fs } from '../lib/fs';
 import { writeFile } from '@tauri-apps/plugin-fs';
@@ -42,6 +45,7 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
   const card = voiceController.getCard(cardId);
   const selectedId = card?.selectedHistoryId ?? null;
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [errorEntry, setErrorEntry] = useState<HistoryEntry | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -110,7 +114,9 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
         }}
       >
         <div className="history-head">
-          <span className={`history-kind ${entry.kind}`}>{entry.kind === 'test' ? '测试 x4' : '生成 x32'}</span>
+          <span className={`history-kind ${entry.kind}`}>
+            {entry.kind === 'test' ? '测试' : '生成'} x{entry.params.sampleSteps}
+          </span>
           <span className="history-time">{formatTime(entry.createdAt)}</span>
           {entry.applied && (
             <span className="history-applied" title="已应用到脚本">
@@ -136,7 +142,25 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           </div>
         )}
 
-        {entry.error && <div className="voice-error">{entry.error}</div>}
+        {entry.error && (
+          /*
+            报错只留一行摘要 + 一个入口: GSOV 的原始报错有几十行, 铺在卡片里会把
+            整栏撑爆。点这一行打开弹窗看全文 (可复制)。
+          */
+          <button
+            type="button"
+            className="error-chip"
+            title="查看完整报错"
+            onClick={(event) => {
+              event.stopPropagation();
+              setErrorEntry(entry);
+            }}
+          >
+            <ErrorCircleRegular className="error-chip-icon" />
+            <span className="error-chip-text">{errorSummary(entry.error)}</span>
+            <span className="error-chip-more">详情</span>
+          </button>
+        )}
 
         <div className="history-actions" onClick={(event) => event.stopPropagation()}>
           {entry.status === 'done' && entry.audioPath && <AudioButton path={entry.audioPath} />}
@@ -214,6 +238,16 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
         <div className="history-applied-note">当前语句已应用：{appliedEntry.audioHash?.slice(0, 8)}</div>
       )}
       {message && <div className="history-message">{message}</div>}
+
+      {errorEntry && (
+        <VoiceErrorDialog
+          error={errorEntry.error ?? null}
+          description={`${errorEntry.characterName || '未指定角色'} · ${
+            errorEntry.kind === 'test' ? '测试' : '生成'
+          } x${errorEntry.params.sampleSteps} · ${formatTime(errorEntry.createdAt)}`}
+          onClose={() => setErrorEntry(null)}
+        />
+      )}
 
       {menu && (
         <div

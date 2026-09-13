@@ -36,9 +36,11 @@ import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { formatEta } from './estimate';
+import { errorSummary } from './errorText';
 import { RoleListPanel } from './RoleListPanel';
-import { LANGUAGE_LABELS } from './types';
+import { LANGUAGE_LABELS, type VoiceTask } from './types';
 import { VoiceCacheDialog } from './VoiceCacheDialog';
+import { VoiceErrorDialog } from './VoiceErrorDialog';
 
 type ConfigPage = 'service' | 'defaults';
 type QueuePage = 'queue' | 'log';
@@ -59,6 +61,8 @@ export function VoiceWorkbench() {
   const [configPage, setConfigPage] = useState<ConfigPage>('service');
   const [queuePage, setQueuePage] = useState<QueuePage>('queue');
   const [changeDialogOpen, setChangeDialogOpen] = useState(false);
+  /** 正在查看失败详情的任务 (null 表示不显示弹窗) */
+  const [errorTask, setErrorTask] = useState<VoiceTask | null>(null);
 
   const defaults = settings.defaults;
   const summary = voiceController.queueSummary();
@@ -388,7 +392,9 @@ export function VoiceWorkbench() {
               )}
               {voiceController.allTasks().map((task) => (
                 <div key={task.id} className={`voice-task ${task.status}`}>
-                  <span className={`history-kind ${task.kind}`}>{task.kind === 'test' ? '测试 x4' : '生成 x32'}</span>
+                  <span className={`history-kind ${task.kind}`}>
+                    {task.kind === 'test' ? '测试' : '生成'} x{task.params.sampleSteps}
+                  </span>
                   <span className="voice-task-text">{task.text || '（空）'}</span>
                   <span className="voice-task-character">{task.characterName}</span>
                   <span className="voice-task-status">
@@ -399,10 +405,26 @@ export function VoiceWorkbench() {
                       </>
                     )}
                     {task.status === 'done' && '已完成'}
-                    {task.status === 'failed' && <span className="voice-error">{task.error}</span>}
+                    {task.status === 'failed' && '失败'}
                     {task.status === 'canceled' && '已取消'}
                   </span>
                   {task.status === 'running' && <ProgressBar />}
+                  {task.status === 'failed' && task.error && (
+                    /*
+                      报错只占一行 (整行独占, 见 `.voice-task-error`): 原文有几十行,
+                      直接铺开会把整个任务项撑成一屏。点开弹窗看全文。
+                    */
+                    <button
+                      type="button"
+                      className="error-chip voice-task-error"
+                      title="查看完整报错"
+                      onClick={() => setErrorTask(task)}
+                    >
+                      <ErrorCircleRegular className="error-chip-icon" />
+                      <span className="error-chip-text">{errorSummary(task.error)}</span>
+                      <span className="error-chip-more">详情</span>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -418,6 +440,16 @@ export function VoiceWorkbench() {
           )}
         </section>
       </div>
+
+      {errorTask && (
+        <VoiceErrorDialog
+          error={errorTask.error ?? null}
+          description={`${errorTask.characterName} · ${errorTask.kind === 'test' ? '测试' : '生成'} x${
+            errorTask.params.sampleSteps
+          } · ${new Date(errorTask.createdAt).toLocaleString()}`}
+          onClose={() => setErrorTask(null)}
+        />
+      )}
 
       {/* -------- 角色库: 占满剩余高度 -------- */}
       <RoleListPanel />

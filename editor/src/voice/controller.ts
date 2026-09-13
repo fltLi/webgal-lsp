@@ -62,6 +62,7 @@ import {
   defaultParams,
   paramsKey,
   randomSeed,
+  seedForDialogue,
   type HistoryEntry,
   type SceneVoiceState,
   type VoiceParams,
@@ -228,13 +229,15 @@ class VoiceController {
 
   // -------- 参数 --------
 
-  /** 当前语句的配音参数: 选中历史项则回填其参数, 否则按角色与默认配置构造 */
   /**
    * 某条对话的当前配音参数 (未选中历史项时为默认值)。
    *
    * **直接接收对话本身**而不是用 `card.cursorLine` 反查: 调用方 (语句面板) 手上
    * 已经有那条对话, 再反查一次就会在"光标行号还没同步过来"的窗口里静默返回 null,
    * 于是测试/生成按钮点了没反应。少一次反查就少一个失配的机会。
+   *
+   * 这里也是**纯查询, 不能有副作用**: 种子必须可重复 (见 `seedForDialogue`),
+   * 随机只发生在用户显式换种子的那一刻。
    */
   currentParams(id: string, line: SayLine): VoiceParams | null {
     const card = this.cards.get(id);
@@ -245,7 +248,7 @@ class VoiceController {
     const match = card.matches?.get(line.line);
     const character = this.characterById(selected?.characterId ?? match?.characterId ?? null);
 
-    const base = defaultParams(character, line.text);
+    const base = defaultParams(character, line.text, selected?.params.seed ?? seedForDialogue(line));
     return {
       ...base,
       language: selected?.params.language ?? defaults.language,
@@ -279,6 +282,8 @@ class VoiceController {
 
     const character = this.characterById(params.characterId);
     const reference = character?.references.find((item) => item.hash === params.referenceHash) ?? null;
+    // 快照记录**实际使用**的步数 (测试固定走测试步数), 因此历史项显示的就是真跑过的档位;
+    // 步数不参与"配置身份"的比对 (见 `paramsKey`)。
     const snapshot: VoiceParams = {
       ...params,
       sampleSteps: kind === 'test' ? this.settings.testSampleSteps : params.sampleSteps,
@@ -943,7 +948,7 @@ export function normalizeEol(text: string): string {
 
 /** 生成默认参数 (供 UI 直接使用) */
 export function makeDefaultParams(text: string): VoiceParams {
-  return { ...defaultParams(null, text), seed: randomSeed() };
+  return defaultParams(null, text, randomSeed());
 }
 
 export const DISK_CHECK_MS = DISK_CHECK_INTERVAL;

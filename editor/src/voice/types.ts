@@ -58,6 +58,8 @@ export const PARAM_TICKS = {
   topK: { min: 1, max: 30, step: 1, default: 5 },
   topP: { min: 0.1, max: 1, step: 0.05, default: 1 },
   repetitionPenalty: { min: 1, max: 2, step: 0.05, default: 1.35 },
+  /** 种子: 服务端接受 0 ~ 2^32-1 (`-1` 才是"由服务端随机") */
+  seed: { min: 0, max: 0xffffffff, step: 1, default: 0 },
 } as const;
 
 /** 任务类型: 测试走立即队列, 生成走普通队列 */
@@ -189,6 +191,29 @@ export function dialogueKey(line: SayLine): string {
 }
 
 /**
+ * 一条对话的**默认种子**。
+ *
+ * 这里必须是纯函数。曾经默认种子是"每次取参数时随机一个" (`defaultParams` 内部
+ * `randomSeed()`), 于是"取一次当前参数"这个**查询**带上了副作用: 刷新令牌一变
+ * (入队后 `onChanged`、角色库变动、选中历史项) 面板就会重新取参数, 种子被悄悄换掉
+ * —— 于是「测试」记录里是 3274716390, 紧接着点「生成」用的是另一个种子, 两次结果
+ * 没法互相印证, 也没法复现。
+ *
+ * 现在默认种子由对话身份 (`dialogueKey`) 派生: 同一条对话任何时候都得到同一个种子,
+ * 换种子只剩下两个明确入口 —— 「换一个随机种子」按钮, 或者选中一条历史记录。
+ */
+export function seedForDialogue(line: SayLine): number {
+  // FNV-1a 取非负 32 位 (与服务端接受的范围一致)
+  let value = 0x811c9dc5;
+  const key = dialogueKey(line);
+  for (let index = 0; index < key.length; index++) {
+    value ^= key.charCodeAt(index);
+    value = Math.imul(value, 0x01000193);
+  }
+  return value >>> 0;
+}
+
+/**
  * 找出光标所在行属于哪一条对话。
  *
  * WebGAL 的语句就是**一行**一条 (与语言核心的 `Scene` 一致: 逐行解析), 因此这里
@@ -210,14 +235,20 @@ export function isDialogueLine(dialogues: SayLine[], line: number): boolean {
   return dialogueAtLine(dialogues, line) !== null;
 }
 
-/** 构造默认参数 */
-export function defaultParams(character: Character | null, text: string): VoiceParams {
+/**
+ * 构造默认参数。
+ *
+ * `seed` 由调用方显式给出, **不在这里随机**: 随机种子会让"取一次参数"变成副作用
+ * (原因见 `seedForDialogue`)。默认种子走 `seedForDialogue`, 显式换种子走
+ * `randomSeed`。
+ */
+export function defaultParams(character: Character | null, text: string, seed: number): VoiceParams {
   return {
     characterId: character?.id ?? null,
     referenceHash: character?.references[0]?.hash ?? null,
     language: character?.language ?? 'auto',
     text,
-    seed: randomSeed(),
+    seed,
     temperature: PARAM_TICKS.temperature.default,
     speedFactor: PARAM_TICKS.speedFactor.default,
     topK: PARAM_TICKS.topK.default,
@@ -227,7 +258,14 @@ export function defaultParams(character: Character | null, text: string): VoiceP
   };
 }
 
-/** 任务的完整参数缓存键 (用于判断"参数是否改动" -> 是否属于新配置) */
+/**
+ * 任务的参数缓存键 (用于判断"参数是否改动" -> 是否属于新配置)。
+ *
+ * **不含采样步数**: 采样步数只决定这一次生成用几档质量 (测试固定 4 步, 生成按用户
+ * 设置), 不属于"这是一套什么配置"。把它算进身份会有两个后果: 刚跑完的测试 (x4) 与
+ * 面板上的配置 (x32) 永远对不上, 于是「应用」被误禁用、状态行永远显示"新配置";
+ * 调一下步数也会被当成换了配置。
+ */
 export function paramsKey(params: VoiceParams): string {
   return JSON.stringify([
     params.characterId,
@@ -240,6 +278,5 @@ export function paramsKey(params: VoiceParams): string {
     params.topK,
     params.topP,
     params.repetitionPenalty,
-    params.sampleSteps,
   ]);
 }

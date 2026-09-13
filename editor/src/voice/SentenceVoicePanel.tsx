@@ -9,7 +9,7 @@
 //   「移除」只清除当前语句的 `-vocal=` (不删文件、不清历史);
 // * 语音之外的参数 (文本) 随场景内容变化, 不随历史项回填。
 
-import { Button, Input, Textarea } from '@fluentui/react-components';
+import { Button, Textarea } from '@fluentui/react-components';
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
@@ -128,8 +128,36 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
     }
   };
 
+  /*
+   * 状态行**永远有文字**, 且排在按钮上方。
+   *
+   * 两件事都是刻意的: 空行既占位又看不出当前是什么状态; 而"新配置/已生成"这类信息
+   * 贴在按钮下面时, 读起来像按钮的补充说明 —— 放到上面才能和下面的参数区连成一句。
+   */
+  const statusText = running
+    ? selected?.status === 'pending'
+      ? '已加入队列，等待执行'
+      : `正在生成（${selected?.kind === 'test' ? '测试' : '生成'} x${selected?.params.sampleSteps}）…`
+    : isNewConfiguration
+      ? '当前为新配置，尚未生成'
+      : selected && (selected.status === 'failed' || selected.status === 'canceled')
+        ? '该配置上次未生成成功，可点开右侧记录查看原因'
+        : selected
+          ? `当前配置已生成（${selected.kind === 'test' ? '测试' : '生成'} x${selected.params.sampleSteps}${
+              selected.duration !== undefined ? ` · ${selected.duration.toFixed(2)}s` : ''
+            }）`
+          : '当前配置与历史记录一致，可直接应用';
+  const statusTone = running
+    ? 'run'
+    : isNewConfiguration
+      ? 'new'
+      : selected && (selected.status === 'failed' || selected.status === 'canceled')
+        ? 'fail'
+        : 'ok';
+
   return (
     <div className="voice-sentence-panel">
+      {/* 第一行: 角色 / 语言 / 参考音频。参考音频要看清文本与时长, 因此由它占满剩余宽度。 */}
       <div className="voice-row">
         <label className="voice-field voice-field-character">
           <span className="voice-label">角色</span>
@@ -165,22 +193,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             onChange={(language) => update({ language })}
           />
         </label>
-      </div>
 
-      <label className="voice-field">
-        <span className="voice-label">
-          文本
-          {dialogue.speaker === null && <span className="voice-label-tag">旁白</span>}
-        </span>
-        <Textarea
-          className="voice-control voice-text"
-          value={params.text}
-          resize="vertical"
-          onChange={(_, data) => update({ text: data.value })}
-        />
-      </label>
-
-      <div className="voice-row">
         <label className="voice-field voice-field-reference">
           <span className="voice-label">参考音频</span>
           {/*
@@ -199,17 +212,33 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             <ChevronDownRegular className="select-chevron" />
           </button>
         </label>
+      </div>
 
+      {/* 第二行: 文本 (独占一行; 它是唯一可能很长的输入) */}
+      <label className="voice-field voice-field-text">
+        <span className="voice-label">
+          文本
+          {dialogue.speaker === null && <span className="voice-label-tag">旁白</span>}
+        </span>
+        <Textarea
+          className="voice-control voice-text"
+          value={params.text}
+          resize="vertical"
+          onChange={(_, data) => update({ text: data.value })}
+        />
+      </label>
+
+      {/* 第三行: 种子 / 温度 / 语速 / 高级设置 */}
+      <div className="voice-row">
         <label className="voice-field voice-field-seed">
           <span className="voice-label">种子</span>
           <div className="voice-seed">
-            <Input
-              className="voice-control"
-              value={String(params.seed)}
-              onChange={(_, data) => {
-                const parsed = Number.parseInt(data.value.replace(/[^0-9]/g, ''), 10);
-                update({ seed: Number.isFinite(parsed) ? parsed : 0 });
-              }}
+            <NumberInput
+              value={params.seed}
+              tick={PARAM_TICKS.seed}
+              integer
+              hideRange
+              onCommit={(seed) => update({ seed })}
             />
             <Button
               size="small"
@@ -220,10 +249,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             />
           </div>
         </label>
-      </div>
-
-      <div className="voice-row">
-        <label className="voice-field">
+        <label className="voice-field voice-field-number">
           <span className="voice-label">温度</span>
           <NumberInput
             value={params.temperature}
@@ -231,7 +257,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             onCommit={(temperature) => update({ temperature })}
           />
         </label>
-        <label className="voice-field">
+        <label className="voice-field voice-field-number">
           <span className="voice-label">语速</span>
           <NumberInput
             value={params.speedFactor}
@@ -239,7 +265,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             onCommit={(speedFactor) => update({ speedFactor })}
           />
         </label>
-        {/* 高级设置的开关放在语速右边: 同一行更紧凑, 也少一行高度 */}
+        {/* 高级设置的开关跟在语速右边: 二者相关, 同一行也更紧凑 */}
         <div className="voice-field voice-field-advanced">
           <span className="voice-label">&nbsp;</span>
           <Button
@@ -292,47 +318,57 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
         </div>
       )}
 
-      <div className="voice-actions">
-        <Button appearance="secondary" icon={<FlashRegular />} disabled={Boolean(busy)} onClick={() => enqueue('test')}>
-          测试 x4
-        </Button>
-        <Button
-          appearance="primary"
-          icon={<MicRecordRegular />}
-          disabled={Boolean(busy)}
-          onClick={() => enqueue('generate')}
-        >
-          生成 x{params.sampleSteps}
-        </Button>
-        <span className="voice-actions-spacer" />
-        {running ? (
-          <Button appearance="secondary" icon={<DeleteRegular />} onClick={cancel}>
-            取消
-          </Button>
-        ) : (
+      {/*
+        状态行与按钮同属一块页脚: 与上面的参数区用一条分隔线隔开, 状态行紧贴按钮上方。
+      */}
+      <div className="voice-footer">
+        <div className="voice-status-line">
+          <span className={`voice-status-${statusTone}`}>{statusText}</span>
+          {message && <span className="voice-message">{message}</span>}
+        </div>
+
+        <div className="voice-actions">
           <Button
             appearance="secondary"
-            title="清除当前语句的 -vocal=（不删除音频与历史）"
-            icon={<DeleteRegular />}
-            disabled={!hasVocal || Boolean(busy)}
-            onClick={() => void remove()}
+            icon={<FlashRegular />}
+            disabled={Boolean(busy)}
+            onClick={() => enqueue('test')}
           >
-            移除
+            测试 x4
           </Button>
-        )}
-        <Button
-          appearance="primary"
-          icon={<CheckmarkRegular />}
-          disabled={!canApply || Boolean(busy)}
-          onClick={() => void apply()}
-        >
-          应用
-        </Button>
-      </div>
-
-      <div className="voice-status-line">
-        {isNewConfiguration && !running && <span className="voice-hint-new">当前为新配置，尚未生成</span>}
-        {message && <span className="voice-message">{message}</span>}
+          <Button
+            appearance="primary"
+            icon={<MicRecordRegular />}
+            disabled={Boolean(busy)}
+            onClick={() => enqueue('generate')}
+          >
+            生成 x{params.sampleSteps}
+          </Button>
+          <span className="voice-actions-spacer" />
+          {running ? (
+            <Button appearance="secondary" icon={<DeleteRegular />} onClick={cancel}>
+              取消
+            </Button>
+          ) : (
+            <Button
+              appearance="secondary"
+              title="清除当前语句的 -vocal=（不删除音频与历史）"
+              icon={<DeleteRegular />}
+              disabled={!hasVocal || Boolean(busy)}
+              onClick={() => void remove()}
+            >
+              移除
+            </Button>
+          )}
+          <Button
+            appearance="primary"
+            icon={<CheckmarkRegular />}
+            disabled={!canApply || Boolean(busy)}
+            onClick={() => void apply()}
+          >
+            应用
+          </Button>
+        </div>
       </div>
 
       <VoiceReferenceDialog
