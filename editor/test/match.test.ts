@@ -3,31 +3,31 @@
 // 对话者到角色的静默匹配测试。
 //
 // 匹配失败只是"下拉框没选中", 但错误匹配会让整段对话用错音色, 因此这里重点覆盖:
-// 立绘优先、别名、旁白继承、显式空说话者 (旁白) 不继承。
+// 立绘优先、名称匹配、旁白继承、显式空说话者 (旁白) 不继承。
+// (别名机制已移除, 因此不再有别名相关用例。)
 
 import { describe, expect, it } from 'vitest';
 
 import type { Character, SayLine } from '../src/commands/voice';
 import { figureIdsBySpeaker, matchCharacter, matchScene, type MatchContext } from '../src/voice/match';
 
-function say(line: number, speaker: string | null, text: string, figureId: string | null = null): SayLine {
+function say(line: number, speaker: string | null, text: string, figure: string | null = null): SayLine {
   return {
     line,
+    lineCount: 1,
     speaker,
     speakerInherited: false,
     text,
     vocal: null,
-    figureId,
-    figureSide: null,
+    figure,
     hash: `h${line}`,
   };
 }
 
-function character(id: string, name: string, aliases: string[] = [], enabled = true): Character {
+function character(id: string, name: string, enabled = true): Character {
   return {
     id,
     name,
-    aliases,
     description: '',
     language: 'auto',
     references: [],
@@ -39,8 +39,8 @@ function character(id: string, name: string, aliases: string[] = [], enabled = t
   };
 }
 
-const anon = character('anon', '千早爱音', ['anon']);
-const soyo = character('soyo', '长崎素世', ['soyo']);
+const anon = character('anon', '千早爱音');
+const soyo = character('soyo', '长崎素世');
 
 function context(characters: Character[], dialogues: SayLine[], overrides: Record<string, string> = {}): MatchContext {
   return {
@@ -52,7 +52,7 @@ function context(characters: Character[], dialogues: SayLine[], overrides: Recor
 }
 
 describe('figureIdsBySpeaker', () => {
-  it('按归一化说话者收集立绘 id', () => {
+  it('按归一化说话者收集立绘引用', () => {
     const map = figureIdsBySpeaker([say(0, '千早爱音', 'a', 'anon'), say(1, ' 千早爱音 ', 'b', 'anon-2')]);
     expect(map.get('千早爱音')).toEqual(new Set(['anon', 'anon-2']));
   });
@@ -64,8 +64,14 @@ describe('figureIdsBySpeaker', () => {
 });
 
 describe('matchCharacter', () => {
-  it('按立绘 id 命中角色别名', () => {
+  it('立绘引用命中角色 id', () => {
     const dialogues = [say(0, '千早爱音', '内容', 'anon')];
+    const result = matchCharacter(dialogues[0], context([anon, soyo], dialogues));
+    expect(result).toEqual({ characterId: 'anon', reason: 'figureId' });
+  });
+
+  it('立绘引用命中角色名', () => {
+    const dialogues = [say(0, '某人', '内容', '千早爱音')];
     const result = matchCharacter(dialogues[0], context([anon, soyo], dialogues));
     expect(result).toEqual({ characterId: 'anon', reason: 'figureId' });
   });
@@ -78,17 +84,9 @@ describe('matchCharacter', () => {
     });
   });
 
-  it('按别名精确匹配', () => {
-    const line = say(0, 'anon', '内容');
-    expect(matchCharacter(line, context([anon], [line]))).toEqual({
-      characterId: 'anon',
-      reason: 'alias',
-    });
-  });
-
   it('忽略大小写与空白差异', () => {
-    const line = say(0, '  ANON ', '内容');
-    expect(matchCharacter(line, context([anon], [line])).characterId).toBe('anon');
+    const line = say(0, '  anon ', '内容');
+    expect(matchCharacter(line, context([character('anon', 'anon')], [line])).characterId).toBe('anon');
   });
 
   it('人工覆盖优先于自动匹配', () => {

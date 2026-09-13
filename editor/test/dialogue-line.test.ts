@@ -2,9 +2,11 @@
 
 // 光标定位对话的规则测试。
 //
-// 后端给出的 `SayLine.line` 是语句**首行**行号且从 0 起算, `lineCount` 是它占据的行数
-// (WebGAL 语句可以跨行)。配音卡必须按 `[line, line + lineCount)` 区间判定, 只比较
-// 行号相等会出现两类错乱: 光标停在续行时被当成"不在对话上", 或落到相邻的非对话行上。
+// WebGAL 的语句就是**一行**一条 (语言核心的 `Scene` 也是逐行解析), 因此定位就是
+// 行号精确匹配, 没有任何区间推算。
+//
+// 这里必须钉住"不猜测": 曾经用"找第一个分号"推算语句跨度, 于是光标停在一条
+// **没写分号**的对话行上时, 会命中它上面那条对话。
 
 import { describe, expect, it } from 'vitest';
 
@@ -12,16 +14,15 @@ import type { SayLine } from '../src/commands/voice';
 import { dialogueAtLine, isDialogueLine } from '../src/voice/types';
 
 /** 构造一条对话 (只关心定位相关的字段) */
-function say(line: number, lineCount = 1, text = '台词'): SayLine {
+function say(line: number, text = '台词'): SayLine {
   return {
     line,
-    lineCount,
+    lineCount: 1,
     speaker: '爱音',
     speakerInherited: false,
     text,
     vocal: null,
-    figureId: null,
-    figureSide: null,
+    figure: null,
     hash: `${line}-${text}`,
   };
 }
@@ -30,26 +31,28 @@ function say(line: number, lineCount = 1, text = '台词'): SayLine {
  * 一份手写的小场景 (0 起算行号):
  *   0  changeBg:bg.png;
  *   1  爱音:第一句;
- *   2  爱音:跨行第一段
- *   3       跨行第二段;
- *   4  changeFigure:aina.png;
- *   5  :旁白;
+ *   2  爱音:没写分号
+ *   3  changeFigure:aina.png;
+ *   4  :旁白;
+ *   5  changeBg:bg2.png;
  */
-const scene: SayLine[] = [say(1, 1, '第一句'), say(2, 2, '跨行第一段'), say(5, 1, '旁白')];
+const scene: SayLine[] = [say(1, '第一句'), say(2, '没写分号'), say(4, '旁白')];
 
 describe('dialogueAtLine', () => {
-  it('命中语句首行', () => {
+  it('命中对话所在行', () => {
     expect(dialogueAtLine(scene, 1)?.text).toBe('第一句');
+    expect(dialogueAtLine(scene, 2)?.text).toBe('没写分号');
+    expect(dialogueAtLine(scene, 4)?.text).toBe('旁白');
   });
 
-  it('命中跨行语句的续行', () => {
-    expect(dialogueAtLine(scene, 2)?.text).toBe('跨行第一段');
-    expect(dialogueAtLine(scene, 3)?.text).toBe('跨行第一段');
+  it('前一行的对话不会因为下一行缺分号而"吞掉"它', () => {
+    // 第 2 行是对话, 第 3 行不是 —— 停在 3 上就不该命中第 2 行
+    expect(dialogueAtLine(scene, 3)).toBeNull();
   });
 
   it('停在演出语句上返回 null', () => {
     expect(dialogueAtLine(scene, 0)).toBeNull();
-    expect(dialogueAtLine(scene, 4)).toBeNull();
+    expect(dialogueAtLine(scene, 5)).toBeNull();
   });
 
   it('越过最后一条语句返回 null', () => {
@@ -62,36 +65,20 @@ describe('dialogueAtLine', () => {
     expect(dialogueAtLine(scene, -1)).toBeNull();
   });
 
-  it('语句在场景末尾跨行时仍能命中续行', () => {
-    const tail = [say(0), say(3, 3, '结尾跨行')];
-    expect(dialogueAtLine(tail, 3)?.text).toBe('结尾跨行');
-    expect(dialogueAtLine(tail, 5)?.text).toBe('结尾跨行');
-    expect(dialogueAtLine(tail, 6)).toBeNull();
-  });
-
-  it('按二分定位到的是最后一条首行不大于该行的语句', () => {
-    const many = Array.from({ length: 40 }, (_, index) => say(index * 2, 1, `第${index}句`));
+  it('按精确行号查找, 相邻对话互不干扰', () => {
+    const many = Array.from({ length: 40 }, (_, index) => say(index * 2, `第${index}句`));
     expect(dialogueAtLine(many, 0)?.text).toBe('第0句');
     expect(dialogueAtLine(many, 20)?.text).toBe('第10句');
     expect(dialogueAtLine(many, 21)).toBeNull();
     expect(dialogueAtLine(many, 78)?.text).toBe('第39句');
-  });
-
-  it('lineCount 缺省或非法时按 1 行处理', () => {
-    const broken = [
-      { ...say(4), lineCount: 0 },
-      { ...say(6), lineCount: undefined as unknown as number },
-    ];
-    expect(dialogueAtLine(broken, 4)?.line).toBe(4);
-    expect(dialogueAtLine(broken, 5)).toBeNull();
-    expect(dialogueAtLine(broken, 6)?.line).toBe(6);
+    expect(dialogueAtLine(many, 79)).toBeNull();
   });
 });
 
 describe('isDialogueLine', () => {
   it('与 dialogueAtLine 同义', () => {
     expect(isDialogueLine(scene, 1)).toBe(true);
-    expect(isDialogueLine(scene, 3)).toBe(true);
-    expect(isDialogueLine(scene, 4)).toBe(false);
+    expect(isDialogueLine(scene, 4)).toBe(true);
+    expect(isDialogueLine(scene, 3)).toBe(false);
   });
 });

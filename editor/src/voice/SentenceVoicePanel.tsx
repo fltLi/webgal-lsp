@@ -391,8 +391,6 @@ function describeMatch(reason: string | undefined): string {
       return '按立绘匹配';
     case 'name':
       return '按名称匹配';
-    case 'alias':
-      return '按别名匹配';
     case 'narration':
       return '继承旁白';
     default:

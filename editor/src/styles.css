@@ -1311,6 +1311,8 @@ body.resizing {
 .dialog-flush .dialog-body {
   padding: 0;
   gap: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 内部已有滚动列表时, 让它占满剩余高度 (配合 compact 模式使用) */
@@ -1385,7 +1387,7 @@ body.resizing {
   flex: 1;
   min-height: 0;
   width: 100%;
-  padding: 4px 20px 16px;
+  padding: 16px 20px;
 }
 
 .settings-nav {
@@ -2588,18 +2590,23 @@ body.resizing {
 }
 
 /* -------- 语句面板 -------- */
+/*
+ * 面板高度固定 (见 `.scene-voice-panel`), 因此这里必须**紧凑到一屏放得下**:
+ * 默认状态下不出现滚动条, 否则每次移动光标换句子都会滚动、跳动。
+ * 「高级设置」默认折叠, 它展开时才允许滚动。
+ */
 .voice-sentence-panel {
-  padding: 10px 12px;
+  padding: 8px 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   border-right: 1px solid var(--app-border);
 }
 
 .voice-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-end;
 }
 
@@ -2650,7 +2657,8 @@ body.resizing {
   width: 100%;
 }
 .voice-text {
-  min-height: 52px;
+  min-height: 46px;
+  max-height: 76px;
 }
 .voice-reference,
 .voice-seed {
@@ -3323,16 +3331,11 @@ body.resizing {
   color: #f85149;
 }
 
-/* 页头操作按钮: 统一最小宽度, 避免"有图标/无图标"导致按钮宽窄不一 */
+/* 页头操作按钮: 各自按内容取宽 (不强制等宽, 否则短标签会被撑出多余留白) */
 .voice-workbench-actions {
   display: flex;
   gap: 8px;
   flex: none;
-}
-
-.voice-workbench-actions > .fui-Button {
-  min-width: 110px;
-  justify-content: center;
 }
 
 /*
@@ -3388,15 +3391,32 @@ body.resizing {
   flex: 1;
 }
 
-/* 紧凑网格: 字段按内容宽度排布, 不再强行等分 */
+/*
+ * 服务配置字段网格。
+ *
+ * 两列, 且**不换行**: 用 `auto-fit` 时卡片一窄就会折成一列, 于是整个右栏被挤下去、
+ * 甚至和别的控件叠在一起。这里固定两列, 让字段自己收缩 (输入框可以很窄, 文字省略),
+ * 需要滚动时由卡片整体滚动。
+ */
 .workbench-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px 10px;
+  align-content: start;
+}
+
+.workbench-grid > * {
+  min-width: 0;
 }
 
 .workbench-field-wide {
   grid-column: 1 / -1;
+}
+
+/* 下拉与输入框在窄列里也不撑破布局 */
+.workbench-grid .fui-Input,
+.workbench-grid .select {
+  min-width: 0;
 }
 
 .workbench-input-row {
@@ -3413,10 +3433,6 @@ body.resizing {
 /* 行内按钮是图标按钮, 固定宽度, 不随内容缩放 */
 .workbench-input-row > .fui-Button {
   flex: none;
-}
-
-.workbench-args {
-  min-height: 56px;
 }
 
 /* 队列 / 日志切换 */

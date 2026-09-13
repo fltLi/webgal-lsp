@@ -12,8 +12,14 @@ export type GsvStatus = 'stopped' | 'starting' | 'ready' | 'error';
 
 export type LaunchMode =
   | { kind: 'embedded'; program: string }
+  | { kind: 'conda'; env: string; program?: string | null }
   | { kind: 'python'; program: string }
-  | { kind: 'command'; program: string; args: string[] };
+  | { kind: 'command'; command: string };
+
+export interface CondaEnv {
+  name: string;
+  program: string;
+}
 
 export interface LaunchConfig {
   /** 整合包根目录 (同时作为工作目录) */
@@ -56,16 +62,16 @@ export interface VoiceStatus {
 }
 
 export interface SayLine {
-  /** 语句首行行号 (0 起) */
+  /** 行号 (0 起, 与 Monaco 的行号相差 1) */
   line: number;
-  /** 该语句占据的行数 (至少 1) */
+  /** 该语句占据的行数, 恒为 1 (WebGAL 语句以整行为单位) */
   lineCount: number;
   speaker: string | null;
   speakerInherited: boolean;
   text: string;
   vocal: string | null;
-  figureId: string | null;
-  figureSide: string | null;
+  /** 立绘引用 (id 或位置糖, 由后端 `FigureId` 的 Display 给出) */
+  figure: string | null;
   hash: string;
 }
 
@@ -137,7 +143,6 @@ export interface ReferenceAudio {
 export interface Character {
   id: string;
   name: string;
-  aliases: string[];
   description: string;
   language: string;
   references: ReferenceAudio[];
@@ -150,7 +155,6 @@ export interface Character {
 
 export interface NewCharacter {
   name: string;
-  aliases: string[];
   description: string;
   language: string;
 }
@@ -249,6 +253,11 @@ export function voiceListModels(root: string): Promise<ModelCandidate[]> {
   return invoke<ModelCandidate[]>('voice_list_models', { root });
 }
 
+/** 列出本机可用的 conda 环境 */
+export function voiceListCondaEnvs(): Promise<CondaEnv[]> {
+  return invoke<CondaEnv[]>('voice_list_conda_envs');
+}
+
 export function voiceLaunch(config: LaunchConfig, onEvent: (event: VoiceEvent) => void): Promise<void> {
   const channel = new Channel<VoiceEvent>();
   channel.onmessage = onEvent;
@@ -335,8 +344,9 @@ export function voiceLoadCharacter(id: string): Promise<Character> {
   return invoke<Character>('voice_load_character', { id });
 }
 
-export function voiceSaveCharacter(character: Character): Promise<Character> {
-  return invoke<Character>('voice_save_character', { character });
+/** 保存角色; `previousId` 给出改名前的 id (未改名时省略) */
+export function voiceSaveCharacter(character: Character, previousId?: string | null): Promise<Character> {
+  return invoke<Character>('voice_save_character', { character, previousId: previousId ?? null });
 }
 
 export function voiceRemoveCharacter(id: string): Promise<void> {

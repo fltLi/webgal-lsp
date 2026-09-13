@@ -9,11 +9,11 @@
 import { Button, Field, Input, Textarea } from '@fluentui/react-components';
 import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Character, ModelCandidate } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
-import { Select, toOptions } from '../components/Select';
+import { Select } from '../components/Select';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { RolePickerDialog } from './RolePickerDialog';
@@ -22,12 +22,10 @@ import { LANGUAGE_LABELS } from './types';
 export function RoleListPanel() {
   const characters = useAppStore((state) => state.voiceCharacters);
   useAppStore((state) => state.voiceTick);
-  const voiceStatus = useAppStore((state) => state.voiceStatus);
   const [query, setQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelCandidate[]>([]);
-  const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
     voiceController.primeReferencePaths().catch(() => {});
@@ -46,7 +44,7 @@ export function RoleListPanel() {
   const create = async () => {
     setError(null);
     try {
-      const created = await voiceController.createCharacter(`新角色 ${characters.length + 1}`, [], '');
+      const created = await voiceController.createCharacter(`新角色 ${characters.length + 1}`, '');
       setPickerOpen(false);
       // 立刻展开以备填写
       setQuery('');
@@ -76,7 +74,7 @@ export function RoleListPanel() {
       <div className="character-toolbar">
         <Input
           className="character-search"
-          placeholder="搜索角色名或别名…"
+          placeholder="搜索角色…"
           value={query}
           onChange={(_, data) => setQuery(data.value)}
         />
@@ -102,20 +100,6 @@ export function RoleListPanel() {
             key={character.id}
             character={character}
             models={models}
-            canSwitchModel={voiceStatus === 'ready'}
-            switching={switching}
-            onSwitchModel={async (next) => {
-              setSwitching(true);
-              setError(null);
-              try {
-                await voiceController.switchModel(next.model?.gptWeights ?? null, next.model?.sovitsWeights ?? null);
-                await voiceController.persistCharacter(next);
-              } catch (caught) {
-                setError(caught instanceof Error ? caught.message : String(caught));
-              } finally {
-                setSwitching(false);
-              }
-            }}
             onExport={() => void exportCharacter(character)}
             onError={setError}
           />
@@ -130,33 +114,36 @@ export function RoleListPanel() {
 function CharacterCard({
   character,
   models,
-  canSwitchModel,
-  switching,
-  onSwitchModel,
   onExport,
   onError,
 }: {
   character: Character;
   models: ModelCandidate[];
-  canSwitchModel: boolean;
-  switching: boolean;
-  onSwitchModel: (character: Character) => Promise<void>;
   onExport: () => void;
   onError: (error: string | null) => void;
 }) {
   const [draft, setDraft] = useState(character);
+  /** 已经落盘的 id; 与 `draft.id` 不同表示用户改了 id (需要搬移参考音频目录) */
+  const savedId = useRef(character.id);
 
   useEffect(() => {
     setDraft(character);
-  }, [character.updatedAt]);
+    savedId.current = character.id;
+  }, [character.id, character.updatedAt]);
 
   const commit = async (patch: Partial<Character>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
     try {
-      await voiceController.persistCharacter(next);
+      // 角色 id 可编辑: 它同时是配置文件名与参考音频目录名, 改名由后端连带搬移
+      const previous = next.id === savedId.current ? undefined : savedId.current;
+      const saved = await voiceController.persistCharacter(next, previous);
+      savedId.current = saved.id;
+      setDraft(saved);
       onError(null);
     } catch (caught) {
+      // 失败时回滚到已落盘的状态, 避免界面显示一个并不存在的 id
+      setDraft((current) => ({ ...current, id: savedId.current }));
       onError(caught instanceof Error ? caught.message : String(caught));
     }
   };
@@ -167,12 +154,18 @@ function CharacterCard({
         <Input
           className="character-name"
           value={draft.name}
+          placeholder="角色名"
           onChange={(_, data) => setDraft({ ...draft, name: data.value })}
           onBlur={() => void commit({ name: draft.name })}
         />
-        <span className="character-id" title="角色 ID（用于 game/vocal 下的目录名）">
-          {draft.id}
-        </span>
+        <Input
+          className="character-id-input"
+          value={draft.id}
+          placeholder="角色 ID"
+          title="角色 ID（导出到 game/vocal 下的目录名）"
+          onChange={(_, data) => setDraft({ ...draft, id: data.value })}
+          onBlur={() => void commit({ id: draft.id })}
+        />
         <Button
           size="small"
           appearance="subtle"
@@ -189,11 +182,10 @@ function CharacterCard({
         />
       </div>
 
-      <Field label="GSOV 模型（本地记录，不参与导出）">
-        {models.length > 0 && (
+      {models.length > 0 && (
+        <Field label="GSOV 模型">
           <Select
-            className="character-model-pick"
-            placeholder="从整合包扫描到的模型中选择"
+            placeholder="未指定"
             value={models.some((item) => item.gptWeights === draft.model?.gptWeights) ? draft.model!.gptWeights! : ''}
             title={modelSummary(draft, models)}
             options={models.map((item) => ({ value: item.gptWeights, label: item.name }))}
@@ -206,62 +198,8 @@ function CharacterCard({
               }
             }}
           />
-        )}
-        <div className="character-model">
-          <Input
-            placeholder="GPT 权重路径（如 GPT_weights_v4/xxx-e15.ckpt）"
-            value={draft.model?.gptWeights ?? ''}
-            onChange={(_, data) => setDraft({ ...draft, model: { ...(draft.model ?? {}), gptWeights: data.value } })}
-            onBlur={() => void commit({ model: draft.model })}
-          />
-          <Input
-            placeholder="SoVITS 权重路径（如 SoVITS_weights_v4/xxx.pth）"
-            value={draft.model?.sovitsWeights ?? ''}
-            onChange={(_, data) => setDraft({ ...draft, model: { ...(draft.model ?? {}), sovitsWeights: data.value } })}
-            onBlur={() => void commit({ model: draft.model })}
-          />
-        </div>
-        <div className="character-model-actions">
-          <span className="character-model-note">
-            {canSwitchModel
-              ? '切换服务端权重会重载模型，通常无需手动操作（队列会按角色分组连续执行）'
-              : 'GSOV 就绪后可切换服务端权重'}
-          </span>
-          <Button
-            size="small"
-            appearance="secondary"
-            disabled={!canSwitchModel || switching || (!draft.model?.gptWeights && !draft.model?.sovitsWeights)}
-            onClick={() => void onSwitchModel(draft)}
-          >
-            {switching ? '切换中…' : '切换到该模型'}
-          </Button>
-        </div>
-      </Field>
-
-      <Field label="默认语言">
-        <Select
-          value={draft.language}
-          title="该角色默认使用的合成语言"
-          options={toOptions(LANGUAGE_LABELS)}
-          onChange={(language) => void commit({ language })}
-        />
-      </Field>
-
-      <Field label="别名（参与场景对话者自动匹配，逗号分隔）">
-        <Input
-          value={draft.aliases.join(', ')}
-          onChange={(_, data) =>
-            setDraft({
-              ...draft,
-              aliases: data.value
-                .split(',')
-                .map((item) => item.trim())
-                .filter(Boolean),
-            })
-          }
-          onBlur={() => void commit({ aliases: draft.aliases })}
-        />
-      </Field>
+        </Field>
+      )}
 
       <Field label="描述">
         <Textarea
@@ -293,6 +231,7 @@ function CharacterCard({
         <Button
           size="small"
           appearance="subtle"
+          className="danger-button"
           icon={<DeleteRegular />}
           onClick={() => {
             void voiceController
@@ -310,11 +249,7 @@ function CharacterCard({
 function matchesQuery(character: Character, query: string): boolean {
   if (!query.trim()) return true;
   const needle = query.trim().toLowerCase();
-  return (
-    character.name.toLowerCase().includes(needle) ||
-    character.id.toLowerCase().includes(needle) ||
-    character.aliases.some((alias) => alias.toLowerCase().includes(needle))
-  );
+  return character.name.toLowerCase().includes(needle) || character.id.toLowerCase().includes(needle);
 }
 
 /** 当前模型选择的可读摘要 */

@@ -60,7 +60,7 @@ function toggleVisible(tab: ReturnType<typeof makeSceneTab>): boolean {
   const state = useAppStore.getState();
   return shouldShowVoiceToggle({
     workbenchOpen: voiceWorkbenchOpen(),
-    currentSceneTabId: state.currentSceneTabId,
+    activeTabId: state.activeTabId,
     tab,
     voiceModePaths: state.voiceModePaths,
   });
@@ -128,19 +128,33 @@ describe('配音编辑模式: 麦克风开关的可见性', () => {
     expect(toggleVisible(tabB)).toBe(false);
   });
 
-  it('工作台打开后只有当前场景卡显示开关', () => {
+  it('切到场景卡后, 只有当前那张显示开关', () => {
     const { tabA, tabB } = openTwoScenes();
     toggleVoiceWorkbench();
-    // 当前卡是 B
+    // 打开工作台后最前面是工作台选项卡, 此时没有场景卡显示开关
+    expect(toggleVisible(tabB)).toBe(false);
+
+    useAppStore.getState().activateTab(tabB.id);
     expect(toggleVisible(tabB)).toBe(true);
     expect(toggleVisible(tabA)).toBe(false);
-  });
 
-  it('切到另一张卡后, 开关跟着当前卡走', () => {
-    const { tabA, tabB } = openTwoScenes();
-    toggleVoiceWorkbench();
     useAppStore.getState().activateTab(tabA.id);
     expect(toggleVisible(tabA)).toBe(true);
+    expect(toggleVisible(tabB)).toBe(false);
+  });
+
+  it('切到非场景选项卡后, 原来那张卡上的划线麦克风消失', () => {
+    const { tabB } = openTwoScenes();
+    toggleVoiceWorkbench();
+    useAppStore.getState().activateTab(tabB.id);
+    expect(toggleVisible(tabB)).toBe(true);
+
+    // 切到工作台 / 说明页这类非场景选项卡
+    const workbench = useAppStore.getState().tabs.find((tab) => tab.kind === 'voice-workbench')!;
+    useAppStore.getState().activateTab(workbench.id);
+    expect(toggleVisible(tabB)).toBe(false);
+
+    useAppStore.getState().openVoiceGuide();
     expect(toggleVisible(tabB)).toBe(false);
   });
 

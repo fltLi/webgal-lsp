@@ -27,7 +27,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::service::voice::launcher::{DetectedRuntime, LaunchConfig, LineSplitter};
+use crate::service::voice::launcher::{CondaEnv, DetectedRuntime, LaunchConfig, LineSplitter};
 
 pub mod audio;
 pub mod gsov;
@@ -159,6 +159,12 @@ pub async fn voice_default_launch_config(root: String) -> Result<LaunchConfig, S
             .unwrap_or_else(|| "不是有效的 GPT-SoVITS 整合包目录".into()));
     }
     Ok(launcher::default_config(&path, &detected))
+}
+
+/// 列出本机可用的 conda 环境 (供"从 conda 启动"选择)
+#[tauri::command]
+pub async fn voice_list_conda_envs() -> Vec<CondaEnv> {
+    launcher::list_conda_envs()
 }
 
 /// 扫描整合包内的 v4 权重, 给出可配对的模型候选
@@ -695,14 +701,15 @@ pub async fn voice_load_character(
         .map_err(|error| error.to_string())
 }
 
-/// 保存角色 (新建或更新)
+/// 保存角色 (新建或更新)。`previous_id` 给出改名前的 id (未改名时省略)。
 #[tauri::command]
 pub async fn voice_save_character(
     app: tauri::AppHandle,
     character: library::Character,
+    previous_id: Option<String>,
 ) -> Result<library::Character, String> {
     library_of(&app)?
-        .save(character)
+        .save_as(previous_id.as_deref(), character)
         .map_err(|error| error.to_string())
 }
 
@@ -719,8 +726,6 @@ pub async fn voice_remove_character(app: tauri::AppHandle, id: String) -> Result
 #[serde(rename_all = "camelCase")]
 pub struct NewCharacter {
     pub name: String,
-    #[serde(default)]
-    pub aliases: Vec<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default = "default_language")]
@@ -749,7 +754,6 @@ pub async fn voice_create_character(
     let character = library::Character {
         id,
         name: name.to_string(),
-        aliases: input.aliases,
         description: input.description,
         language: input.language,
         references: Vec::new(),

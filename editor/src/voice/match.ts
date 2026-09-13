@@ -2,10 +2,12 @@
 
 // 对话者到角色的静默匹配。
 //
-// 依据来自三处 (按可信度降序):
-// 1. 场景里该说话者出现过的 `-figureId=` (立绘 id 通常与角色一一对应);
-// 2. 角色名与别名;
-// 3. 旁白继承: 旁白沿用同场景上一条旁白所选的角色。
+// 依据来自两处:
+// 1. 场景里该说话者出现过的 `-figureId=` / 位置糖 (立绘引用通常与角色一一对应);
+// 2. 角色名本身。
+//
+// "别名"机制已移除: 它要求维护一份额外的字符串清单, 而实际效果完全可以由
+// **把角色名写成场景里使用的那个名字** (或反过来改场景里的对话者名) 达成。
 //
 // 匹配是静默的: 不提供"匹配"按钮, 失败时仅表现为下拉框未选中,
 // 由用户手动选择; 用户的手动选择会作为场景级覆盖被记住。
@@ -15,7 +17,7 @@ import type { Character, SayLine } from '../commands/voice';
 export interface CharacterMatch {
   characterId: string | null;
   /** 匹配依据, 仅用于悬浮提示 */
-  reason: 'figureId' | 'name' | 'alias' | 'override' | 'narration' | 'none';
+  reason: 'figureId' | 'name' | 'override' | 'narration' | 'none';
 }
 
 /** 归一化字符串 (大小写、空白、全角空格) */
@@ -23,14 +25,14 @@ function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '');
 }
 
-/** 从对话列表中统计"说话者 -> 其出现过的立绘 id" */
+/** 从对话列表中统计"说话者 -> 其出现过的立绘引用" */
 export function figureIdsBySpeaker(dialogues: SayLine[]): Map<string, Set<string>> {
   const map = new Map<string, Set<string>>();
   for (const line of dialogues) {
-    if (!line.speaker || !line.figureId) continue;
+    if (!line.speaker || !line.figure) continue;
     const key = normalize(line.speaker);
     const set = map.get(key) ?? new Set<string>();
-    set.add(line.figureId);
+    set.add(line.figure);
     map.set(key, set);
   }
   return map;
@@ -65,12 +67,12 @@ export function matchCharacter(line: SayLine, context: MatchContext): CharacterM
     return { characterId: override, reason: 'override' };
   }
 
-  // 立绘 id 精确匹配: 角色别名中若命中该 figureId, 视为同一角色
+  // 立绘引用精确匹配: 角色 id 或角色名命中该立绘引用即视为同一角色
   const figureIds = context.figureIds.get(speaker);
   if (figureIds && figureIds.size > 0) {
     for (const character of enabled) {
-      const keys = [character.id, character.name, ...character.aliases].map(normalize);
-      if ([...figureIds].some((figureId) => keys.includes(normalize(figureId)))) {
+      const keys = [character.id, character.name].map(normalize);
+      if ([...figureIds].some((figure) => keys.includes(normalize(figure)))) {
         return { characterId: character.id, reason: 'figureId' };
       }
     }
@@ -80,13 +82,6 @@ export function matchCharacter(line: SayLine, context: MatchContext): CharacterM
   for (const character of enabled) {
     if (normalize(character.name) === speaker) {
       return { characterId: character.id, reason: 'name' };
-    }
-  }
-
-  // 别名精确匹配
-  for (const character of enabled) {
-    if (character.aliases.some((alias) => normalize(alias) === speaker)) {
-      return { characterId: character.id, reason: 'alias' };
     }
   }
 

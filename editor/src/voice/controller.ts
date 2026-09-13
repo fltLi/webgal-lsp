@@ -21,6 +21,7 @@ import type {
   VoiceEvent,
 } from '../commands/voice';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import type { CondaEnv } from '../commands/voice';
 import {
   voiceApplyScene,
   voiceCreateCharacter,
@@ -31,6 +32,7 @@ import {
   voiceLaunch,
   voiceListCache,
   voiceListCharacters,
+  voiceListCondaEnvs,
   voiceListModels,
   voiceParseScene,
   voiceProbe,
@@ -102,8 +104,14 @@ class VoiceController {
   }
 
   setCharacters(characters: Character[]): void {
-    this.characters = characters;
-    this.store().setVoiceCharacters(characters);
+    // 统一按"星标优先, 其次加入顺序"排序。
+    //
+    // 这里必须定序: 后端列表本身也是这个顺序, 但本地增删改后的临时数组不会自动有序,
+    // 一旦顺序不稳定, 改一个角色的设置就会让它的卡片跳到别处 (看起来像卡片交换了位置)。
+    this.characters = [...characters].sort(
+      (a, b) => Number(b.starred) - Number(a.starred) || a.createdAt - b.createdAt || a.name.localeCompare(b.name)
+    );
+    this.store().setVoiceCharacters(this.characters);
     // 角色信息变化会改变匹配结果, 重算所有卡片的归属
     for (const card of this.cards.values()) this.rematch(card);
     void this.primeReferencePaths();
@@ -715,6 +723,15 @@ class VoiceController {
     }
   }
 
+  /** 列出本机可用的 conda 环境 (供"从 conda 启动"选择) */
+  async listCondaEnvs(): Promise<CondaEnv[]> {
+    try {
+      return await voiceListCondaEnvs();
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * 显式切换服务端权重。
    *
@@ -734,16 +751,22 @@ class VoiceController {
   }
 
   /** 保存角色并同步到全局列表 */
-  async persistCharacter(character: Character): Promise<Character> {
-    const saved = await voiceSaveCharacter(character);
-    const rest = this.characters.filter((item) => item.id !== saved.id);
+  /**
+   * 保存角色。
+   *
+   * `previousId` 用于**改名**: id 同时是配置文件名与参考音频目录名, 后端据此把
+   * 音频目录一并搬走。列表按 `createdAt` 排序, 因此改设置不会让卡片换位置。
+   */
+  async persistCharacter(character: Character, previousId?: string | null): Promise<Character> {
+    const saved = await voiceSaveCharacter(character, previousId);
+    const rest = this.characters.filter((item) => item.id !== saved.id && item.id !== (previousId ?? saved.id));
     this.setCharacters([...rest, saved]);
     return saved;
   }
 
   /** 新建角色 */
-  async createCharacter(name: string, aliases: string[], description: string): Promise<Character> {
-    const created = await voiceCreateCharacter({ name, aliases, description, language: 'auto' });
+  async createCharacter(name: string, description: string): Promise<Character> {
+    const created = await voiceCreateCharacter({ name, description, language: 'auto' });
     this.setCharacters([...this.characters, created]);
     return created;
   }

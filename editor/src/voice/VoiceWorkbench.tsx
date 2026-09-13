@@ -14,9 +14,10 @@
 // 两栏内的分组都做成**分页**, 而不是把所有字段堆成一长条: 字段一多就必须滚动,
 // 而滚动会把"启动服务"这类关键操作推到视野之外。
 
-import { Button, Field, Input, ProgressBar, Spinner, Textarea } from '@fluentui/react-components';
+import { Button, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import {
   ArrowClockwiseRegular,
+  ArrowDownloadRegular,
   DismissRegular,
   ErrorCircleRegular,
   FolderRegular,
@@ -25,12 +26,13 @@ import {
   StopRegular,
   WrenchRegular,
 } from '@fluentui/react-icons';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 
-import type { LaunchConfig } from '../commands/voice';
+import type { CondaEnv, LaunchConfig, LaunchMode } from '../commands/voice';
 import { Select, toOptions } from '../components/Select';
+import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { formatEta } from './estimate';
@@ -51,6 +53,7 @@ export function VoiceWorkbench() {
   const settings = voiceController.getSettings();
   const [rootPath, setRootPath] = useState(settings.launch?.root ?? '');
   const [launch, setLaunch] = useState<LaunchConfig | null>(settings.launch);
+  const [condaEnvs, setCondaEnvs] = useState<CondaEnv[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [configPage, setConfigPage] = useState<ConfigPage>('service');
@@ -66,6 +69,8 @@ export function VoiceWorkbench() {
       setRootPath(settings.launch.root);
       setLaunch(settings.launch);
     }
+    // conda 环境列表在打开工作台时扫描一次 (扫描失败的常见原因是本机没有 conda)
+    void voiceController.listCondaEnvs().then(setCondaEnvs);
   }, []);
 
   /** 更新并持久化启动配置 */
@@ -105,23 +110,16 @@ export function VoiceWorkbench() {
     else void pickRoot();
   };
 
-  /**
-   * 选择解释器 / 命令。
-   *
-   * 自定义命令可能是一个脚本或可执行文件, 因此这里选文件而不是目录。
-   */
+  /** 选择 Python 解释器文件 (仅「外部 Python」用) */
   const pickProgram = async () => {
     if (!launch) return;
     const picked = await openDialog({
       multiple: false,
-      title: launch.mode.kind === 'command' ? '选择要执行的脚本或可执行文件' : '选择 Python 解释器',
-      filters:
-        launch.mode.kind === 'command'
-          ? [{ name: '脚本或可执行文件', extensions: ['exe', 'bat', 'cmd', 'ps1', 'py'] }]
-          : [{ name: '可执行文件', extensions: ['exe'] }],
+      title: '选择 Python 解释器',
+      filters: [{ name: '可执行文件', extensions: ['exe'] }],
     });
     if (typeof picked !== 'string') return;
-    patchLaunch({ mode: { ...launch.mode, program: picked } as LaunchConfig['mode'] });
+    patchLaunch({ mode: { kind: 'python', program: picked } });
   };
 
   const start = async () => {
@@ -140,6 +138,10 @@ export function VoiceWorkbench() {
     }
   };
 
+  /*
+   * 停止服务**不禁用**: 启动过程中最需要的能力就是"取消" —— 首次加载模型要几十秒,
+   * 路径填错时要能立刻停下, 而不是干等它自己失败。
+   */
   const stop = async () => {
     setBusy(true);
     try {
@@ -165,7 +167,7 @@ export function VoiceWorkbench() {
         </div>
         <div className="voice-workbench-actions">
           {running ? (
-            <Button icon={<StopRegular />} disabled={busy} onClick={() => void stop()}>
+            <Button icon={<StopRegular />} onClick={() => void stop()}>
               停止服务
             </Button>
           ) : (
@@ -179,14 +181,14 @@ export function VoiceWorkbench() {
         </div>
       </div>
 
-      {/* -------- 左: 配置 / 右: 队列 -------- */}
+      {/* -------- 左: 服务配置 / 右: 运行状态 -------- */}
       <div className="voice-workbench-columns">
         <section className="workbench-card workbench-config">
           <div className="workbench-card-head">
-            <h2 className="workbench-card-title">服务</h2>
+            <h2 className="workbench-card-title">服务配置</h2>
             <div className="workbench-tabs">
               <button className={configPage === 'service' ? 'active' : ''} onClick={() => setConfigPage('service')}>
-                服务配置
+                启动方式
               </button>
               <button className={configPage === 'defaults' ? 'active' : ''} onClick={() => setConfigPage('defaults')}>
                 合成设置
@@ -210,77 +212,88 @@ export function VoiceWorkbench() {
               </Field>
 
               {launch && (
-                <>
-                  <div className="workbench-grid">
-                    <Field label="启动方式">
+                <div className="workbench-grid">
+                  <Field label="启动方式">
+                    <Select
+                      value={launch.mode.kind}
+                      title={modeLabel(launch)}
+                      options={[
+                        { value: 'embedded', label: '整合包内置运行时' },
+                        { value: 'conda', label: 'conda 环境' },
+                        { value: 'python', label: '外部 Python' },
+                        { value: 'command', label: '自定义命令' },
+                      ]}
+                      onChange={(kind) => patchLaunch({ mode: defaultMode(kind, launch) })}
+                    />
+                  </Field>
+
+                  {/*
+                    按启动方式给出不同的第二项:
+                    * 内置运行时 -> 只读显示解释器路径 (由整合包决定, 不可改);
+                    * conda      -> 环境下拉 (从本机扫描), 没有文件夹图标;
+                    * 外部 Python -> 解释器路径 + 文件夹图标;
+                    * 自定义命令 -> 一整条命令 + 参数, 没有文件夹图标。
+                  */}
+                  {launch.mode.kind === 'embedded' && (
+                    <Field label="Python 解释器">
+                      <Input value={launch.mode.program} readOnly title="由整合包内置运行时决定" />
+                    </Field>
+                  )}
+
+                  {launch.mode.kind === 'conda' && (
+                    <Field label="conda 环境">
                       <Select
-                        value={launch.mode.kind}
-                        title={modeLabel(launch)}
-                        options={[
-                          { value: 'embedded', label: '整合包内置运行时' },
-                          { value: 'python', label: '外部 Python' },
-                          { value: 'command', label: '自定义命令' },
-                        ]}
-                        onChange={(kind) =>
-                          patchLaunch({
-                            mode:
-                              kind === 'embedded'
-                                ? { kind: 'embedded', program: `${launch.root}\\runtime\\python.exe` }
-                                : kind === 'python'
-                                  ? { kind: 'python', program: 'python' }
-                                  : { kind: 'command', program: '', args: [] },
-                          })
-                        }
+                        value={launch.mode.env}
+                        title="选择本机已安装的 conda 环境"
+                        placeholder={condaEnvs.length === 0 ? '未发现 conda 环境' : '选择环境'}
+                        options={condaEnvs.map((env) => ({ value: env.name, label: env.name }))}
+                        onChange={(env) => patchLaunch({ mode: { kind: 'conda', env, program: null } })}
                       />
                     </Field>
+                  )}
 
-                    <Field label={launch.mode.kind === 'command' ? '命令' : 'Python 解释器'}>
+                  {launch.mode.kind === 'python' && (
+                    <Field label="Python 解释器">
                       <div className="workbench-input-row">
                         <Input
                           value={launch.mode.program}
-                          onChange={(_, data) =>
-                            patchLaunch({ mode: { ...launch.mode, program: data.value } as LaunchConfig['mode'] })
-                          }
+                          onChange={(_, data) => patchLaunch({ mode: { kind: 'python', program: data.value } })}
                         />
                         <Button
                           appearance="secondary"
                           icon={<FolderRegular />}
-                          title={launch.mode.kind === 'command' ? '选择脚本或可执行文件' : '选择 Python 解释器'}
+                          title="选择 Python 解释器"
                           onClick={() => void pickProgram()}
                         />
                       </div>
                     </Field>
-
-                    <Field label="控制脚本">
-                      <Input value={launch.script} onChange={(_, data) => patchLaunch({ script: data.value })} />
-                    </Field>
-
-                    <Field label="推理配置">
-                      <Input
-                        value={launch.inferConfig}
-                        onChange={(_, data) => patchLaunch({ inferConfig: data.value })}
-                      />
-                    </Field>
-                  </div>
+                  )}
 
                   {launch.mode.kind === 'command' && (
-                    <Field label="命令参数（每行一个）">
-                      <Textarea
-                        className="workbench-args"
-                        value={launch.mode.args.join('\n')}
-                        resize="vertical"
-                        onChange={(_, data) =>
-                          patchLaunch({
-                            mode: {
-                              ...launch.mode,
-                              args: data.value.split('\n').filter(Boolean),
-                            } as LaunchConfig['mode'],
-                          })
-                        }
+                    <Field label="命令" className="workbench-field-wide">
+                      <Input
+                        value={launch.mode.command}
+                        placeholder="例如 C:\gsov\start.bat 或 conda run -n gpt-sovits python api_v2.py"
+                        onChange={(_, data) => patchLaunch({ mode: { kind: 'command', command: data.value } })}
                       />
                     </Field>
                   )}
-                </>
+
+                  {launch.mode.kind !== 'command' && (
+                    <>
+                      <Field label="控制脚本">
+                        <Input value={launch.script} onChange={(_, data) => patchLaunch({ script: data.value })} />
+                      </Field>
+
+                      <Field label="推理配置">
+                        <Input
+                          value={launch.inferConfig}
+                          onChange={(_, data) => patchLaunch({ inferConfig: data.value })}
+                        />
+                      </Field>
+                    </>
+                  )}
+                </div>
               )}
             </>
           ) : (
@@ -305,7 +318,7 @@ export function VoiceWorkbench() {
 
         <section className="workbench-card workbench-queue">
           <div className="workbench-card-head">
-            <h2 className="workbench-card-title">任务队列</h2>
+            <h2 className="workbench-card-title">运行状态</h2>
             <div className="workbench-tabs">
               <button className={queuePage === 'queue' ? 'active' : ''} onClick={() => setQueuePage('queue')}>
                 队列
@@ -315,23 +328,38 @@ export function VoiceWorkbench() {
               </button>
             </div>
             <span className="workbench-spacer" />
-            <Button
-              size="small"
-              appearance="subtle"
-              title="清理未被任何场景引用的缓存音频"
-              icon={<WrenchRegular />}
-              onClick={() => setChangeDialogOpen(true)}
-            />
-            <Button
-              size="small"
-              appearance="subtle"
-              title="清空已完成的任务"
-              icon={<DismissRegular />}
-              onClick={() => {
-                voiceController.clearFinishedTasks();
-                setQueuePage('queue');
-              }}
-            />
+            {queuePage === 'log' ? (
+              <Button
+                size="small"
+                appearance="subtle"
+                title="把运行日志导出为文本文件"
+                icon={<ArrowDownloadRegular />}
+                disabled={logs.length === 0}
+                onClick={() => void exportLogs()}
+              >
+                导出日志
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  title="清理未被任何场景引用的缓存音频"
+                  icon={<WrenchRegular />}
+                  onClick={() => setChangeDialogOpen(true)}
+                />
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  title="清空已完成的任务"
+                  icon={<DismissRegular />}
+                  onClick={() => {
+                    voiceController.clearFinishedTasks();
+                    setQueuePage('queue');
+                  }}
+                />
+              </>
+            )}
           </div>
 
           <p className="workbench-summary">
@@ -392,15 +420,41 @@ export function VoiceWorkbench() {
       <VoiceCacheDialog open={changeDialogOpen} onClose={() => setChangeDialogOpen(false)} />
     </div>
   );
+
+  /** 导出运行日志为文本文件 */
+  async function exportLogs() {
+    const destination = await saveDialog({
+      defaultPath: 'gsov-日志.txt',
+      filters: [{ name: '文本文件', extensions: ['txt', 'log'] }],
+    });
+    if (typeof destination !== 'string') return;
+    await fs.writeText(destination, logs.join('\n'));
+  }
+}
+
+/** 切换启动方式时的默认字段值 */
+function defaultMode(kind: string, launch: LaunchConfig): LaunchMode {
+  switch (kind) {
+    case 'conda':
+      return { kind: 'conda', env: '', program: null };
+    case 'python':
+      return { kind: 'python', program: 'python' };
+    case 'command':
+      return { kind: 'command', command: '' };
+    default:
+      return { kind: 'embedded', program: `${launch.root}\\runtime\\python.exe` };
+  }
 }
 
 function modeLabel(launch: LaunchConfig): string {
   switch (launch.mode.kind) {
     case 'embedded':
-      return '整合包内置运行时';
+      return '使用整合包自带的 runtime\\python.exe（自动加 -I 隔离）';
+    case 'conda':
+      return '复用 conda 环境（不隔离，依赖装在用户级 site-packages 时必需）';
     case 'python':
-      return '外部 Python（conda / 系统）';
+      return '使用指定的 Python 解释器（不隔离）';
     default:
-      return '自定义命令（bat / ps1 / 可执行文件）';
+      return '整条命令原样执行，Ink 只负责启动与收尾';
   }
 }

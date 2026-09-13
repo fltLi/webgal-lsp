@@ -191,30 +191,18 @@ export function dialogueKey(line: SayLine): string {
 /**
  * 找出光标所在行属于哪一条对话。
  *
- * `SayLine.line` 是语句的**首行**行号, `lineCount` 是它占据的行数 (WebGAL 语句可以
- * 跨行)。只比较行号相等是错误的: 那会让光标处于语句续行时不显示、或落到相邻语句上。
+ * WebGAL 的语句就是**一行**一条 (与语言核心的 `Scene` 一致: 逐行解析), 因此这里
+ * 只需要按行号精确查找, 不做任何区间推算。
  *
- * 返回 `null` 表示光标不在任何对话语句上 (例如停在 changeBg 之类的演出语句上)。
+ * 曾经这里是"按 `[首行, 首行 + 行数)` 区间二分查找", 而行数是靠"找第一个分号"
+ * 猜出来的 —— 于是光标停在一条**没写分号**的对话行上时, 会命中它上面那条对话。
+ *
+ * 返回 `null` 表示光标不在任何对话行上 (例如停在 `changeBg` 之类的演出语句上)。
  */
 export function dialogueAtLine(dialogues: SayLine[], line: number): SayLine | null {
-  if (dialogues.length === 0 || line < 0) return null;
-  // 二分查找最后一个首行 <= line 的语句
-  let low = 0;
-  let high = dialogues.length - 1;
-  let found = -1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    if (dialogues[mid].line <= line) {
-      found = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  if (found < 0) return null;
-  const current = dialogues[found];
-  const span = Math.max(1, current.lineCount ?? 1);
-  return line < current.line + span ? current : null;
+  if (line < 0) return null;
+  // 对话本身按行号升序, 但来源是解析结果, 因此用精确查找而非下标推算
+  return dialogues.find((item) => item.line === line) ?? null;
 }
 
 /** 该行是否落在某条对话上 (与 `dialogueAtLine` 同义, 便于阅读) */

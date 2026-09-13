@@ -50,8 +50,6 @@ pub struct ReferenceAudio {
 pub struct Character {
     pub id: String,
     pub name: String,
-    /// 别名 (参与场景对话者自动匹配)
-    pub aliases: Vec<String>,
     #[serde(default)]
     pub description: String,
     /// 默认语言 (配音文本语言)
@@ -166,7 +164,6 @@ pub struct CharacterManifest {
     /// 固定为 1, 便于后续演进
     pub version: u32,
     pub name: String,
-    pub aliases: Vec<String>,
     #[serde(default)]
     pub description: String,
     pub language: LanguageCode,
@@ -222,7 +219,10 @@ impl Library {
         self.root.join(format!("{id}.json"))
     }
 
-    /// 列出全部角色 (完整配置, 按星标/更新时间排序)
+    /// 列出全部角色 (完整配置)
+    ///
+    /// 排序**只看星标与创建时间**, 不看更新时间: 后者会让"改一下某个角色的设置"
+    /// 把它的卡片挪到列表最前面, 用户会以为卡片之间交换了位置。
     pub fn list(&self) -> Result<Vec<Character>> {
         let mut characters = Vec::new();
         if !self.root.is_dir() {
@@ -248,7 +248,7 @@ impl Library {
         characters.sort_by(|a, b| {
             b.starred
                 .cmp(&a.starred)
-                .then(b.updated_at.cmp(&a.updated_at))
+                .then(a.created_at.cmp(&b.created_at))
                 .then(a.name.cmp(&b.name))
         });
         Ok(characters)
@@ -264,7 +264,7 @@ impl Library {
         Ok(serde_json::from_str(&text)?)
     }
 
-    /// 写入单个角色 (保持 id 不变, 更新时间戳)
+    /// 写入单个角色 (更新时间戳)
     pub fn save(&self, mut character: Character) -> Result<Character> {
         if character.id.trim().is_empty() {
             return Err(LibraryError::Invalid("角色 id 不可为空".into()));
@@ -274,6 +274,38 @@ impl Library {
         let text = serde_json::to_string_pretty(&character)?;
         std::fs::write(self.character_file(&character.id), text)?;
         Ok(character)
+    }
+
+    /// 写入单个角色, 并处理**改名** (id 变化)。
+    ///
+    /// id 同时是配置文件名与参考音频目录名 (也是导出到 `game/vocal/<id>/` 的目录名),
+    /// 因此改名必须连带搬移参考音频目录并清掉旧配置 —— 否则会留下一个"幽灵角色",
+    /// 或者新角色指向不存在的音频。
+    pub fn save_as(&self, previous_id: Option<&str>, character: Character) -> Result<Character> {
+        let previous = previous_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty() && *id != character.id);
+        if let Some(previous) = previous {
+            if self.character_file(&character.id).is_file() {
+                return Err(LibraryError::Invalid(format!(
+                    "角色 id {} 已被占用",
+                    character.id
+                )));
+            }
+            let from = self.character_dir(previous);
+            if from.is_dir() {
+                let to = self.character_dir(&character.id);
+                if to.is_dir() {
+                    std::fs::remove_dir_all(&to)?;
+                }
+                std::fs::rename(&from, &to)?;
+            }
+            let old_file = self.character_file(previous);
+            if old_file.is_file() {
+                std::fs::remove_file(old_file)?;
+            }
+        }
+        self.save(character)
     }
 
     /// 删除角色及其参考音频目录
@@ -404,7 +436,6 @@ impl Library {
                         Character {
                             id: unique_id(root, &speaker),
                             name: speaker.clone(),
-                            aliases: Vec::new(),
                             description: format!("由 {} 导入", path.display()),
                             language: "auto".into(),
                             references: Vec::new(),
@@ -536,7 +567,6 @@ impl Library {
         let manifest = CharacterManifest {
             version: 1,
             name: character.name.clone(),
-            aliases: character.aliases.clone(),
             description: character.description.clone(),
             language: character.language.clone(),
             references: character.references.clone(),
@@ -622,7 +652,6 @@ impl Library {
         let character = Character {
             id,
             name: manifest.name,
-            aliases: manifest.aliases,
             description: manifest.description,
             language: manifest.language,
             references,
@@ -724,7 +753,6 @@ mod tests {
         Character {
             id: id.into(),
             name: name.into(),
-            aliases: vec!["anon".into()],
             description: String::new(),
             language: "auto".into(),
             references: Vec::new(),
@@ -743,7 +771,6 @@ mod tests {
         assert!(saved.updated_at >= saved.created_at);
         let loaded = library.load("anon").unwrap();
         assert_eq!(loaded.name, "千早爱音");
-        assert_eq!(loaded.aliases, vec!["anon".to_string()]);
         assert!(loaded.enabled);
     }
 
@@ -845,7 +872,6 @@ mod tests {
         let other = temp_library("zip-target");
         let imported = other.import_zip(&zip_path).unwrap();
         assert_eq!(imported.name, "千早爱音");
-        assert_eq!(imported.aliases, vec!["anon".to_string()]);
         assert_eq!(imported.references.len(), 1);
         assert_eq!(imported.references[0].text, "参考文本");
         assert_eq!(imported.references[0].tags, vec!["活泼".to_string()]);
@@ -973,6 +999,5 @@ mod tests {
         let list = library.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].references.len(), 1);
-        assert_eq!(list[0].aliases, vec!["anon".to_string()]);
     }
 }

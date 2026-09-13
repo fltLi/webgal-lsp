@@ -2,9 +2,7 @@
 
 //! 场景对话抽取。
 //!
-//! GPT-SoVITS 配音只关心对话语句, 且必须拿到**行号**以便回写。因此这里不走
-//! [`webgal_language_core::sentence::Scene`] 的整体解析 (不提供行号), 而是逐行
-//! [`Sentence::from_str`], 跳过非对话语句。
+//! GPT-SoVITS 配音只关心对话语句, 且必须拿到**行号**以便回写。
 //!
 //! WebGAL 允许省略对话者: 形如 `还没回答。;` 的一行继承其上一条显式说话者语句。
 //! 该语法糖在 `Sentence` 层表现为 `speaker = None`, 归属者需由本模块回溯补齐。
@@ -15,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use webgal_language_core::{
-    element::{FigureId, FontSize},
-    sentence::{SaySentence, Sentence, SentenceInfo},
+    element::FigureId,
+    sentence::{PrimarySentence, Sentence},
 };
 
 /// 语句身份哈希长度
@@ -26,12 +24,12 @@ const HASH_LEN: usize = 12;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SayLine {
-    /// 语句首行行号 (0 起)
+    /// 行号 (0 起, 即 `scene.lines()` 中的下标)
     pub line: usize,
-    /// 该语句在场景中占据的行数 (WebGAL 语句可跨行, 至少为 1)
+    /// 该语句占据的行数, 恒为 1
     ///
-    /// 前端据此判断"光标是否落在本语句上": 只比较首行行号是错误的,
-    /// 会让跨行语句在光标处于续行时不显示、或误命中相邻语句。
+    /// WebGAL 的语句以整行为单位解析 (见模块文档), 因此不存在跨行语句。
+    /// 保留该字段是为了让前端的定位逻辑读起来仍然是"区间", 不必依赖"恒为 1"这个假设。
     pub line_count: usize,
     /// 对话者 (已回溯补齐省略语法; 旁白为 `None`)
     pub speaker: Option<String>,
@@ -41,10 +39,8 @@ pub struct SayLine {
     pub text: String,
     /// 现有配音引用 (`-vocal=` 的值, 相对 `game/vocal/`)
     pub vocal: Option<String>,
-    /// 立绘 id (`-figureId=` 的值)
-    pub figure_id: Option<String>,
-    /// 立绘位置 (`left` / `center` / `right`, 由 `-left` 等参数糖给出)
-    pub figure_side: Option<String>,
+    /// 立绘引用 (`-figureId=` 的值或 `-left` 等位置糖, 由 [`FigureId`] 直接给出)
+    pub figure: Option<String>,
     /// 语句身份哈希 (对话者 + 内容 + 现有配音)
     pub hash: String,
 }
@@ -74,9 +70,8 @@ pub struct LineEditResult {
 pub fn parse_say_lines(scene: &str) -> Vec<SayLine> {
     let mut lines = Vec::new();
     let mut current_speaker: Option<String> = None;
-    let raw_lines: Vec<&str> = scene.lines().collect();
 
-    for (index, raw) in raw_lines.iter().enumerate() {
+    for (index, raw) in scene.lines().enumerate() {
         let output = Sentence::from_str(raw);
         let Sentence::Say(say) = output.sentence else {
             continue;
@@ -103,22 +98,19 @@ pub fn parse_say_lines(scene: &str) -> Vec<SayLine> {
             None => (current_speaker.clone(), current_speaker.is_some()),
         };
 
-        let (figure_id, figure_side) = match say.figure {
-            Some(FigureId::Id(id)) => (Some(id), None),
-            Some(FigureId::Side(side)) => (None, Some(side.to_string())),
-            None => (None, None),
-        };
+        // `FigureId` 本身就是立绘引用 (id 或位置), 其 `Display` 即 WebGAL 的参数值,
+        // 因此不再拆成 "id + side" 两项 —— 那只是同一份信息的两种写法。
+        let figure = say.figure.as_ref().map(FigureId::to_string);
 
         let hash = say_hash(speaker.as_deref(), &text, say.vocal.as_deref());
         lines.push(SayLine {
             line: index,
-            line_count: statement_span(&raw_lines, index),
+            line_count: 1,
             speaker,
             speaker_inherited,
             text,
             vocal: say.vocal,
-            figure_id,
-            figure_side,
+            figure,
             hash,
         });
     }
@@ -126,103 +118,18 @@ pub fn parse_say_lines(scene: &str) -> Vec<SayLine> {
     lines
 }
 
-/// 计算从 `start` 行开始的语句跨越的行数。
+/// 改写一条语句的配音引用。
 ///
-/// WebGAL 的语句以未转义的分号结束, 因此一条语句可能跨多行 (例如 `:;` 之后继续
-/// 书写, 或者对话内容里含换行)。判断依据是**遇到第一个未转义的分号**。
-/// 找不到分号时按单行处理。
-fn statement_span(lines: &[&str], start: usize) -> usize {
-    for (offset, raw) in lines[start..].iter().enumerate() {
-        if has_terminator(raw) {
-            return offset + 1;
-        }
-    }
-    lines.len() - start
-}
-
-/// 该行是否含未转义的语句结束符 `;`
-fn has_terminator(line: &str) -> bool {
-    let mut escaped = false;
-    for ch in line.chars() {
-        match ch {
-            '\\' => escaped = !escaped,
-            ';' if !escaped => return true,
-            _ => escaped = false,
-        }
-    }
-    false
-}
-
-/// 改写一条语句的配音引用, 其余部分重建。
-///
-/// 说话者与内容原样保留 (与 [`Sentence`] 自身的序列化一致), 仅重建参数部分:
-/// 这样才能保证 `-vocal=<值>` **始终显式带键**。
-/// `SaySentence` 的 `Display` 会把非保留字的配音引用写成裸参数 (`-anon/a.wav`),
-/// 而 `-vocal=` 是 WebGAL 引擎接受的标准写法, 显式写出可避免依赖引擎对裸参数的解释。
-///
-/// 注释与 `nolint` 标记原样保留, 行内空白风格会被规范化 (与格式化行为一致)。
+/// 序列化**直接用 `SaySentence` 的 `Display`**: 设置 `vocal` 字段后 `to_string()`,
+/// 再拼上 `PrimarySentence` 里的注释 (它保留注释前导空格, 原样拼回即可)。
 pub fn rewrite_line(line: &str, vocal: Option<&str>) -> Result<String, String> {
-    let info = webgal_language_core::sentence::SentenceInfo::from_str(line);
-    let Sentence::Say(say) = &info.sentence else {
+    let primary = PrimarySentence::from_str(line);
+    let mut sentence = Sentence::from_str(line).sentence;
+    let Sentence::Say(say) = &mut sentence else {
         return Err("该行不是对话语句".into());
     };
-    Ok(render_say(say, vocal, &info))
-}
-
-/// 依据 `SaySentence` 重建整行
-fn render_say(say: &SaySentence, vocal: Option<&str>, info: &SentenceInfo<'_>) -> String {
-    use std::fmt::Write;
-
-    let mut out = String::new();
-    if let Some(speaker) = &say.speaker {
-        out.push_str(speaker);
-        out.push(':');
-    }
-    out.push_str(&say.content.join("|"));
-
-    if let Some(vocal) = vocal {
-        push_arg(&mut out, "vocal", Some(vocal));
-    }
-    if let Some(figure) = &say.figure {
-        match figure {
-            FigureId::Id(id) => push_arg(&mut out, "figureId", Some(id)),
-            FigureId::Side(side) => push_arg(&mut out, &side.to_string(), None),
-        }
-    }
-    if say.font_size != FontSize::default() {
-        push_arg(&mut out, "fontSize", Some(&say.font_size.to_string()));
-    }
-    if say.concat {
-        push_arg(&mut out, "concat", None);
-    }
-    if say.notend {
-        push_arg(&mut out, "notend", None);
-    }
-    if let Some(when) = &say.when {
-        push_arg(&mut out, "when", Some(when));
-    }
-    out.push(';');
-
-    if !info.nolints.is_empty() {
-        let _ = write!(out, "nolint:{};", info.nolints.join("|"));
-    }
-    if !info.comment.is_empty() {
-        let _ = write!(out, " {}", info.comment);
-    }
-    out
-}
-
-/// 追加一个参数 (`Some` 为 `-name=value`, `None` 为 `-name`)
-fn push_arg(out: &mut String, name: &str, value: Option<&str>) {
-    use std::fmt::Write;
-    match value {
-        Some(value) => {
-            let _ = write!(out, " -{name}={value}");
-        }
-        None => {
-            let _ = write!(out, " -{name}");
-        }
-    }
+    say.vocal = vocal.map(str::to_string);
+    Ok(format!("{say}{}", primary.comment))
 }
 
 /// 语句身份哈希: 对话者 + 内容 + 现有配音
@@ -246,7 +153,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_dialogue_and_skips_other_statements() {        let scene = "\
+    fn parses_dialogue_and_skips_other_statements() {
+        let scene = "\
 bgm:test.flac;
 changeFigure:ext/anon/model.json -id=anon -next;
 千早爱音:你爱我吗？ -figureId=anon;
@@ -261,7 +169,7 @@ label:loop;
         assert_eq!(lines[0].speaker.as_deref(), Some("千早爱音"));
         assert!(!lines[0].speaker_inherited);
         assert_eq!(lines[0].text, "你爱我吗？");
-        assert_eq!(lines[0].figure_id.as_deref(), Some("anon"));
+        assert_eq!(lines[0].figure.as_deref(), Some("anon"));
 
         assert_eq!(lines[1].line, 4);
         assert_eq!(lines[1].speaker, None);
@@ -339,7 +247,7 @@ label:loop;
         let scene = "爱音:内容 -vocal=anon/a1.wav -left;\n";
         let lines = parse_say_lines(scene);
         assert_eq!(lines[0].vocal.as_deref(), Some("anon/a1.wav"));
-        assert_eq!(lines[0].figure_side.as_deref(), Some("left"));
+        assert_eq!(lines[0].figure.as_deref(), Some("fig-left"));
     }
 
     #[test]
@@ -363,19 +271,18 @@ label:loop;
     fn rewrite_sets_vocal_and_keeps_other_parts() {
         let line = "千早爱音:你爱我吗？ -figureId=anon -when=a>1; 这是注释";
         let rewritten = rewrite_line(line, Some("anon/a1b2c3.wav")).unwrap();
-        assert!(rewritten.contains("-vocal=anon/a1b2c3.wav"));
-        assert!(rewritten.contains("千早爱音:你爱我吗？"));
-        assert!(rewritten.contains("-figureId=anon"));
-        assert!(rewritten.contains("-when=a>1"));
-        assert!(rewritten.contains("这是注释"));
-        assert!(rewritten.ends_with(';') || rewritten.contains("; "));
+        // 走 `SaySentence` 的 `Display`: 普通路径写成裸参数 (引擎接受的写法)
+        assert_eq!(
+            rewritten,
+            "千早爱音:你爱我吗？ -anon/a1b2c3.wav -figureId=anon -when=a>1; 这是注释"
+        );
     }
 
     #[test]
     fn rewrite_replaces_existing_vocal() {
         let line = "爱音:内容 -vocal=old.wav;";
         let rewritten = rewrite_line(line, Some("new.wav")).unwrap();
-        assert!(rewritten.contains("-vocal=new.wav"));
+        assert_eq!(rewritten, "爱音:内容 -new.wav;");
         assert!(!rewritten.contains("old.wav"));
     }
 
@@ -392,7 +299,7 @@ label:loop;
         let line = ":爱音躺在沙发上。;";
         let rewritten = rewrite_line(line, Some("narration/a1.wav")).unwrap();
         assert!(rewritten.contains(":爱音躺在沙发上。"));
-        assert!(rewritten.contains("-vocal=narration/a1.wav"));
+        assert!(rewritten.contains("-narration/a1.wav"));
     }
 
     #[test]
@@ -407,26 +314,31 @@ label:loop;
         let rewritten = rewrite_line(line, Some("new.wav")).unwrap();
         assert!(rewritten.contains("nolint:WG001"));
         assert!(rewritten.contains("备注"));
-        assert!(rewritten.contains("-vocal=new.wav"));
+        assert!(rewritten.contains("-new.wav"));
     }
 
     #[test]
     fn statement_span_counts_multiline_statements() {
-        assert_eq!(statement_span(&["爱音:台词;"], 0), 1);
-        // 首行没有结束符 -> 语句延续到下一行
-        assert_eq!(statement_span(&["爱音:第一行", "第二行;"], 0), 2);
-        assert_eq!(statement_span(&["爱音:第一行", "第二行", "第三行;"], 0), 3);
-        // 完全没有结束符时按剩余行数处理
-        assert_eq!(statement_span(&["爱音:没有分号"], 0), 1);
-        assert_eq!(statement_span(&["爱音:没有分号", "也没有"], 0), 2);
-        // 转义的分号不算结束
-        assert_eq!(statement_span(&["爱音:含\\;分号", "结束;"], 0), 2);
-        assert_eq!(statement_span(&["爱音:含\\;分号;"], 0), 1);
+        // 语句恒为单行: 未以分号结尾的行不会把后续行"吞"进同一条语句。
+        // 这一点必须钉住 —— 曾经用"找第一个分号"推测语句跨度, 导致光标停在
+        // 缺分号的行上时会命中**上一条**对话。
+        let scene = "\
+爱音:第一行
+第二行;
+爱音:没有分号
+爱音:正常;
+";
+        let lines = parse_say_lines(scene);
+        assert_eq!(
+            lines.iter().map(|item| item.line).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert!(lines.iter().all(|item| item.line_count == 1));
     }
 
     #[test]
     fn line_count_is_reported_for_each_dialogue() {
-        // 正常情况下一条语句就是一行 (§ 解析器逐行工作, 未闭合的分号会让后续行各自成句)
+        // 逐行解析: 每一条对话就是一行
         let scene = "爱音:你爱我吗？;\n长崎素世:唉？;\nnext:对话;\n";
         let lines = parse_say_lines(scene);
         assert_eq!(lines.len(), 3);
@@ -436,6 +348,19 @@ label:loop;
         let escaped = parse_say_lines("爱音:含\\;分号;\n");
         assert_eq!(escaped.len(), 1);
         assert_eq!(escaped[0].line_count, 1);
+    }
+
+    #[test]
+    fn figure_is_reported_as_its_display_value() {
+        // 立绘 id 与位置糖用同一个字段表示 (`FigureId` 的 Display)
+        let id = parse_say_lines("爱音:内容 -figureId=anon;\n");
+        assert_eq!(id[0].figure.as_deref(), Some("anon"));
+
+        let side = parse_say_lines("爱音:内容 -left;\n");
+        assert_eq!(side[0].figure.as_deref(), Some("fig-left"));
+
+        let none = parse_say_lines("爱音:内容;\n");
+        assert_eq!(none[0].figure, None);
     }
 
     #[test]
@@ -472,7 +397,7 @@ setTransform:{\"position\":{\"x\":0}} -target=bg-main -next;
 
         // 第 6 行带 figureId 的台词
         assert_eq!(lines[1].speaker.as_deref(), Some("长崎素世"));
-        assert_eq!(lines[1].figure_id.as_deref(), Some("soyo"));
+        assert_eq!(lines[1].figure.as_deref(), Some("soyo"));
 
         // 第 8 行台词, 第 9 行是省略说话者的裸行 (继承爱音)
         assert_eq!(lines[3].speaker.as_deref(), Some("千早爱音"));
@@ -483,7 +408,9 @@ setTransform:{\"position\":{\"x\":0}} -target=bg-main -next;
         assert!(!lines[4].speaker_inherited);
 
         // 资源语句与占位语句都不出现
-        assert!(lines.iter().all(|item| !matches!(item.line, 0 | 1 | 2 | 3 | 6 | 9)));
+        assert!(lines
+            .iter()
+            .all(|item| !matches!(item.line, 0 | 1 | 2 | 3 | 6 | 9)));
     }
 
     #[test]

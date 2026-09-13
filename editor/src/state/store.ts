@@ -469,10 +469,10 @@ export function isVoiceWorkbenchActive(state: AppStore): boolean {
  *
  * * 配音工作台未打开 -> 一律不显示 (未启用配音功能时界面上不出现任何配音痕迹);
  * * 已处于配音编辑模式 -> 始终显示 (否则就没法退出);
- * * 未处于配音编辑模式 -> 只在**当前场景卡**上显示。
+ * * 未处于配音编辑模式 -> 只在**当前选中的**那张卡上显示。
  *
- * "当前场景卡"是 `currentSceneTabId` 而不是 `activeTabId`: 最前面是配音工作台时,
- * 用户心中的当前场景仍是进工作台之前看的那张卡。
+ * 第三条用的是 `activeTabId` 而不是"最近的场景卡": 切到工作台/说明页之后,
+ * 划线麦克风就不该继续挂在原来那张卡上。
  *
  * 最后一条是刻意的: 在其它未进入配音编辑模式的场景卡上常驻一个划线麦克风,
  * 看起来就像那些场景都被关掉了配音。
@@ -480,16 +480,16 @@ export function isVoiceWorkbenchActive(state: AppStore): boolean {
 export function shouldShowVoiceToggle(input: {
   /** 配音工作台是否打开 */
   workbenchOpen: boolean;
-  /** 当前场景卡 id (见 `currentSceneTabId`) */
-  currentSceneTabId: string | null;
+  /** 当前活动的选项卡 id */
+  activeTabId: string | null;
   /** 要判断的选项卡 */
   tab: WorkbenchTabItem;
   /** 处于配音编辑模式的场景路径 */
   voiceModePaths: string[];
 }): boolean {
-  const { workbenchOpen, currentSceneTabId, tab, voiceModePaths } = input;
+  const { workbenchOpen, activeTabId, tab, voiceModePaths } = input;
   if (!workbenchOpen || tab.kind !== 'scene') return false;
-  return voiceModePaths.includes(tab.path) || tab.id === currentSceneTabId;
+  return voiceModePaths.includes(tab.path) || tab.id === activeTabId;
 }
 
 /** 当前活动选项卡 */

@@ -45,10 +45,7 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     if (!query.trim()) return characters;
     const needle = query.trim().toLowerCase();
     return characters.filter(
-      (character) =>
-        character.name.toLowerCase().includes(needle) ||
-        character.id.toLowerCase().includes(needle) ||
-        character.aliases.some((alias) => alias.toLowerCase().includes(needle))
+      (character) => character.name.toLowerCase().includes(needle) || character.id.toLowerCase().includes(needle)
     );
   }, [characters, query]);
 

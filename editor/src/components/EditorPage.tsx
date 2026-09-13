@@ -56,7 +56,7 @@ export function EditorPage() {
   const activeDoc = useAppStore(activeSceneDocumentOf);
   // 工作台是否打开由选项卡序列推导 (它就是一个普通选项卡, 没有独立开关)
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
-  const currentSceneTabId = useAppStore((s) => s.currentSceneTabId);
+  const activeTabId = useAppStore((s) => s.activeTabId);
   const voiceModePaths = useAppStore((s) => s.voiceModePaths);
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const theme = useAppStore((s) => s.theme);
@@ -149,7 +149,7 @@ export function EditorPage() {
   const renderTabLeadingAction = (tab: WorkbenchTabItem) => {
     if (tab.kind !== 'scene') return null;
     const inVoiceMode = isSceneInVoiceMode(tab.path);
-    const visible = shouldShowVoiceToggle({ workbenchOpen, currentSceneTabId, tab, voiceModePaths });
+    const visible = shouldShowVoiceToggle({ workbenchOpen, activeTabId, tab, voiceModePaths });
     return (
       <button
         type="button"
