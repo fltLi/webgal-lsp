@@ -197,12 +197,8 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
           <span>{entry.characterName || '未指定角色'}</span>
           {entry.alignment === 'speakerChanged' && <span className="history-warn">归属可能已变</span>}
           {entry.params.seed >= 0 && <span>种子 {entry.params.seed}</span>}
-          {/*
-            `响应` = 这一次请求的实测往返时间 (任务耗时); `音频` = 生成出来的音频有多长。
-            两者差一个量级很常见, 因此都要写清名目, 不能只甩一个 "3.96s"。
-          */}
+          {/* `响应` = 这一次请求的实测往返时间 (任务耗时); 音频时长对配音没有参考价值, 不显示 */}
           {entry.elapsed !== undefined && <span>响应 {formatDuration(entry.elapsed)}</span>}
-          {entry.duration !== undefined && <span>音频 {entry.duration.toFixed(2)}s</span>}
         </div>
 
         {inFlight && (
