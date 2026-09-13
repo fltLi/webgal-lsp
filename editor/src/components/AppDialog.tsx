@@ -35,7 +35,7 @@ interface Props {
   footerLeading?: ReactNode;
   /** 底部操作区的按钮 */
   footer?: ReactNode;
-  /** 点击遮罩是否关闭 (默认否, 防止误触丢失正在编辑的内容) */
+  /** 点击遮罩是否关闭 (默认关闭; 只有会丢失正在编辑内容的对话框才显式设为 false) */
   closeOnBackdrop?: boolean;
   onClose: () => void;
   children: ReactNode;
@@ -52,7 +52,7 @@ export function AppDialog({
   titleExtra,
   footerLeading,
   footer,
-  closeOnBackdrop = false,
+  closeOnBackdrop = true,
   onClose,
   children,
 }: Props) {

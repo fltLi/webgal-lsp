@@ -2,28 +2,30 @@
 
 // 角色列表: 管理 GSOV 模型 + 参考音频组合。
 //
-// 顶部为搜索 / 选择 / 新建; 列表按响应式网格排布 (窗口足够宽时两列)。
-// 参考音频的增删改在「选择角色」对话框内完成, 列表本身只展示与编辑角色元信息;
-// 导入 (zip 与训练切分清单) 也统一放在那个对话框里, 这里只留日常操作。
+// 列表本身**只展示信息**, 不提供任何就地编辑 —— 一行里塞满输入框与按钮会造成很大
+// 的认知压力。所有编辑都在「编辑角色」对话框里完成 (点卡片即打开), 那里有足够的
+// 空间放角色信息与参考音频列表。
+//
+// 导入 (zip 与训练切分清单) 也统一放在那个对话框与「选择角色」里, 这里只留日常操作。
 
-import { Button, Field, Input, Textarea } from '@fluentui/react-components';
-import { AddRegular, ArrowDownloadRegular, DeleteRegular, StarFilled, StarRegular } from '@fluentui/react-icons';
+import { Button, Input } from '@fluentui/react-components';
+import { AddRegular, ArrowDownloadRegular, DeleteRegular, PersonEditRegular, StarFilled } from '@fluentui/react-icons';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { Character, ModelCandidate } from '../commands/voice';
 import { voiceExportCharacter } from '../commands/voice';
-import { Select } from '../components/Select';
 import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
+import { RoleEditDialog } from './RoleEditDialog';
 import { RolePickerDialog } from './RolePickerDialog';
-import { LANGUAGE_LABELS } from './types';
 
 export function RoleListPanel() {
   const characters = useAppStore((state) => state.voiceCharacters);
   useAppStore((state) => state.voiceTick);
   const [query, setQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Character | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelCandidate[]>([]);
 
@@ -45,10 +47,9 @@ export function RoleListPanel() {
     setError(null);
     try {
       const created = await voiceController.createCharacter(`新角色 ${characters.length + 1}`, '');
-      setPickerOpen(false);
-      // 立刻展开以备填写
+      // 新建后直接打开编辑对话框, 否则用户看不到自己刚建了什么
+      setEditTarget(created);
       setQuery('');
-      void created;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -63,11 +64,19 @@ export function RoleListPanel() {
     await voiceExportCharacter(character.id, destination);
   };
 
-  /**
-   * 导入 (zip 与训练切分清单) 已统一移入「选择角色」对话框 ——
-   * 它是"创建角色"这一类低频操作, 与列表里的日常操作混在同一行既分不清主次,
-   * 也会把工具栏挤到换行。
-   */
+  const remove = async (character: Character) => {
+    try {
+      await voiceController.deleteCharacter(character.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  /** 打开编辑对话框时始终取最新的一份角色数据 */
+  const openEditor = (id: string) => {
+    const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === id) ?? null;
+    setEditTarget(latest);
+  };
 
   return (
     <div className="character-panel">
@@ -78,11 +87,11 @@ export function RoleListPanel() {
           value={query}
           onChange={(_, data) => setQuery(data.value)}
         />
-        <Button appearance="secondary" onClick={() => setPickerOpen(true)}>
-          选择角色
-        </Button>
         <Button appearance="primary" icon={<AddRegular />} onClick={() => void create()}>
           新建角色
+        </Button>
+        <Button appearance="secondary" icon={<PersonEditRegular />} onClick={() => setPickerOpen(true)}>
+          选择角色
         </Button>
       </div>
 
@@ -96,152 +105,55 @@ export function RoleListPanel() {
           <p className="voice-dialog-empty">没有已启用的角色。请在「选择角色」中勾选需要参与配音的角色。</p>
         )}
         {enabled.map((character) => (
-          <CharacterCard
-            key={character.id}
-            character={character}
-            models={models}
-            onExport={() => void exportCharacter(character)}
-            onError={setError}
-          />
+          <div key={character.id} className="character-tile">
+            <button
+              type="button"
+              className="character-tile-main"
+              title="点击编辑角色"
+              onClick={() => openEditor(character.id)}
+            >
+              <span className="character-tile-name">
+                {character.name}
+                {character.starred && <StarFilled className="character-tile-star" />}
+              </span>
+              <span className="character-tile-meta">
+                {character.id} · 参考音频 {character.references.length} · 模型{' '}
+                {character.model?.gptWeights ? '已指定' : '未指定'}
+              </span>
+            </button>
+            <Button
+              size="small"
+              appearance="subtle"
+              title="导出角色"
+              icon={<ArrowDownloadRegular />}
+              onClick={() => void exportCharacter(character)}
+            />
+            <Button
+              size="small"
+              appearance="subtle"
+              className="danger-icon"
+              title="删除角色"
+              icon={<DeleteRegular />}
+              onClick={() => void remove(character)}
+            />
+          </div>
         ))}
       </div>
 
       <RolePickerDialog open={pickerOpen} onClose={() => setPickerOpen(false)} onError={setError} />
-    </div>
-  );
-}
 
-function CharacterCard({
-  character,
-  models,
-  onExport,
-  onError,
-}: {
-  character: Character;
-  models: ModelCandidate[];
-  onExport: () => void;
-  onError: (error: string | null) => void;
-}) {
-  const [draft, setDraft] = useState(character);
-  /** 已经落盘的 id; 与 `draft.id` 不同表示用户改了 id (需要搬移参考音频目录) */
-  const savedId = useRef(character.id);
-
-  useEffect(() => {
-    setDraft(character);
-    savedId.current = character.id;
-  }, [character.id, character.updatedAt]);
-
-  const commit = async (patch: Partial<Character>) => {
-    const next = { ...draft, ...patch };
-    setDraft(next);
-    try {
-      // 角色 id 可编辑: 它同时是配置文件名与参考音频目录名, 改名由后端连带搬移
-      const previous = next.id === savedId.current ? undefined : savedId.current;
-      const saved = await voiceController.persistCharacter(next, previous);
-      savedId.current = saved.id;
-      setDraft(saved);
-      onError(null);
-    } catch (caught) {
-      // 失败时回滚到已落盘的状态, 避免界面显示一个并不存在的 id
-      setDraft((current) => ({ ...current, id: savedId.current }));
-      onError(caught instanceof Error ? caught.message : String(caught));
-    }
-  };
-
-  return (
-    <div className="character-card">
-      <div className="character-head">
-        <Input
-          className="character-name"
-          value={draft.name}
-          placeholder="角色名"
-          onChange={(_, data) => setDraft({ ...draft, name: data.value })}
-          onBlur={() => void commit({ name: draft.name })}
-        />
-        <Input
-          className="character-id-input"
-          value={draft.id}
-          placeholder="角色 ID"
-          title="角色 ID（导出到 game/vocal 下的目录名）"
-          onChange={(_, data) => setDraft({ ...draft, id: data.value })}
-          onBlur={() => void commit({ id: draft.id })}
-        />
-        <Button
-          size="small"
-          appearance="subtle"
-          title={draft.starred ? '取消星标' : '星标（在选择列表中靠前）'}
-          icon={draft.starred ? <StarFilled /> : <StarRegular />}
-          onClick={() => void commit({ starred: !draft.starred })}
-        />
-        <Button
-          size="small"
-          appearance="subtle"
-          title="导出角色（不含模型选择）"
-          icon={<ArrowDownloadRegular />}
-          onClick={onExport}
-        />
-      </div>
-
-      {models.length > 0 && (
-        <Field label="GSOV 模型">
-          <Select
-            placeholder="未指定"
-            value={models.some((item) => item.gptWeights === draft.model?.gptWeights) ? draft.model!.gptWeights! : ''}
-            title={modelSummary(draft, models)}
-            options={models.map((item) => ({ value: item.gptWeights, label: item.name }))}
-            onChange={(gptWeights) => {
-              const picked = models.find((item) => item.gptWeights === gptWeights);
-              if (picked) {
-                void commit({
-                  model: { gptWeights: picked.gptWeights, sovitsWeights: picked.sovitsWeights },
-                });
-              }
-            }}
-          />
-        </Field>
-      )}
-
-      <Field label="描述">
-        <Textarea
-          className="character-description"
-          resize="vertical"
-          value={draft.description}
-          onChange={(_, data) => setDraft({ ...draft, description: data.value })}
-          onBlur={() => void commit({ description: draft.description })}
-        />
-      </Field>
-
-      <div className="character-references">
-        <span className="voice-label">参考音频（{draft.references.length}）</span>
-        {draft.references.length === 0 ? (
-          <p className="voice-dialog-empty">暂无参考音频，请在「选择角色」中添加。</p>
-        ) : (
-          draft.references.map((reference) => (
-            <div key={reference.hash} className="character-reference">
-              <span className="reference-text">{reference.text || '（未填写）'}</span>
-              <span className="reference-meta">
-                {LANGUAGE_LABELS[reference.language] ?? reference.language} · {reference.duration.toFixed(2)}s
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div className="character-actions">
-        <Button
-          size="small"
-          appearance="subtle"
-          className="danger-button"
-          icon={<DeleteRegular />}
-          onClick={() => {
-            void voiceController
-              .deleteCharacter(character.id)
-              .catch((caught: unknown) => onError(caught instanceof Error ? caught.message : String(caught)));
+      {editTarget && (
+        <RoleEditDialog
+          character={editTarget}
+          models={models}
+          onClose={() => setEditTarget(null)}
+          onChanged={() => {
+            const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === editTarget.id);
+            setEditTarget(latest ?? null);
           }}
-        >
-          删除角色
-        </Button>
-      </div>
+          onError={setError}
+        />
+      )}
     </div>
   );
 }
@@ -250,12 +162,4 @@ function matchesQuery(character: Character, query: string): boolean {
   if (!query.trim()) return true;
   const needle = query.trim().toLowerCase();
   return character.name.toLowerCase().includes(needle) || character.id.toLowerCase().includes(needle);
-}
-
-/** 当前模型选择的可读摘要 */
-function modelSummary(character: Character, models: ModelCandidate[]): string {
-  const gpt = character.model?.gptWeights;
-  if (!gpt) return '未指定模型';
-  const matched = models.find((item) => item.gptWeights === gpt);
-  return matched ? matched.name : gpt;
 }

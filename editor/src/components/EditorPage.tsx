@@ -142,18 +142,17 @@ export function EditorPage() {
    * 可见性规则集中在 store 的 `shouldShowVoiceToggle` (一处定义, 一处测试):
    * 工作台未打开时不显示; 已在配音编辑模式的卡始终显示; 否则只在当前选中的卡上显示。
    *
-   * 不可见时返回的仍是**按钮本身**(由 CSS 置为 `visibility: hidden`), 这样槽位始终
-   * 占位、选项卡宽度不变, 但它在视觉上不占任何空间 —— 这也是纯文本标题不会被
-   * 顶出一段留白的原因。
+   * **不可见时直接不渲染**, 不保留任何占位 —— 只要留一个空槽, 没有图标的选项卡
+   * 标题前面就会多出一段死留白。
    */
   const renderTabLeadingAction = (tab: WorkbenchTabItem) => {
     if (tab.kind !== 'scene') return null;
+    if (!shouldShowVoiceToggle({ workbenchOpen, activeTabId, tab, voiceModePaths })) return null;
     const inVoiceMode = isSceneInVoiceMode(tab.path);
-    const visible = shouldShowVoiceToggle({ workbenchOpen, activeTabId, tab, voiceModePaths });
     return (
       <button
         type="button"
-        className={`tab-strip-action${inVoiceMode ? ' on' : ''}${visible ? '' : ' hidden'}`}
+        className={`tab-strip-action${inVoiceMode ? ' on' : ''}`}
         title={inVoiceMode ? '退出配音编辑模式' : '进入配音编辑模式'}
         onClick={(event) => {
           event.stopPropagation();

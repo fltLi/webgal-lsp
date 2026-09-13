@@ -12,8 +12,10 @@
 //!   **不能加 `-I`**: 隔离模式会屏蔽用户级 site-packages, 而部分依赖 (如 `click`) 恰恰装在那里;
 //! * [`LaunchMode::Command`] - 完全自定义命令 (bat / ps1 / 任意可执行文件), Ink 只负责启动与收尸。
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -62,67 +64,31 @@ impl LaunchMode {
 pub struct CondaEnv {
     /// 环境名 (传给 `conda run -n <name>` 的那个名字)
     pub name: String,
-    /// 解析到的解释器路径
+    /// 面向界面的显示名: 环境名首字母大写 (`base` 例外 —— conda 自己就这么写)
+    pub display_name: String,
+    /// 该环境的解释器路径 (仅用于展示与兜底)
     pub program: String,
 }
 
 /// 在常见位置寻找 conda 环境。
 ///
-/// 刻意不依赖 PATH 上的 `conda`: 图形界面进程未必继承 shell 的初始化脚本, 而
-/// `conda env list` 的输出格式在不同版本间也不稳定。直接列目录最可靠。
+/// 刻意不依赖 PATH 上的 `conda`: 图形界面进程未必继承 shell 的初始化脚本。
+/// 两路并用 —— `conda env list` 能拿到自建目录里的环境, 直接扫目录能覆盖 conda
+/// 本体都找不到的情况。
 pub fn list_conda_envs() -> Vec<CondaEnv> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    for key in ["CONDA_ROOT", "CONDA_PREFIX", "CONDA_ENVS_PATH"] {
-        if let Ok(value) = std::env::var(key) {
-            if !value.is_empty() {
-                candidates.push(PathBuf::from(value));
-            }
-        }
-    }
-
-    let mut scan_roots: Vec<PathBuf> = candidates.clone();
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        let home = PathBuf::from(home);
-        for tool in ["miniconda3", "anaconda3", "miniforge3", "mambaforge"] {
-            scan_roots.push(home.join(tool));
-        }
-        scan_roots.push(home.join(".conda").join("envs"));
-        scan_roots.push(home.join("miniconda3").join("envs"));
-        scan_roots.push(home.join("anaconda3").join("envs"));
-    }
-    for drive in ["C:", "D:", "E:"] {
-        for tool in ["miniconda3", "anaconda3", "miniforge3", "mambaforge"] {
-            scan_roots.push(PathBuf::from(format!("{drive}\\{tool}")));
-        }
-    }
-
     let mut envs: Vec<CondaEnv> = Vec::new();
 
-    // 1) 从 `conda env list` 里拿到显式登记的路径 (包含自建目录)
-    if let Ok(output) = Command::new("conda").args(["env", "list"]).output() {
-        if let Ok(text) = String::from_utf8(output.stdout) {
-            for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((name, path)) = line.split_once(char::is_whitespace) else {
-                    continue;
-                };
-                if name == "base" {
-                    continue;
-                }
-                let path = PathBuf::from(path.trim());
-                if let Some(program) = python_in(&path) {
-                    push_env(&mut envs, name, program);
-                }
-            }
+    // 1) `conda env list` 里登记的环境 (包含 `envs_dirs` 指向的自定义目录)
+    let exe = conda_executable().unwrap_or_else(|| "conda".into());
+    if let Ok(output) = Command::new(exe).args(["env", "list"]).output() {
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        for line in text.lines() {
+            collect_env_line(&mut envs, line);
         }
     }
 
     // 2) 直接扫描常见安装位置
-    for root in scan_roots {
+    for root in conda_roots() {
         if let Some(program) = python_in(&root) {
             let name = root
                 .file_name()
@@ -131,24 +97,23 @@ pub fn list_conda_envs() -> Vec<CondaEnv> {
                 .to_string();
             push_env(&mut envs, &name, program);
         }
-        let child_root = if root.ends_with("envs") {
-            root.clone()
-        } else {
-            root.join("envs")
-        };
-        let Ok(entries) = std::fs::read_dir(&child_root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        // `<root>` 自身可能就是 envs 目录 (`.conda/envs`), 也可能带 `envs` 子目录
+        let child_roots = [root.clone(), root.join("envs")];
+        for child_root in child_roots {
+            let Ok(entries) = std::fs::read_dir(&child_root) else {
                 continue;
             };
-            if let Some(program) = python_in(&path) {
-                push_env(&mut envs, name, program);
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if let Some(program) = python_in(&path) {
+                    push_env(&mut envs, name, program);
+                }
             }
         }
     }
@@ -156,6 +121,24 @@ pub fn list_conda_envs() -> Vec<CondaEnv> {
     envs.sort_by_key(|env| env.name.to_lowercase());
     envs.dedup_by(|a, b| a.name == b.name);
     envs
+}
+
+/// 解析 `conda env list` 的一行 (`<name>  <path>` 或 `# ...`)
+fn collect_env_line(envs: &mut Vec<CondaEnv>, line: &str) {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return;
+    }
+    // 最后一段是路径, 前面是环境名 (名字本身可能含空格)
+    let Some(index) = line.rfind(char::is_whitespace) else {
+        return;
+    };
+    let (name, path) = line.split_at(index);
+    let name = name.trim();
+    let Some(program) = python_in(Path::new(path.trim())) else {
+        return;
+    };
+    push_env(envs, name, program);
 }
 
 /// 在给定环境中寻找解释器
@@ -176,8 +159,21 @@ fn push_env(envs: &mut Vec<CondaEnv>, name: &str, program: String) {
     }
     envs.push(CondaEnv {
         name: name.to_string(),
+        display_name: display_env_name(name),
         program,
     });
+}
+
+/// 环境名的显示形式: 首字母大写, `base` 保持原样 (与 conda 自己的写法一致)
+fn display_env_name(name: &str) -> String {
+    if name.eq_ignore_ascii_case("base") {
+        return "base".to_string();
+    }
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => name.to_string(),
+    }
 }
 
 /// 按环境名解析解释器: 先看 `CONDA_*` 指向的根, 再按常见位置拼路径
@@ -459,6 +455,78 @@ fn read_dir_entries(dir: &Path) -> Vec<DirEntryName> {
         .collect()
 }
 
+/// 定位 conda 本体 (命令行程序)。
+///
+/// 一定要走 `conda run` 而不是直接调用环境的 `python.exe`: 直接调用不会加载环境的
+/// 激活脚本 (Windows 上是 `Library\bin` 等路径), 于是环境里明明装了 numpy 也会
+/// `ModuleNotFoundError` —— 而在 Anaconda Prompt 里跑 `webui.py` 却正常。
+pub fn conda_executable() -> Option<String> {
+    if let Ok(prefix) = std::env::var("CONDA_EXE") {
+        if !prefix.trim().is_empty() {
+            return Some(prefix);
+        }
+    }
+    let roots = conda_roots();
+    for root in &roots {
+        for candidate in [
+            root.join("Scripts").join("conda.exe"),
+            root.join("condabin").join("conda.bat"),
+        ] {
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+    // 环境目录 (`.conda/envs/<name>`) 的祖先是 `.conda`, 其中通常也带一份 conda
+    for root in &roots {
+        if let Some(parent) = root.parent() {
+            let candidate = parent.join("Scripts").join("conda.exe");
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// conda 根目录候选 (`<root>` 与 `<root>\envs` 都由调用方拼装)
+fn conda_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for key in ["CONDA_ROOT", "CONDA_PREFIX"] {
+        if let Ok(value) = std::env::var(key) {
+            if !value.trim().is_empty() {
+                roots.push(PathBuf::from(value));
+            }
+        }
+    }
+    if let Ok(value) = std::env::var("CONDA_ENVS_PATH") {
+        for part in value.split(';').filter(|part| !part.trim().is_empty()) {
+            roots.push(PathBuf::from(part.trim()));
+        }
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let home = PathBuf::from(home);
+        for tool in [
+            ".conda",
+            "miniconda3",
+            "anaconda3",
+            "miniforge3",
+            "mambaforge",
+        ] {
+            roots.push(home.join(tool));
+        }
+    }
+    for base in [r"C:\ProgramData\miniconda3", r"C:\ProgramData\anaconda3"] {
+        roots.push(PathBuf::from(base));
+    }
+    for drive in ["C:", "D:", "E:"] {
+        for tool in ["miniconda3", "anaconda3", "miniforge3", "mambaforge"] {
+            roots.push(PathBuf::from(format!("{drive}\\{tool}")));
+        }
+    }
+    roots
+}
+
 /// 按探测结果构造默认启动配置
 pub fn default_config(root: &Path, detected: &DetectedRuntime) -> LaunchConfig {
     let mode = match &detected.embedded_python {
@@ -513,15 +581,36 @@ impl LaunchConfig {
             LaunchMode::Embedded { program } | LaunchMode::Python { program } => {
                 (program.clone(), script_args(self))
             }
-            LaunchMode::Conda { env, program } => {
-                // 优先用显式记录的解释器; 否则按环境名就地解析 (可能在别的机器上路径不同)
-                let resolved = program
-                    .clone()
-                    .filter(|path| !path.trim().is_empty())
-                    .or_else(|| resolve_conda_program(env))
-                    .unwrap_or_else(|| "python".into());
-                (resolved, script_args(self))
-            }
+            /*
+             * conda 环境必须走 `conda run`。
+             *
+             * 直接调用 `<env>\python.exe` **不会**加载环境的激活脚本 (Windows 上是
+             * `Library\bin`、`Scripts` 等路径), 于是环境里明明装了 numpy 也会
+             * `ModuleNotFoundError` —— 而在 Anaconda Prompt 里跑 webui 却一切正常。
+             * `conda run` 会先完成激活再执行 python, 与用户手动激活的语义一致。
+             */
+            LaunchMode::Conda { env, program } => match conda_executable() {
+                Some(conda) => {
+                    let mut args = vec![
+                        "run".to_string(),
+                        "-n".to_string(),
+                        env.clone(),
+                        "--no-capture-output".to_string(),
+                        "python".to_string(),
+                    ];
+                    args.extend(script_args(self));
+                    (conda, args)
+                }
+                // 找不到 conda 本体时退化为直接调用该环境的解释器 (至少路径是对的)
+                None => {
+                    let resolved = program
+                        .clone()
+                        .filter(|path| !path.trim().is_empty())
+                        .or_else(|| resolve_conda_program(env))
+                        .unwrap_or_else(|| "python".into());
+                    (resolved, script_args(self))
+                }
+            },
             // 自定义命令是**一整条命令**, 这里按命令行惯例切分 (支持引号包裹的路径)
             LaunchMode::Command { command } => {
                 let mut parts = split_command(command);
@@ -669,11 +758,16 @@ mod tests {
         })
         .build_command();
         assert_eq!(command.program, "C:/Program Files/gsov/start.bat");
-        assert_eq!(command.args, vec!["-a".to_string(), "127.0.0.1".to_string()]);
+        assert_eq!(
+            command.args,
+            vec!["-a".to_string(), "127.0.0.1".to_string()]
+        );
     }
 
     #[test]
-    fn conda_mode_uses_recorded_program_when_present() {
+    fn conda_mode_runs_through_conda_so_the_env_is_activated() {
+        // 必须走 `conda run`: 直接调用环境的 python.exe 不会激活环境,
+        // 环境里装好的 numpy 会变成 ModuleNotFoundError (用户实际遇到的报错)。
         let command = config(LaunchMode::Conda {
             env: "gpt-sovits".into(),
             program: Some("D:/conda/envs/gpt-sovits/python.exe".into()),
@@ -681,8 +775,17 @@ mod tests {
         .build_command();
         // conda 与外部 Python 一样不能加 -I
         assert!(!command.args.contains(&"-I".to_string()));
-        assert_eq!(command.program, "D:/conda/envs/gpt-sovits/python.exe");
-        assert_eq!(command.args[0], "api_v2.py");
+        if let Some(expected) = conda_executable() {
+            assert_eq!(command.program, expected);
+            assert_eq!(
+                &command.args[..5],
+                ["run", "-n", "gpt-sovits", "--no-capture-output", "python"]
+            );
+        } else {
+            // 本机没有 conda 本体时退化为直接调用环境解释器
+            assert_eq!(command.program, "D:/conda/envs/gpt-sovits/python.exe");
+        }
+        assert!(command.args.contains(&"api_v2.py".to_string()));
     }
 
     #[test]

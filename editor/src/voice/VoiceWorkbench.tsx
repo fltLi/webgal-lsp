@@ -23,7 +23,7 @@ import {
   FolderRegular,
   PlayRegular,
   QuestionCircleRegular,
-  StopRegular,
+  RecordStopRegular,
   WrenchRegular,
 } from '@fluentui/react-icons';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -167,7 +167,12 @@ export function VoiceWorkbench() {
         </div>
         <div className="voice-workbench-actions">
           {running ? (
-            <Button icon={<StopRegular />} onClick={() => void stop()}>
+            <Button
+              appearance="secondary"
+              className="danger-outline"
+              icon={<RecordStopRegular />}
+              onClick={() => void stop()}
+            >
               停止服务
             </Button>
           ) : (
@@ -219,8 +224,8 @@ export function VoiceWorkbench() {
                       title={modeLabel(launch)}
                       options={[
                         { value: 'embedded', label: '整合包内置运行时' },
-                        { value: 'conda', label: 'conda 环境' },
-                        { value: 'python', label: '外部 Python' },
+                        { value: 'python', label: '自定义 Python 解释器' },
+                        { value: 'conda', label: 'conda 运行环境' },
                         { value: 'command', label: '自定义命令' },
                       ]}
                       onChange={(kind) => patchLaunch({ mode: defaultMode(kind, launch) })}
@@ -241,12 +246,12 @@ export function VoiceWorkbench() {
                   )}
 
                   {launch.mode.kind === 'conda' && (
-                    <Field label="conda 环境">
+                    <Field label="conda 运行环境">
                       <Select
                         value={launch.mode.env}
-                        title="选择本机已安装的 conda 环境"
+                        title="选择本机已安装的 conda 环境（通过 conda run 调用，与手动激活等价）"
                         placeholder={condaEnvs.length === 0 ? '未发现 conda 环境' : '选择环境'}
-                        options={condaEnvs.map((env) => ({ value: env.name, label: env.name }))}
+                        options={condaEnvs.map((env) => ({ value: env.name, label: env.displayName }))}
                         onChange={(env) => patchLaunch({ mode: { kind: 'conda', env, program: null } })}
                       />
                     </Field>
@@ -273,7 +278,7 @@ export function VoiceWorkbench() {
                     <Field label="命令" className="workbench-field-wide">
                       <Input
                         value={launch.mode.command}
-                        placeholder="例如 C:\gsov\start.bat 或 conda run -n gpt-sovits python api_v2.py"
+                        placeholder="在这里直接写完整命令"
                         onChange={(_, data) => patchLaunch({ mode: { kind: 'command', command: data.value } })}
                       />
                     </Field>
@@ -328,18 +333,26 @@ export function VoiceWorkbench() {
               </button>
             </div>
             <span className="workbench-spacer" />
-            {queuePage === 'log' ? (
-              <Button
-                size="small"
-                appearance="subtle"
-                title="把运行日志导出为文本文件"
-                icon={<ArrowDownloadRegular />}
-                disabled={logs.length === 0}
-                onClick={() => void exportLogs()}
-              >
-                导出日志
-              </Button>
-            ) : (
+            {queuePage === 'log' && (
+              <>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  title="刷新日志"
+                  icon={<ArrowClockwiseRegular />}
+                  onClick={() => void voiceController.syncStatus()}
+                />
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  title="导出日志"
+                  icon={<ArrowDownloadRegular />}
+                  disabled={logs.length === 0}
+                  onClick={() => void exportLogs()}
+                />
+              </>
+            )}
+            {queuePage === 'queue' && (
               <>
                 <Button
                   size="small"
@@ -401,14 +414,6 @@ export function VoiceWorkbench() {
                   {line}
                 </div>
               ))}
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<ArrowClockwiseRegular />}
-                onClick={() => void voiceController.syncStatus()}
-              >
-                刷新
-              </Button>
             </div>
           )}
         </section>
@@ -440,10 +445,21 @@ function defaultMode(kind: string, launch: LaunchConfig): LaunchMode {
     case 'python':
       return { kind: 'python', program: 'python' };
     case 'command':
-      return { kind: 'command', command: '' };
+      return { kind: 'command', command: defaultCommand(launch) };
     default:
       return { kind: 'embedded', program: `${launch.root}\\runtime\\python.exe` };
   }
+}
+
+/**
+ * 自定义命令的默认值: 直接给出"用整合包内置运行时跑它的控制脚本"这条等价命令。
+ *
+ * 这样切到自定义命令时拿到的是一个**已经能跑**的命令行 (路径已指向整合包),
+ * 按需改一处即可; 而不是 `C:\gsov\start.bat` 那种要自己从零猜的示例。
+ */
+function defaultCommand(launch: LaunchConfig): string {
+  const root = launch.root.replace(/[\\/]+$/, '');
+  return `"${root}\\runtime\\python.exe" "${root}\\${launch.script}" -a ${launch.host} -p ${launch.port} -c ${launch.inferConfig}`;
 }
 
 function modeLabel(launch: LaunchConfig): string {
@@ -451,7 +467,7 @@ function modeLabel(launch: LaunchConfig): string {
     case 'embedded':
       return '使用整合包自带的 runtime\\python.exe（自动加 -I 隔离）';
     case 'conda':
-      return '复用 conda 环境（不隔离，依赖装在用户级 site-packages 时必需）';
+      return '通过 conda run 调用指定环境（等于先激活环境再执行，不加 -I）';
     case 'python':
       return '使用指定的 Python 解释器（不隔离）';
     default:

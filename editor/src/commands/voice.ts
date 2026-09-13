@@ -18,6 +18,8 @@ export type LaunchMode =
 
 export interface CondaEnv {
   name: string;
+  /** 面向界面的显示名 */
+  displayName: string;
   program: string;
 }
 

@@ -357,9 +357,9 @@ body.resizing {
   align-items: center;
   gap: 6px;
   /*
-   * 所有选项卡左右内边距**完全一致**: 图标起点对齐, 也保证工作台/说明这类
-   * 没有前导按钮的选项卡与场景卡的图标落在同一条竖线上。
-   * (曾经为场景卡单独调过左内边距, 结果两者图标差了几个像素。)
+   * 所有选项卡左右内边距**完全一致**, 且**不为任何东西预留槽位**。
+   * 一旦给"可能出现的图标"留白, 没有图标的选项卡标题前面就会多出一段死留白。
+   * 配音开关的占位靠 `.tab-strip-action.hidden` 自己做 (见下), 与标题留白无关。
    */
   padding: 8px 10px;
   border-right: 1px solid var(--app-border);
@@ -449,13 +449,8 @@ body.resizing {
 }
 
 /*
- * 不可用时只隐藏、不塌陷: 槽位始终占位, 因此开关的有无不会让标题左右跳动。
- * `visibility: hidden` 同时保证它不可点击 (用 opacity: 0 会留下透明的点击区)。
+ * 不可用时不该出现, 因此不再需要占位样式 (由 `EditorPage` 直接不渲染)。
  */
-.tab-strip-action.hidden {
-  visibility: hidden;
-  pointer-events: none;
-}
 
 .tab-strip-action:hover {
   color: var(--app-fg);
@@ -1016,6 +1011,29 @@ body.resizing {
 [data-theme='dark'] .danger-button.fui-Button:hover {
   background: #f58b94;
   border-color: #f58b94;
+}
+
+/* 危险操作: 线框风格 (红字红框, 不填色) —— 用于"停止服务"这类需要醒目但不该像删除按钮的操作 */
+.danger-outline.fui-Button {
+  color: #d13438;
+  border-color: #d13438;
+}
+
+.danger-outline.fui-Button:hover {
+  color: #fff;
+  background: #d13438;
+  border-color: #d13438;
+}
+
+[data-theme='dark'] .danger-outline.fui-Button {
+  color: #f1707b;
+  border-color: #f1707b;
+}
+
+[data-theme='dark'] .danger-outline.fui-Button:hover {
+  color: #1e1e1e;
+  background: #f1707b;
+  border-color: #f1707b;
 }
 
 /* 关于页链接 */
@@ -2499,10 +2517,126 @@ body.resizing {
 }
 
 /* -------- 角色选择对话框 -------- */
-.character-picker .character-grid {
+/* -------- 角色列表 (总控台): 只展示信息, 点卡片打开编辑对话框 -------- */
+.character-tile {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+
+.character-tile:hover {
+  border-color: var(--app-accent);
+}
+
+.character-tile-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+
+.character-tile-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.character-tile-star {
+  font-size: 11px;
+  color: #d18f00;
+}
+
+.character-tile-meta {
+  font-size: 11px;
+  color: var(--app-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* 图标型危险按钮 (删除角色): 平时保持中性, 悬停才变红 */
+.danger-icon.fui-Button:hover {
+  color: #d13438;
+}
+
+[data-theme='dark'] .danger-icon.fui-Button:hover {
+  color: #f1707b;
+}
+
+/* -------- 编辑角色对话框 -------- */
+.role-edit-form {
+  flex: none;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.role-edit-form > :first-child,
+.role-edit-form > :nth-child(2) {
+  min-width: 0;
+}
+
+.role-edit-switches {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  grid-column: 1 / -1;
+}
+
+/* 描述与模型要占满整行 */
+.role-edit-span {
+  grid-column: 1 / -1;
+}
+
+/* 「GPT-SoVITS 模型」: 左右两个下拉 */
+.role-edit-models {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
+}
+
+.role-edit-references {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--app-border);
+  padding-top: 10px;
+}
+
+.role-edit-references-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* -------- 选择角色对话框: 每行三块 -------- */
+.character-grid-pick {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.character-grid-pick .character-block-main {
+  cursor: default;
 }
 
 .character-block {
