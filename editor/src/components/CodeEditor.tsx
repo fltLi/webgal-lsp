@@ -37,6 +37,8 @@ export function CodeEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const highlightDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  /** 当前编辑器承载的文档路径 (外部内容回灌前要确认没认错文档) */
+  const editorPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -70,6 +72,7 @@ export function CodeEditor({
 
     // 供 highlightLine 装饰复用 (避免因高亮变化而重建编辑器)
     editorRef.current = editor;
+    editorPathRef.current = path;
     highlightDecorations.current = editor.createDecorationsCollection();
 
     // 编辑器设置变化时热更新 (避免重建编辑器丢失光标)
@@ -352,9 +355,29 @@ export function CodeEditor({
       }
       highlightDecorations.current = null;
       editorRef.current = null;
+      editorPathRef.current = null;
       editor.dispose();
     };
   }, [doc.path]);
+
+  /*
+   * 外部内容变化 (配音「应用」、冲突裁决「加载磁盘」、备份回滚) 回灌进 model。
+   *
+   * 编辑器只在挂载时读一次 `doc.content`, 之后文档被别处改掉, 画面上仍是旧文本 ——
+   * 用户看到的就是"点了应用却什么都没变"。以 store 为准回灌即可解决。
+   *
+   * * 编辑器自己敲的字不会走到这里 (两边内容相等, 直接返回), 因此不打断输入;
+   * * `setValue` 会清空撤销栈: 外部整体替换本就无法与之合并, 这是应有的语义。
+   */
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || editorPathRef.current !== doc.path) return;
+    if (model.getValue() === doc.content) return;
+    const position = editor.getPosition();
+    model.setValue(doc.content);
+    if (position) editor.setPosition(position);
+  }, [doc.content, doc.path]);
 
   /*
    * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。

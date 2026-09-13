@@ -7,15 +7,24 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { executionOrder, groupByCharacter, nextTask, summarize, type QueueTask } from '../src/voice/queue';
+import {
+  executionOrder,
+  groupByCharacter,
+  nextTask,
+  queueView,
+  summarize,
+  type QueueTask,
+} from '../src/voice/queue';
 
 function task(
   id: string,
   kind: 'test' | 'generate',
   characterId: string | null,
-  status: QueueTask['status'] = 'pending'
+  status: QueueTask['status'] = 'pending',
+  priority: QueueTask['priority'] = kind === 'test' ? 'immediate' : 'normal',
+  finishedAt?: number
 ): QueueTask {
-  return { id, kind, characterId, status };
+  return { id, kind, characterId, status, priority, finishedAt };
 }
 
 describe('groupByCharacter', () => {
@@ -61,6 +70,26 @@ describe('executionOrder', () => {
       task('gen2', 'generate', 'anon'),
     ]);
     expect(order.map((item) => item.id)).toEqual(['test1', 'gen1', 'gen2']);
+  });
+
+  it('排队中的生成任务被改成"优先"后插到前面', () => {
+    const order = executionOrder([
+      task('t1', 'test', 'anon'),
+      task('gen', 'generate', 'soyo'),
+      task('gen2', 'generate', 'anon', 'pending', 'immediate'),
+    ]);
+    // t1 与 gen2 都在立即队列 (按角色分组, t1 先出现), gen 仍在常规队列
+    expect(order.map((item) => item.id)).toEqual(['t1', 'gen2', 'gen']);
+  });
+
+  it('优先级只看任务自己的字段, 与 kind 无关', () => {
+    // 一条被降级的测试任务不该再抢在生成任务前面
+    const order = executionOrder([
+      task('test', 'test', 'anon', 'pending', 'normal'),
+      task('gen', 'generate', 'soyo'),
+    ]);
+    // 同优先级时按角色分组, 首次出现的角色在前
+    expect(order.map((item) => item.id)).toEqual(['test', 'gen']);
   });
 
   it('立即队列内部同样按角色分组', () => {
@@ -136,8 +165,50 @@ describe('summarize', () => {
       pending: 0,
       pendingTest: 0,
       pendingGenerate: 0,
+      pendingImmediate: 0,
       running: 0,
       delayMillis: 0,
     });
+  });
+
+  it('统计立即队列时按优先级, 而不是按任务类型', () => {
+    const summary = summarize(
+      [
+        task('1', 'test', 'a', 'pending', 'normal'),
+        task('2', 'generate', 'a', 'pending', 'immediate'),
+        task('3', 'generate', 'a'),
+      ],
+      estimate
+    );
+    expect(summary.pendingTest).toBe(1);
+    expect(summary.pendingGenerate).toBe(2);
+    // 被降级的测试不算立即队列, 被提升的生成算
+    expect(summary.pendingImmediate).toBe(1);
+  });
+});
+
+describe('queueView', () => {
+  it('运行中 -> 排队中(执行顺序) -> 已结束(结束时刻从新到旧)', () => {
+    const view = queueView([
+      task('done-old', 'test', 'a', 'done', 'immediate', 1000),
+      task('pending-gen', 'generate', 'a'),
+      task('running', 'test', 'a', 'running'),
+      task('done-new', 'test', 'a', 'done', 'immediate', 3000),
+      task('pending-test', 'test', 'a'),
+      task('canceled', 'generate', 'a', 'canceled', 'normal', 2000),
+    ]);
+    expect(view.map((item) => item.id)).toEqual([
+      'running',
+      'pending-test',
+      'pending-gen',
+      'done-new',
+      'canceled',
+      'done-old',
+    ]);
+  });
+
+  it('没有 finishedAt 的旧记录按入队时刻排在末尾', () => {
+    const view = queueView([task('a', 'test', 'x', 'done'), task('b', 'generate', 'x', 'done', 'normal', 5000)]);
+    expect(view.map((item) => item.id)).toEqual(['b', 'a']);
   });
 });

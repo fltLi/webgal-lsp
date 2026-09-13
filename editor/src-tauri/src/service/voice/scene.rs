@@ -9,7 +9,7 @@
 //! 补齐后的归属者参与内容哈希, 因此上游说话者行被删除时, 受影响对话的哈希会变化,
 //! 前端以此识别 "身份不稳定" 的历史项。
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use webgal_language_core::{
@@ -43,27 +43,6 @@ pub struct SayLine {
     pub figure: Option<String>,
     /// 语句身份哈希 (对话者 + 内容 + 现有配音)
     pub hash: String,
-}
-
-/// 语句改动请求
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LineEdit {
-    /// 目标行号 (0 起)
-    pub line: usize,
-    /// 期望的原始内容, 用于写回前的一致性校验; 为 `None` 时跳过校验
-    pub expect: Option<String>,
-    /// 新的配音引用; `None` 表示移除
-    pub vocal: Option<String>,
-}
-
-/// 语句改动结果
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LineEditResult {
-    pub line: usize,
-    /// 改写后的整行内容
-    pub text: String,
 }
 
 /// 从场景内容抽取全部对话语句

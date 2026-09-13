@@ -523,69 +523,18 @@ pub async fn voice_parse_scene(content: String) -> Result<Vec<scene::SayLine>, S
     Ok(scene::parse_say_lines(&content))
 }
 
-/// 改写若干条语句的配音引用。
+/// 改写**一条**对话语句的配音引用。
 ///
-/// 任何一条校验失败都会整体回滚 (返回 `Err`), 避免场景被部分改写。
+/// 入参是这条对话的整行原文与要写入的 `-vocal=` 值 (`None` 表示移除), 返回改写后的
+/// 这一行。后端只做纯粹的文本变换, **不接收场景全文, 也不接收行号**:
+///
+/// * 行号是"文件此刻的样子"的知识, 而文件在编辑器手里的版本与后端的快照随时可能不同
+///   —— 一次错位就会改到别的对话上;
+/// * 写盘由持有文档的编辑器决定 (自动保存设置说了算), 后端插一脚只会让"文件变了、
+///   编辑器没变", 随后变更检测把这次自写当成外部改动, 弹出冲突对话框。
 #[tauri::command]
-pub async fn voice_apply_lines(
-    content: String,
-    edits: Vec<scene::LineEdit>,
-) -> Result<Vec<scene::LineEditResult>, String> {
-    if edits.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 统一按 LF 切分 (编辑器内容已是 LF; 磁盘读取时由调用方做行尾归一)
-    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
-    let mut results = Vec::new();
-
-    for edit in &edits {
-        let current = lines
-            .get(edit.line)
-            .ok_or_else(|| format!("第 {} 行已不存在, 场景可能已被修改", edit.line + 1))?;
-
-        if let Some(expect) = &edit.expect {
-            if current.trim_end() != expect.trim_end() {
-                return Err(format!(
-                    "第 {} 行的内容与预期不符, 场景可能已被修改",
-                    edit.line + 1
-                ));
-            }
-        }
-
-        let rewritten = scene::rewrite_line(current, edit.vocal.as_deref())?;
-        lines[edit.line] = rewritten.clone();
-        results.push(scene::LineEditResult {
-            line: edit.line,
-            text: rewritten,
-        });
-    }
-
-    Ok(results)
-}
-
-/// 生成改写后的完整场景内容 (供前端一次性写回编辑器)
-#[tauri::command]
-pub async fn voice_apply_scene(
-    content: String,
-    edits: Vec<scene::LineEdit>,
-) -> Result<String, String> {
-    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
-    for edit in &edits {
-        let current = lines
-            .get(edit.line)
-            .ok_or_else(|| format!("第 {} 行已不存在, 场景可能已被修改", edit.line + 1))?;
-        if let Some(expect) = &edit.expect {
-            if current.trim_end() != expect.trim_end() {
-                return Err(format!(
-                    "第 {} 行的内容与预期不符, 场景可能已被修改",
-                    edit.line + 1
-                ));
-            }
-        }
-        lines[edit.line] = scene::rewrite_line(current, edit.vocal.as_deref())?;
-    }
-    Ok(lines.join("\n"))
+pub async fn voice_rewrite_line(text: String, vocal: Option<String>) -> Result<String, String> {
+    scene::rewrite_line(&text, vocal.as_deref())
 }
 
 // -------- 命令: 音频 --------

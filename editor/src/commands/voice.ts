@@ -77,17 +77,6 @@ export interface SayLine {
   hash: string;
 }
 
-export interface LineEdit {
-  line: number;
-  expect: string | null;
-  vocal: string | null;
-}
-
-export interface LineEditResult {
-  line: number;
-  text: string;
-}
-
 export interface AudioInfo {
   path: string;
   sampleRate: number;
@@ -300,12 +289,14 @@ export function voiceParseScene(content: string): Promise<SayLine[]> {
   return invoke<SayLine[]>('voice_parse_scene', { content });
 }
 
-export function voiceApplyScene(content: string, edits: LineEdit[]): Promise<string> {
-  return invoke<string>('voice_apply_scene', { content, edits });
-}
-
-export function voiceApplyLines(content: string, edits: LineEdit[]): Promise<LineEditResult[]> {
-  return invoke<LineEditResult[]>('voice_apply_lines', { content, edits });
+/**
+ * 改写一条对话语句的配音引用。
+ *
+ * `text` 是这条对话的整行原文, `vocal` 是要写入的 `-vocal=` 值 (null 表示移除);
+ * 返回改写后的这一行。**定位与写回都在调用方完成** —— 见 `controller.rewriteLine`。
+ */
+export function voiceRewriteLine(text: string, vocal: string | null): Promise<string> {
+  return invoke<string>('voice_rewrite_line', { text, vocal });
 }
 
 // -------- 音频 --------

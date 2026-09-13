@@ -2733,11 +2733,10 @@ body.resizing {
 .scene-voice-panel {
   /*
    * 高度固定: 光标移出对话时只清空内容, 布局不跳动。
-   * 取 360px 是因为「语句面板」默认内容 (角色/语言、文本、参考音频/种子、
-   * 温度/语速、高级设置开关、操作按钮、状态行) 约需 340px —— 之前取 340px 顶着
-   * 边界, 于是默认状态就出现滚动条。
+   * 取 300px 是因为「语句面板」的**页脚固定、设置项独立滚动** (见 `.voice-fields`):
+   * 三行设置 + 页脚 (状态行 + 按钮) 恰好一屏, 展开「高级设置」时也只有设置项那一段滚。
    */
-  height: 360px;
+  height: 300px;
   border-top: 1px solid var(--app-border);
   overflow: hidden;
   display: flex;
@@ -2783,13 +2782,28 @@ body.resizing {
  * 默认状态下不出现滚动条, 否则每次移动光标换句子都会滚动、跳动。
  * 「高级设置」默认折叠, 它展开时才允许滚动。
  */
+/*
+ * 语句面板: 上面是设置项 (独立滚动), 下面是固定的页脚 (状态行 + 按钮)。
+ *
+ * 分成两段是刻意的: 展开「高级设置」时, 如果整块面板一起滚, 状态行和「生成/应用」
+ * 就会跟着滑出视野; 现在只有设置项那一段滚, 按钮永远在同一个位置。
+ */
 .voice-sentence-panel {
   padding: 8px 10px;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
   border-right: 1px solid var(--app-border);
+}
+
+.voice-fields {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .voice-row {
@@ -2810,35 +2824,36 @@ body.resizing {
 
 /*
  * 字段宽度是三行布局的一部分:
- *   第一行 角色 | 语言 | 参考音频   —— 参考音频要看清文本与时长, 由它吃掉剩余宽度
+ *   第一行 角色 | 语言 | 参考音频   —— 角色只比语言宽一点, 参考音频吃掉剩余宽度
  *   第二行 文本                     —— 独占一行
  *   第三行 种子 | 温度 | 语速 | 高级设置
  * 都用 `flex-basis` 定一个"理想宽度": 面板变窄时先按比例收缩, 实在放不下就由
  * `.voice-row` 折行 (宁可折行, 也不要把数字框挤到只剩标签)。
  */
 .voice-field-character {
-  flex: 0 1 190px;
+  flex: 0 1 140px;
 }
 .voice-field-language {
-  flex: 0 1 120px;
+  flex: 0 1 118px;
 }
 .voice-field-reference {
   flex: 1 1 180px;
 }
 .voice-field-text {
   /*
-   * 不吸收剩余高度: 剩下的空间留给页脚的 `margin-top: auto`。
+   * 不吸收剩余高度: 剩下的空间留给页脚。
    * 让文本框吃掉空隙的话, 框会吊在字段顶部、下面留一大片空白, 看起来像没画完。
    */
   flex: 0 0 auto;
 }
 .voice-field-seed {
-  flex: 1 1 150px;
+  /* 输入框两侧各一个加减按钮, 右边还有一个"换随机种子" */
+  flex: 0 1 160px;
 }
 .voice-field-number {
-  flex: 0 1 116px;
-  /* 数字框右侧还有范围提示, 再窄就读不出来了 */
-  min-width: 100px;
+  /* [−][数值][+] */
+  flex: 0 1 122px;
+  min-width: 112px;
 }
 
 .voice-label {
@@ -2847,6 +2862,12 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.voice-label-range {
+  /* 取值范围跟在标签后面并靠右: 输入框里只留数值和加减按钮 */
+  margin-left: auto;
+  font-size: 10px;
 }
 
 .voice-label-tag {
@@ -2876,8 +2897,32 @@ body.resizing {
 .voice-reference,
 .voice-seed {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
+}
+
+/* 数值框: [−] 输入框 [+] (刻度由 NumberInput 的 tick.step 决定) */
+.voice-number {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.voice-number .voice-control {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.voice-number-step.fui-Button {
+  flex: none;
+  min-width: 22px;
+  padding: 0 2px;
+}
+
+.voice-seed .voice-number {
+  flex: 1 1 auto;
 }
 .voice-reference-name {
   flex: 1;
@@ -2916,11 +2961,11 @@ body.resizing {
 /*
  * 页脚: 状态行 + 操作按钮。
  *
- * 用一条分隔线与上面的参数区隔开, 并整体沉到面板底部 (`margin-top: auto`) —— 否则
- * 参数区一长, 状态行和按钮就贴着「高级设置」, 看起来像是那一行的附属说明。
+ * 用一条分隔线与上面的设置项隔开, 并固定在面板底部 —— 设置项一长, 状态行和按钮就贴着
+ * 「高级设置」, 看起来像是那一行的附属说明。
  */
 .voice-footer {
-  margin-top: auto;
+  flex: none;
   padding-top: 6px;
   border-top: 1px solid var(--app-border);
   display: flex;
@@ -3060,6 +3105,83 @@ body.resizing {
   gap: 6px;
   font-size: 11px;
 }
+
+/* 播放 / 删除等操作跟基本信息同一行, 靠右对齐 */
+.history-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/*
+ * 队列优先级标记 (历史记录与工作台队列共用)。
+ * 排队中时是一个按钮 (可点着改), 其余状态是同样外观的 span (只展示)。
+ */
+.priority-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--app-border);
+  border-radius: 3px;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--app-muted);
+}
+
+span.priority-chip {
+  cursor: default;
+}
+
+button.priority-chip {
+  cursor: pointer;
+}
+
+button.priority-chip:hover {
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+}
+
+.priority-chip.immediate {
+  border-color: #b8860b;
+  color: #b8860b;
+}
+
+[data-theme='dark'] .priority-chip.immediate {
+  border-color: #d7a12c;
+  color: #d7a12c;
+}
+
+/* 危险操作 (删除 / 取消): 平时就是红的 */
+.danger-text.fui-Button,
+.danger-text.fui-Button:hover {
+  color: #d13438;
+}
+
+.danger-text.fui-Button:hover {
+  background: rgba(209, 52, 56, 0.12);
+}
+
+[data-theme='dark'] .danger-text.fui-Button,
+[data-theme='dark'] .danger-text.fui-Button:hover {
+  color: #f1707b;
+}
+
+.context-menu button.danger-text {
+  color: #d13438;
+}
+
+.context-menu button.danger-text:hover:not(:disabled) {
+  background: rgba(209, 52, 56, 0.12);
+}
+
+[data-theme='dark'] .context-menu button.danger-text {
+  color: #f1707b;
+}
 .history-time {
   color: var(--app-muted);
 }
@@ -3111,6 +3233,33 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/*
+ * 任务进度: 进度条 + "已用 / 预计还需"。
+ *
+ * 服务端不提供进度, 因此这条进度是**按预估时间走的** (见 estimate.ts): 它一直在动,
+ * 但走满只代表"该好了", 不代表一定结束。
+ */
+.task-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voice-task .task-progress {
+  /* 队列项里独占一行: 不然进度条会把角色名和状态挤成一团 */
+  flex: 1 0 100%;
+}
+
+.task-progress-text {
+  font-size: 10px;
+  color: var(--app-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .history-actions {
   display: flex;

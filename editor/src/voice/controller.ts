@@ -23,7 +23,6 @@ import type {
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { CondaEnv } from '../commands/voice';
 import {
-  voiceApplyScene,
   voiceCreateCharacter,
   voiceDefaultLaunchConfig,
   voiceDropCache,
@@ -39,6 +38,7 @@ import {
   voiceProbeAudio,
   voiceRealign,
   voiceRemoveCharacter,
+  voiceRewriteLine,
   voiceSaveCharacter,
   voiceSetModel,
   voiceShutdown,
@@ -57,14 +57,15 @@ import { charactersRoot, join } from './paths';
 import { executionOrder, nextTask as nextQueuedTask, summarize as summarizeQueue } from './queue';
 import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './settings';
 import {
-  GENERATE_SAMPLE_STEPS,
   createId,
   defaultParams,
   paramsKey,
+  priorityOf,
   randomSeed,
   seedForDialogue,
   type HistoryEntry,
   type SceneVoiceState,
+  type TaskPriority,
   type VoiceParams,
   type VoiceTask,
 } from './types';
@@ -257,7 +258,11 @@ class VoiceController {
       topK: selected?.params.topK ?? defaults.topK,
       topP: selected?.params.topP ?? defaults.topP,
       repetitionPenalty: selected?.params.repetitionPenalty ?? defaults.repetitionPenalty,
-      sampleSteps: selected?.params.sampleSteps ?? GENERATE_SAMPLE_STEPS,
+      /*
+       * 采样步数是"**正式生成**用几档", 因此只认生成记录: 测试记录固定 4 步, 让它
+       * 回填会把面板上的步数带成 x4 —— 点一次测试, 正式生成的档位就掉下去了。
+       */
+      sampleSteps: (selected?.kind === 'generate' ? selected.params.sampleSteps : null) ?? defaults.generateSampleSteps,
       // 文本始终跟随场景 (历史项可能属于改过的文本)
       text: line.text,
     };
@@ -275,8 +280,17 @@ class VoiceController {
 
   /**
    * 入队一次合成。`line` 由调用方直接给出 (见 `currentParams` 的说明)。
+   *
+   * `priority` 默认按任务类型给 (测试优先、生成常规), 但可以显式指定 —— 排队中的
+   * 任务允许被插队或降级 (见 `setPriority`)。
    */
-  enqueue(id: string, kind: 'test' | 'generate', line: SayLine, params: VoiceParams): VoiceTask | null {
+  enqueue(
+    id: string,
+    kind: 'test' | 'generate',
+    line: SayLine,
+    params: VoiceParams,
+    priority: TaskPriority = priorityOf(kind)
+  ): VoiceTask | null {
     const card = this.cards.get(id);
     if (!card) return null;
 
@@ -293,6 +307,7 @@ class VoiceController {
     const task: VoiceTask = {
       id: createId('voice-task'),
       kind,
+      priority,
       status: 'pending',
       cardId: id,
       scenePath: card.scenePath,
@@ -310,6 +325,7 @@ class VoiceController {
     const entry: HistoryEntry = {
       id: task.id,
       kind,
+      priority,
       status: 'pending',
       line: line.line,
       speaker: line.speaker,
@@ -340,12 +356,30 @@ class VoiceController {
     return task;
   }
 
-  /** 取消一个未完成的任务 */
+  /**
+   * 取消一个未完成的任务。
+   *
+   * **运行中也允许取消**: 推理本身没有中断接口, 因此取消的含义是"这一条不要了" ——
+   * 结果返回后直接丢弃 (音频已进缓存, 由缓存清理回收), 队列继续往下跑。若不允许取消
+   * 运行中的任务, 界面上的取消按钮在任务开始后就变成摆设。
+   */
   cancel(taskId: string): void {
     const task = this.tasks.find((item) => item.id === taskId);
-    if (!task || task.status !== 'pending') return;
+    if (!task || (task.status !== 'pending' && task.status !== 'running')) return;
     task.status = 'canceled';
     this.updateHistory(task);
+    this.emit();
+  }
+
+  /** 调整**排队中**任务的优先级 (立即 / 常规); 已在跑或已结束的任务不改动 */
+  setPriority(taskId: string, priority: TaskPriority): void {
+    const task = this.tasks.find((item) => item.id === taskId);
+    if (!task || task.status !== 'pending') return;
+    task.priority = priority;
+    const card = this.cards.get(task.cardId);
+    const entry = card?.history.find((item) => item.id === taskId);
+    if (entry) entry.priority = priority;
+    if (card) this.syncCard(card);
     this.emit();
   }
 
@@ -412,21 +446,36 @@ class VoiceController {
         seed: task.params.seed,
       });
 
-      task.status = 'done';
-      task.audioHash = result.entry.hash;
-      task.audioPath = result.entry.path;
-      task.duration = result.duration;
-      task.finishedAt = Date.now();
-      estimator.observe(task.kind, task.params.text.length, task.finishedAt - (task.startedAt ?? task.finishedAt));
-      this.store().upsertVoiceCache(result.entry);
+      // 推理期间被取消: 结果直接丢弃 (推理无法中断, 只能不要这个结果)
+      if (!this.isCanceled(task.id)) {
+        task.status = 'done';
+        task.audioHash = result.entry.hash;
+        task.audioPath = result.entry.path;
+        task.duration = result.duration;
+        estimator.observe(task.kind, task.params.text.length, Date.now() - (task.startedAt ?? Date.now()));
+        this.store().upsertVoiceCache(result.entry);
+      }
     } catch (error) {
-      task.status = 'failed';
-      task.error = error instanceof Error ? error.message : String(error);
-      task.finishedAt = Date.now();
+      // 已取消的任务不再报错 (用户已经表明不要这一条了)
+      if (!this.isCanceled(task.id)) {
+        task.status = 'failed';
+        task.error = error instanceof Error ? error.message : String(error);
+      }
     }
 
+    task.finishedAt = Date.now();
     this.updateHistory(task);
     this.emit();
+  }
+
+  /**
+   * 任务是否已被取消。
+   *
+   * 必须重新查一遍而不是读 `task.status`: 等待推理的这段时间里 `cancel` 会从另一条
+   * 路径改掉它, 而 TypeScript 对 `task.status` 的收窄还停留在赋值那一刻。
+   */
+  private isCanceled(taskId: string): boolean {
+    return this.tasks.find((item) => item.id === taskId)?.status === 'canceled';
   }
 
   private updateHistory(task: VoiceTask): void {
@@ -435,6 +484,8 @@ class VoiceController {
     const entry = card.history.find((item) => item.id === task.id);
     if (!entry) return;
     entry.status = task.status;
+    entry.priority = task.priority;
+    entry.startedAt = task.startedAt;
     entry.audioHash = task.audioHash;
     entry.audioPath = task.audioPath;
     entry.duration = task.duration;
@@ -446,9 +497,50 @@ class VoiceController {
   // -------- 应用 / 移除 --------
 
   /**
-   * 把已生成的音频应用到当前语句: 写入 `game/vocal/<角色 id>/<哈希>.wav` 并改写 `-vocal=`。
+   * 把某条对话的 `-vocal=` 改成给定值 (`null` 表示移除)。
    *
-   * 行号与内容在写回前会与解析时快照校验, 场景若已被改动则中止 (避免改错行)。
+   * 数据流刻意是"**后端只改写这一行 -> 前端把它替换进文档**":
+   *
+   * * 编辑器里的文档才是唯一真相。直接写盘会出现"文件变了、编辑器没变", 随后磁盘变更
+   *   检测把这次自写当成外部改动, 过一会儿弹出冲突对话框 (这正是之前的毛病);
+   * * 是否落盘完全交给自动保存设置决定, 与普通编辑走同一条路, 不再由配音流程另立规矩;
+   * * 行号只在这里用一次 (替换哪一行), 后端拿到的只是那一行的文本。
+   */
+  private async rewriteLine(id: string, lineNumber: number, vocal: string | null): Promise<void> {
+    const card = this.cards.get(id);
+    if (!card) return;
+    const store = this.store();
+    const doc = store.documents.find((item) => item.path === card.scenePath);
+    const content = doc?.content ?? (await fs.readText(card.scenePath));
+
+    const lines = content.split('\n');
+    const current = lines[lineNumber];
+    if (current === undefined) throw new Error(`第 ${lineNumber + 1} 行已不存在，场景可能已被修改`);
+
+    lines[lineNumber] = await voiceRewriteLine(current, vocal);
+    const next = lines.join('\n');
+
+    store.updateDocument(card.scenePath, { content: next, dirty: true });
+    if (store.settings.autoSave) {
+      await fs.writeText(card.scenePath, next);
+      store.updateDocument(card.scenePath, { content: next, dirty: false });
+      /*
+       * 这次写盘是**我们自己**做的, 必须同步"打开时的磁盘哈希"。
+       *
+       * 不同步的话, 下一次磁盘变更检测 (定时轮询 / 窗口获得焦点) 会拿磁盘上的新内容
+       * 与旧哈希比对, 判定为"被外部修改", 弹出冲突对话框 —— 用户什么都没做, 却要裁决
+       * 一次自己刚点出来的改动。
+       */
+      card.diskHash = hashText(normalizeEol(next));
+    }
+
+    await this.refreshCard(id, next);
+    this.syncCard(card);
+  }
+
+  /**
+   * 把已生成的音频应用到某条对话: 音频落到 `game/vocal/<角色 id>/<哈希>.wav`,
+   * 并把该行的 `-vocal=` 指向它。
    */
   async apply(id: string, entryId: string): Promise<void> {
     const card = this.cards.get(id);
@@ -462,52 +554,32 @@ class VoiceController {
 
     const dialogue = card.dialogues.find((item) => item.line === entry.line);
     if (!dialogue) throw new Error('该语句已不在场景中, 请重新对齐历史');
-    const targetLine = entry.line;
 
     const character = this.characterById(entry.characterId);
     const dir = character?.id || 'narration';
     const fileName = `${entry.audioHash}.wav`;
-    const vocalRoot = `${project.replace(/[\\/]+$/, '')}\\game\\vocal`;
-    const targetDir = `${vocalRoot}\\${dir}`;
+    const targetDir = `${project.replace(/[\\/]+$/, '')}\\game\\vocal\\${dir}`;
     await fs.mkdir(targetDir);
     await fs.rename(entry.audioPath, `${targetDir}\\${fileName}`);
 
-    // 改写场景: 用完整的场景内容一次写回, 避免多处编辑产生中间态
-    const doc = this.store().documents.find((item) => item.path === card.scenePath);
-    const content = doc?.content ?? (await fs.readText(card.scenePath));
-    const rewritten = await voiceApplyScene(content, [{ line: targetLine, expect: null, vocal: `${dir}/${fileName}` }]);
-    this.store().updateDocument(card.scenePath, { content: rewritten, dirty: true });
-    if (this.store().settings.autoSave) {
-      await fs.writeText(card.scenePath, rewritten);
-      this.store().updateDocument(card.scenePath, { content: rewritten, dirty: false });
-    }
+    await this.rewriteLine(id, entry.line, `${dir}/${fileName}`);
 
     entry.applied = true;
     entry.audioPath = `${targetDir}\\${fileName}`;
-    await this.refreshCard(id, rewritten);
-    this.syncCard(card);
     this.emit();
   }
 
-  /** 移除当前语句的配音引用 (不动历史记录) */
+  /** 移除某条对话的配音引用 (不动历史记录) */
   async remove(id: string): Promise<void> {
     const card = this.cards.get(id);
     if (!card || card.cursorLine === null) return;
     const line = card.dialogues.find((dialogue) => dialogue.line === card.cursorLine);
-    if (!line) return;
+    if (!line?.vocal) return;
 
-    const doc = this.store().documents.find((item) => item.path === card.scenePath);
-    const content = doc?.content ?? (await fs.readText(card.scenePath));
-    const rewritten = await voiceApplyScene(content, [{ line: line.line, expect: null, vocal: null }]);
-    this.store().updateDocument(card.scenePath, { content: rewritten, dirty: true });
-    if (this.store().settings.autoSave) {
-      await fs.writeText(card.scenePath, rewritten);
-      this.store().updateDocument(card.scenePath, { content: rewritten, dirty: false });
-    }
+    await this.rewriteLine(id, line.line, null);
     for (const item of card.history) {
       if (item.line === line.line) item.applied = false;
     }
-    await this.refreshCard(id, rewritten);
     this.emit();
   }
 
@@ -886,8 +958,9 @@ class VoiceController {
     const line = card.dialogues.find((dialogue) => dialogue.line === entry.line);
     if (!line) return null;
 
-    // 复用原参数, 但文本跟随当前场景内容
-    return this.enqueue(cardId, entry.kind, line, { ...entry.params, text: line.text });
+    // 复用原参数 (文本跟随当前场景内容), 优先级沿用原记录 —— 用户把它调成"优先"是
+    // 有意的, 重试不该悄悄降回去
+    return this.enqueue(cardId, entry.kind, line, { ...entry.params, text: line.text }, entry.priority);
   }
 
   /** 该场景当前是否处于配音编辑模式 */

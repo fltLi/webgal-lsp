@@ -19,12 +19,13 @@ import {
   MicRecordRegular,
   SettingsRegular,
 } from '@fluentui/react-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Character, SayLine } from '../commands/voice';
 import { Select, toOptions } from '../components/Select';
 import { voiceController } from './controller';
-import { NumberInput } from './NumberInput';
+import { useVoiceCard } from './hooks';
+import { NumberInput, type NumberTick } from './NumberInput';
 import { VoiceReferenceDialog } from './VoiceReferenceDialog';
 import { GENERATE_SAMPLE_STEPS, LANGUAGE_LABELS, PARAM_TICKS, randomSeed, type VoiceParams } from './types';
 
@@ -43,17 +44,35 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // 切换语句 / 角色库变化时重建参数
-  useEffect(() => {
-    const next = voiceController.currentParams(cardId, dialogue);
-    setParams(next);
-    setMessage(null);
-  }, [cardId, dialogue.line, dialogue.hash, refreshToken]);
-
-  const card = voiceController.getCard(cardId);
+  const card = useVoiceCard(cardId);
   const selected = card?.selectedHistoryId
     ? (card.history.find((entry) => entry.id === card.selectedHistoryId) ?? null)
     : null;
+  const selectedId = card?.selectedHistoryId ?? null;
+
+  /*
+   * 参数来源键: 语句身份 + 选中的历史项。
+   *
+   * 这两者任一变化都要**重新取一遍参数**。其中"选中的历史项"以前漏了 —— 点别的记录时
+   * 面板纹丝不动 (参数是本地状态, 没人去重建它), 看起来像点击没生效。
+   *
+   * 刻意**不把刷新令牌算进来**: 队列里任何一条任务完成、任何一次列表清理都会让它 +1,
+   * 跟着重建就会把用户刚调好、还没生成的那套参数盖回默认值 —— 动一条无关的记录不该
+   * 影响面板。
+   *
+   * 而 `update` 自己会清空选中项, 那一次也不能重建 (同上), 因此它也把这个键一并标成
+   * "已同步"。
+   */
+  const sourceKeyOf = (selection: string | null) => `${dialogue.line}\u001f${dialogue.hash}\u001f${selection ?? ''}`;
+  const sourceKey = sourceKeyOf(selectedId);
+  const syncedSource = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (syncedSource.current === sourceKey) return;
+    syncedSource.current = sourceKey;
+    setParams(voiceController.currentParams(cardId, dialogue));
+    setMessage(null);
+  }, [sourceKey, cardId, dialogue]);
 
   const character = useMemo(
     () => voiceController.characterById(params?.characterId ?? null),
@@ -70,6 +89,8 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
     // 参数一改, 视为新配置 -> 取消历史选中 (应用按钮随之禁用)
     setMessage(null);
     voiceController.selectHistory(cardId, null);
+    // 这次清空是"改参数"引起的, 不是用户选了别的记录 -> 不要重建
+    syncedSource.current = sourceKeyOf(null);
   };
 
   const isNewConfiguration = voiceController.isNewConfiguration(cardId, params);
@@ -86,7 +107,11 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
       character.references.find((item) => item.hash === params.referenceHash) ?? character.references[0];
     const task = voiceController.enqueue(cardId, kind, dialogue, { ...params, referenceHash: reference.hash });
     if (task) {
-      setMessage(kind === 'test' ? '已加入立即队列（测试 x4）' : '已加入普通队列（生成 x32）');
+      setMessage(
+        kind === 'test'
+          ? `已加入优先队列（测试 x${task.params.sampleSteps}）`
+          : `已加入常规队列（生成 x${task.params.sampleSteps}）`
+      );
       onChanged();
     } else {
       setMessage('入队失败：找不到当前场景卡，请重新打开配音卡');
@@ -157,166 +182,183 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
 
   return (
     <div className="voice-sentence-panel">
-      {/* 第一行: 角色 / 语言 / 参考音频。参考音频要看清文本与时长, 因此由它占满剩余宽度。 */}
-      <div className="voice-row">
-        <label className="voice-field voice-field-character">
-          <span className="voice-label">角色</span>
-          <Select
-            value={params.characterId ?? ''}
-            title={character ? `${character.name}${matchHint && !selected ? `（${matchHint}）` : ''}` : '未选择角色'}
-            placeholder="未选择（点击选择角色）"
-            options={characters.map((item) => ({
-              value: item.id,
-              label: `${item.name}${item.references.length === 0 ? '（无参考音频）' : ''}`,
-            }))}
-            onChange={(id) => {
-              const next = voiceController.characterById(id || null);
-              voiceController.assignCharacter(
-                voiceController.getCard(cardId)?.scenePath ?? '',
-                dialogue.speaker,
-                id || null
-              );
-              update({
-                characterId: id || null,
-                referenceHash: next?.references[0]?.hash ?? null,
-              });
-            }}
+      {/*
+        设置项独立滚动, 页脚固定: 面板高度是写死的 (见 `.scene-voice-panel`), 展开
+        「高级设置」时只有上面这一段滚, 状态行与按钮不会跟着上下跳。
+      */}
+      <div className="voice-fields">
+        {/* 第一行: 角色 / 语言 / 参考音频。参考音频要看清文本与时长, 因此由它占满剩余宽度。 */}
+        <div className="voice-row">
+          <label className="voice-field voice-field-character">
+            <span className="voice-label">角色</span>
+            <Select
+              value={params.characterId ?? ''}
+              title={character ? `${character.name}${matchHint && !selected ? `（${matchHint}）` : ''}` : '未选择角色'}
+              placeholder="未选择（点击选择角色）"
+              options={characters.map((item) => ({
+                value: item.id,
+                label: `${item.name}${item.references.length === 0 ? '（无参考音频）' : ''}`,
+              }))}
+              onChange={(id) => {
+                const next = voiceController.characterById(id || null);
+                voiceController.assignCharacter(
+                  voiceController.getCard(cardId)?.scenePath ?? '',
+                  dialogue.speaker,
+                  id || null
+                );
+                update({
+                  characterId: id || null,
+                  referenceHash: next?.references[0]?.hash ?? null,
+                });
+              }}
+            />
+          </label>
+
+          <label className="voice-field voice-field-language">
+            <span className="voice-label">语言</span>
+            <Select
+              value={params.language}
+              title="本条对话的合成语言"
+              options={toOptions(LANGUAGE_LABELS)}
+              onChange={(language) => update({ language })}
+            />
+          </label>
+
+          <label className="voice-field voice-field-reference">
+            <span className="voice-label">参考音频</span>
+            {/*
+              参考音频用下拉直接选。
+              `Select` 是就地展开的浮层, 但参考音频**需要看时长与文本**才能选, 选项里
+              放不下这些信息, 因此这里点开即弹出选择对话框 (带搜索与试听), 比
+              "只读文字 + 更换按钮"更直接: 那个按钮的文案让人以为要"更换文件"。
+            */}
+            <button
+              type="button"
+              className="select-trigger voice-reference-trigger"
+              title={referenceLabel(character, params.referenceHash)}
+              onClick={() => setPickerOpen(true)}
+            >
+              <span className="select-label">{referenceLabel(character, params.referenceHash)}</span>
+              <ChevronDownRegular className="select-chevron" />
+            </button>
+          </label>
+        </div>
+
+        {/* 第二行: 文本 (独占一行; 它是唯一可能很长的输入) */}
+        <label className="voice-field voice-field-text">
+          <span className="voice-label">
+            文本
+            {dialogue.speaker === null && <span className="voice-label-tag">旁白</span>}
+          </span>
+          <Textarea
+            className="voice-control voice-text"
+            value={params.text}
+            resize="vertical"
+            onChange={(_, data) => update({ text: data.value })}
           />
         </label>
 
-        <label className="voice-field voice-field-language">
-          <span className="voice-label">语言</span>
-          <Select
-            value={params.language}
-            title="本条对话的合成语言"
-            options={toOptions(LANGUAGE_LABELS)}
-            onChange={(language) => update({ language })}
-          />
-        </label>
-
-        <label className="voice-field voice-field-reference">
-          <span className="voice-label">参考音频</span>
-          {/*
-            参考音频用下拉直接选。
-            `Select` 是就地展开的浮层, 但参考音频**需要看时长与文本**才能选, 选项里
-            放不下这些信息, 因此这里点开即弹出选择对话框 (带搜索与试听), 比
-            "只读文字 + 更换按钮"更直接: 那个按钮的文案让人以为要"更换文件"。
-          */}
-          <button
-            type="button"
-            className="select-trigger voice-reference-trigger"
-            title={referenceLabel(character, params.referenceHash)}
-            onClick={() => setPickerOpen(true)}
-          >
-            <span className="select-label">{referenceLabel(character, params.referenceHash)}</span>
-            <ChevronDownRegular className="select-chevron" />
-          </button>
-        </label>
-      </div>
-
-      {/* 第二行: 文本 (独占一行; 它是唯一可能很长的输入) */}
-      <label className="voice-field voice-field-text">
-        <span className="voice-label">
-          文本
-          {dialogue.speaker === null && <span className="voice-label-tag">旁白</span>}
-        </span>
-        <Textarea
-          className="voice-control voice-text"
-          value={params.text}
-          resize="vertical"
-          onChange={(_, data) => update({ text: data.value })}
-        />
-      </label>
-
-      {/* 第三行: 种子 / 温度 / 语速 / 高级设置 */}
-      <div className="voice-row">
-        <label className="voice-field voice-field-seed">
-          <span className="voice-label">种子</span>
-          <div className="voice-seed">
+        {/* 第三行: 种子 / 温度 / 语速 / 高级设置 */}
+        <div className="voice-row">
+          <label className="voice-field voice-field-seed">
+            <span className="voice-label">种子</span>
+            <div className="voice-seed">
+              <NumberInput value={params.seed} tick={PARAM_TICKS.seed} integer onCommit={(seed) => update({ seed })} />
+              <Button
+                size="small"
+                appearance="subtle"
+                title="换一个随机种子"
+                icon={<ArrowSyncRegular />}
+                onClick={() => update({ seed: randomSeed() })}
+              />
+            </div>
+          </label>
+          <label className="voice-field voice-field-number">
+            <span className="voice-label">
+              温度
+              <span className="voice-label-range">{range(PARAM_TICKS.temperature)}</span>
+            </span>
             <NumberInput
-              value={params.seed}
-              tick={PARAM_TICKS.seed}
-              integer
-              hideRange
-              onCommit={(seed) => update({ seed })}
+              value={params.temperature}
+              tick={PARAM_TICKS.temperature}
+              onCommit={(temperature) => update({ temperature })}
             />
+          </label>
+          <label className="voice-field voice-field-number">
+            <span className="voice-label">
+              语速
+              <span className="voice-label-range">{range(PARAM_TICKS.speedFactor)}</span>
+            </span>
+            <NumberInput
+              value={params.speedFactor}
+              tick={PARAM_TICKS.speedFactor}
+              onCommit={(speedFactor) => update({ speedFactor })}
+            />
+          </label>
+          {/* 高级设置的开关跟在语速右边: 二者相关, 同一行也更紧凑 */}
+          <div className="voice-field voice-field-advanced">
+            <span className="voice-label">&nbsp;</span>
             <Button
-              size="small"
               appearance="subtle"
-              title="换一个随机种子"
-              icon={<ArrowSyncRegular />}
-              onClick={() => update({ seed: randomSeed() })}
-            />
+              size="small"
+              icon={<SettingsRegular />}
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              高级设置 {advancedOpen ? '▴' : '▾'}
+            </Button>
           </div>
-        </label>
-        <label className="voice-field voice-field-number">
-          <span className="voice-label">温度</span>
-          <NumberInput
-            value={params.temperature}
-            tick={PARAM_TICKS.temperature}
-            onCommit={(temperature) => update({ temperature })}
-          />
-        </label>
-        <label className="voice-field voice-field-number">
-          <span className="voice-label">语速</span>
-          <NumberInput
-            value={params.speedFactor}
-            tick={PARAM_TICKS.speedFactor}
-            onCommit={(speedFactor) => update({ speedFactor })}
-          />
-        </label>
-        {/* 高级设置的开关跟在语速右边: 二者相关, 同一行也更紧凑 */}
-        <div className="voice-field voice-field-advanced">
-          <span className="voice-label">&nbsp;</span>
-          <Button
-            appearance="subtle"
-            size="small"
-            icon={<SettingsRegular />}
-            onClick={() => setAdvancedOpen((open) => !open)}
-          >
-            高级设置 {advancedOpen ? '▴' : '▾'}
-          </Button>
         </div>
-      </div>
 
-      {advancedOpen && (
-        <div className="voice-advanced-body">
-          <div className="voice-row">
-            <label className="voice-field">
-              <span className="voice-label">topK</span>
-              <NumberInput value={params.topK} tick={PARAM_TICKS.topK} integer onCommit={(topK) => update({ topK })} />
-            </label>
-            <label className="voice-field">
-              <span className="voice-label">topP</span>
-              <NumberInput value={params.topP} tick={PARAM_TICKS.topP} onCommit={(topP) => update({ topP })} />
-            </label>
+        {/* 高级设置收成一行: 面板高度写死, 参数一多行就会把按钮挤出视野 */}
+        {advancedOpen && (
+          <div className="voice-advanced-body">
+            <div className="voice-row">
+              <label className="voice-field voice-field-number">
+                <span className="voice-label">
+                  topK
+                  <span className="voice-label-range">{range(PARAM_TICKS.topK)}</span>
+                </span>
+                <NumberInput
+                  value={params.topK}
+                  tick={PARAM_TICKS.topK}
+                  integer
+                  onCommit={(topK) => update({ topK })}
+                />
+              </label>
+              <label className="voice-field voice-field-number">
+                <span className="voice-label">
+                  topP
+                  <span className="voice-label-range">{range(PARAM_TICKS.topP)}</span>
+                </span>
+                <NumberInput value={params.topP} tick={PARAM_TICKS.topP} onCommit={(topP) => update({ topP })} />
+              </label>
+              <label className="voice-field voice-field-number">
+                <span className="voice-label">
+                  重复惩罚
+                  <span className="voice-label-range">{range(PARAM_TICKS.repetitionPenalty)}</span>
+                </span>
+                <NumberInput
+                  value={params.repetitionPenalty}
+                  tick={PARAM_TICKS.repetitionPenalty}
+                  onCommit={(repetitionPenalty) => update({ repetitionPenalty })}
+                />
+              </label>
+              <label className="voice-field voice-field-number">
+                <span className="voice-label">采样步数</span>
+                <Select
+                  value={String(params.sampleSteps)}
+                  title="正式生成使用的采样步数"
+                  options={[4, 8, 16, 32].map((steps) => ({
+                    value: String(steps),
+                    label: `x${steps}${steps === GENERATE_SAMPLE_STEPS ? '（默认）' : ''}`,
+                  }))}
+                  onChange={(value) => update({ sampleSteps: Number.parseInt(value, 10) || GENERATE_SAMPLE_STEPS })}
+                />
+              </label>
+            </div>
           </div>
-          <div className="voice-row">
-            <label className="voice-field">
-              <span className="voice-label">重复惩罚</span>
-              <NumberInput
-                value={params.repetitionPenalty}
-                tick={PARAM_TICKS.repetitionPenalty}
-                onCommit={(repetitionPenalty) => update({ repetitionPenalty })}
-              />
-            </label>
-          </div>
-          <div className="voice-row">
-            <label className="voice-field">
-              <span className="voice-label">正式生成采样步数</span>
-              <Select
-                value={String(params.sampleSteps)}
-                title="正式生成使用的采样步数"
-                options={[4, 8, 16, 32].map((steps) => ({
-                  value: String(steps),
-                  label: `x${steps}${steps === GENERATE_SAMPLE_STEPS ? '（默认）' : ''}`,
-                }))}
-                onChange={(value) => update({ sampleSteps: Number.parseInt(value, 10) || GENERATE_SAMPLE_STEPS })}
-              />
-            </label>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/*
         状态行与按钮同属一块页脚: 与上面的参数区用一条分隔线隔开, 状态行紧贴按钮上方。
@@ -384,6 +426,11 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
       />
     </div>
   );
+}
+
+/** 取值范围 (显示在字段标签右侧; 输入框留给数值本身和加减按钮) */
+function range(tick: NumberTick): string {
+  return `${tick.min}~${tick.max}`;
 }
 
 function referenceLabel(character: Character | null, hash: string | null): string {

@@ -16,6 +16,7 @@ import { absToRel } from '../git/util';
 import { useAppStore } from '../state/store';
 import { makeDiffTab, sceneTabId } from '../tabs/model';
 import { voiceController, DISK_CHECK_MS } from './controller';
+import { useVoiceCard, useVoiceTick } from './hooks';
 import { dialogueAtLine } from './types';
 import { SceneConflictDialog } from './SceneConflictDialog';
 import { SentenceVoicePanel } from './SentenceVoicePanel';
@@ -24,8 +25,13 @@ import { VoiceTakeList } from './VoiceTakeList';
 export function SceneVoiceEditor({ docPath }: { docPath: string }) {
   const doc = useAppStore((state) => state.documents.find((item) => item.path === docPath));
   // 订阅队列变化
-  useAppStore((state) => state.voiceTick);
-  const card = voiceController.getCard(docPath);
+  useVoiceTick();
+  /*
+   * 卡片从 store 读, 而不是直接 `voiceController.getCard`: 选中历史记录、任务状态
+   * 回填都是**就地改卡片**后调 `setSceneVoiceEditors` 通知的, 只有订阅了这张表才会
+   * 跟着重渲染 (直接读控制器拿到的是不触发更新的快照)。
+   */
+  const card = useVoiceCard(docPath);
   const isActiveTab = useAppStore((state) => state.activeTabId) === sceneTabId(docPath);
   const characters = useAppStore((state) => state.voiceCharacters);
   const projectPath = useAppStore((state) => state.projectPath);

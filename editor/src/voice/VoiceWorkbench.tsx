@@ -14,7 +14,7 @@
 // 两栏内的分组都做成**分页**, 而不是把所有字段堆成一长条: 字段一多就必须滚动,
 // 而滚动会把"启动服务"这类关键操作推到视野之外。
 
-import { Button, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
+import { Button, Field, Input, Spinner } from '@fluentui/react-components';
 import {
   ArrowClockwiseRegular,
   ArrowDownloadRegular,
@@ -37,7 +37,10 @@ import { useAppStore } from '../state/store';
 import { voiceController } from './controller';
 import { formatEta } from './estimate';
 import { errorSummary } from './errorText';
+import { PriorityChip } from './PriorityChip';
+import { queueView } from './queue';
 import { RoleListPanel } from './RoleListPanel';
+import { TaskProgress } from './TaskProgress';
 import { LANGUAGE_LABELS, type VoiceTask } from './types';
 import { VoiceCacheDialog } from './VoiceCacheDialog';
 import { VoiceErrorDialog } from './VoiceErrorDialog';
@@ -214,7 +217,7 @@ export function VoiceWorkbench() {
                     appearance="secondary"
                     icon={<FolderRegular />}
                     title={rootPath ? '在文件管理器中打开' : '选择整合包目录'}
-                    disabled={busy && !rootPath}
+                    disabled={running || (busy && !rootPath)}
                     onClick={onRootAction}
                   />
                 </div>
@@ -222,14 +225,20 @@ export function VoiceWorkbench() {
 
               {launch && (
                 <div className="workbench-grid">
+                  {/*
+                    启动方式是"怎么把服务拉起来"的配置。服务一旦在跑 (启动中/就绪),
+                    这些字段全部锁定 —— 改了也不会作用到已启动的进程上, 只会让人以为
+                    改动生效了。想改就先停服务。
+                  */}
                   <Field label="启动方式">
                     <Select
                       value={launch.mode.kind}
                       title={modeLabel(launch)}
+                      disabled={running}
                       options={[
-                        { value: 'embedded', label: '整合包内置运行时' },
-                        { value: 'python', label: '自定义 Python 解释器' },
-                        { value: 'conda', label: 'conda 运行环境' },
+                        { value: 'embedded', label: '整合包运行时' },
+                        { value: 'python', label: 'Python' },
+                        { value: 'conda', label: 'Conda' },
                         { value: 'command', label: '自定义命令' },
                       ]}
                       onChange={(kind) => patchLaunch({ mode: defaultMode(kind, launch) })}
@@ -255,6 +264,7 @@ export function VoiceWorkbench() {
                         value={launch.mode.env}
                         title="选择本机已安装的 conda 环境（通过 conda run 调用，与手动激活等价）"
                         placeholder={condaEnvs.length === 0 ? '未发现 conda 环境' : '选择环境'}
+                        disabled={running}
                         options={condaEnvs.map((env) => ({ value: env.name, label: env.displayName }))}
                         onChange={(env) => patchLaunch({ mode: { kind: 'conda', env, program: null } })}
                       />
@@ -266,12 +276,14 @@ export function VoiceWorkbench() {
                       <div className="workbench-input-row">
                         <Input
                           value={launch.mode.program}
+                          disabled={running}
                           onChange={(_, data) => patchLaunch({ mode: { kind: 'python', program: data.value } })}
                         />
                         <Button
                           appearance="secondary"
                           icon={<FolderRegular />}
                           title="选择 Python 解释器"
+                          disabled={running}
                           onClick={() => void pickProgram()}
                         />
                       </div>
@@ -283,6 +295,7 @@ export function VoiceWorkbench() {
                       <Input
                         value={launch.mode.command}
                         placeholder="在这里直接写完整命令"
+                        disabled={running}
                         onChange={(_, data) => patchLaunch({ mode: { kind: 'command', command: data.value } })}
                       />
                     </Field>
@@ -291,12 +304,17 @@ export function VoiceWorkbench() {
                   {launch.mode.kind !== 'command' && (
                     <>
                       <Field label="控制脚本">
-                        <Input value={launch.script} onChange={(_, data) => patchLaunch({ script: data.value })} />
+                        <Input
+                          value={launch.script}
+                          disabled={running}
+                          onChange={(_, data) => patchLaunch({ script: data.value })}
+                        />
                       </Field>
 
                       <Field label="推理配置">
                         <Input
                           value={launch.inferConfig}
+                          disabled={running}
                           onChange={(_, data) => patchLaunch({ inferConfig: data.value })}
                         />
                       </Field>
@@ -304,6 +322,8 @@ export function VoiceWorkbench() {
                   )}
                 </div>
               )}
+
+              {running && <p className="prompt-hint">服务运行中，启动配置已锁定（停止服务后可修改）。</p>}
             </>
           ) : (
             <div className="workbench-grid">
@@ -366,6 +386,7 @@ export function VoiceWorkbench() {
                   onClick={() => setChangeDialogOpen(true)}
                 />
                 <Button
+                  className="danger-text"
                   size="small"
                   appearance="subtle"
                   title="清空已完成的任务"
@@ -390,11 +411,25 @@ export function VoiceWorkbench() {
               {voiceController.allTasks().length === 0 && (
                 <p className="voice-dialog-empty">队列为空。在场景卡的配音模式中点击「测试」或「生成」。</p>
               )}
-              {voiceController.allTasks().map((task) => (
+              {/*
+                展示顺序 = 运行中 -> 排队中(按真实执行顺序) -> 已结束(按结束时刻从新到旧)。
+                见 `queueView`: 按入队顺序显示会让一条早就跑完的生成任务压在几条完成的
+                测试任务上面, 看起来像还没跑。
+              */}
+              {queueView(voiceController.allTasks()).map((task) => (
                 <div key={task.id} className={`voice-task ${task.status}`}>
                   <span className={`history-kind ${task.kind}`}>
                     {task.kind === 'test' ? '测试' : '生成'} x{task.params.sampleSteps}
                   </span>
+                  <PriorityChip
+                    priority={task.priority}
+                    onToggle={
+                      task.status === 'pending'
+                        ? () =>
+                            voiceController.setPriority(task.id, task.priority === 'immediate' ? 'normal' : 'immediate')
+                        : undefined
+                    }
+                  />
                   <span className="voice-task-text">{task.text || '（空）'}</span>
                   <span className="voice-task-character">{task.characterName}</span>
                   <span className="voice-task-status">
@@ -408,7 +443,24 @@ export function VoiceWorkbench() {
                     {task.status === 'failed' && '失败'}
                     {task.status === 'canceled' && '已取消'}
                   </span>
-                  {task.status === 'running' && <ProgressBar />}
+                  {/* 未完成的任务可以取消 (X); 已完成的任务没有可取消的东西 */}
+                  {(task.status === 'pending' || task.status === 'running') && (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<DismissRegular />}
+                      title={
+                        task.status === 'running'
+                          ? '取消（推理无法中断，返回后丢弃结果）'
+                          : '取消（还没开始，直接撤下）'
+                      }
+                      onClick={() => voiceController.cancel(task.id)}
+                    />
+                  )}
+                  {task.status === 'running' && (
+                    <TaskProgress kind={task.kind} text={task.text} startedAt={task.startedAt} />
+                  )}
+                  {task.status === 'pending' && <TaskProgress kind={task.kind} text={task.text} />}
                   {task.status === 'failed' && task.error && (
                     /*
                       报错只占一行 (整行独占, 见 `.voice-task-error`): 原文有几十行,

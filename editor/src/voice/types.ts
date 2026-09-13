@@ -53,11 +53,11 @@ export interface VoiceParams {
 
 /** 粗糙刻度定义 (细刻度实测既降质量又可能突然变慢) */
 export const PARAM_TICKS = {
-  temperature: { min: 0.1, max: 2, step: 0.05, default: 1 },
+  temperature: { min: 0, max: 1, step: 0.05, default: 1 },
   speedFactor: { min: 0.5, max: 2, step: 0.05, default: 1 },
-  topK: { min: 1, max: 30, step: 1, default: 5 },
-  topP: { min: 0.1, max: 1, step: 0.05, default: 1 },
-  repetitionPenalty: { min: 1, max: 2, step: 0.05, default: 1.35 },
+  topK: { min: 1, max: 100, step: 1, default: 40 },
+  topP: { min: 0, max: 1, step: 0.05, default: 0.9 },
+  repetitionPenalty: { min: 0.5, max: 2, step: 0.05, default: 1.2 },
   /** 种子: 服务端接受 0 ~ 2^32-1 (`-1` 才是"由服务端随机") */
   seed: { min: 0, max: 0xffffffff, step: 1, default: 0 },
 } as const;
@@ -65,12 +65,32 @@ export const PARAM_TICKS = {
 /** 任务类型: 测试走立即队列, 生成走普通队列 */
 export type TaskKind = 'test' | 'generate';
 
+/**
+ * 队列优先级。
+ *
+ * 与 `kind` 分开是因为**优先级可以改**: 排队中的生成任务可以插队到前面先跑,
+ * 而 `kind` 决定的是"这次生成用几档采样步数", 不该跟着优先级变。
+ */
+export type TaskPriority = 'immediate' | 'normal';
+
+/** 新建任务时按类型给出的默认优先级 (测试是"立刻听一下", 生成是常规排队) */
+export function priorityOf(kind: TaskKind): TaskPriority {
+  return kind === 'test' ? 'immediate' : 'normal';
+}
+
+/** 优先级的显示名 */
+export function priorityLabel(priority: TaskPriority): string {
+  return priority === 'immediate' ? '优先' : '常规';
+}
+
 export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'canceled';
 
 /** 一条配音任务 (参数为不可变快照) */
 export interface VoiceTask {
   id: string;
   kind: TaskKind;
+  /** 队列优先级 (可被用户改动) */
+  priority: TaskPriority;
   status: TaskStatus;
   /** 发起该任务的场景卡 id */
   cardId: string;
@@ -104,6 +124,8 @@ export interface VoiceTask {
 export interface HistoryEntry {
   id: string;
   kind: TaskKind;
+  /** 队列优先级 (可被用户改动) */
+  priority: TaskPriority;
   status: TaskStatus;
   /** 对齐到的对话行号 (可能因场景编辑而变化) */
   line: number | null;
@@ -118,6 +140,8 @@ export interface HistoryEntry {
   duration?: number;
   error?: string;
   createdAt: number;
+  /** 开始推理的时刻 (进度条按它推算已用时间) */
+  startedAt?: number;
   finishedAt?: number;
   /** 已被应用到该行 (`-vocal` 指向本音频) */
   applied: boolean;

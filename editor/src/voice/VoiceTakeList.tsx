@@ -2,17 +2,26 @@
 
 // 语句配音历史 (配音卡操作台右侧)。
 //
-// 每条记录对应一次「测试」或「生成」; 正在生成的任务可取消。
-// 参数编辑不影响既有记录: 改动参数只会让"当前配置"变成新配置, 历史保持原样。
+// 每条记录对应一次「测试」或「生成」; 排队中 / 生成中的任务可以取消, 排队中的还能改
+// 优先级。参数编辑不影响既有记录: 改动参数只会让"当前配置"变成新配置, 历史保持原样。
+//
+// 卡片布局: 第一行是"这条记录是什么"(类型 / 优先级 / 时间) + 操作图标, 因此操作与
+// 基本信息**同一行**, 不再单独占一行高度。
 
-import { Button, ProgressBar, Spinner } from '@fluentui/react-components';
+import { Button, Spinner } from '@fluentui/react-components';
 import {
+  ArrowDownRegular,
   ArrowDownloadRegular,
+  ArrowSyncRegular,
+  ArrowUpRegular,
+  BroomRegular,
   CheckmarkCircleRegular,
+  CheckmarkRegular,
   DeleteRegular,
+  DismissRegular,
   ErrorCircleRegular,
+  FilterDismissRegular,
   FolderOpenRegular,
-  StopRegular,
 } from '@fluentui/react-icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -21,9 +30,11 @@ import { useEffect, useRef, useState } from 'react';
 import { voiceController } from './controller';
 import { AudioButton } from './AudioButton';
 import { errorSummary } from './errorText';
+import { useVoiceCard, useVoiceTick } from './hooks';
+import { PriorityChip } from './PriorityChip';
+import { TaskProgress } from './TaskProgress';
 import type { HistoryEntry } from './types';
 import { VoiceErrorDialog } from './VoiceErrorDialog';
-import { useAppStore } from '../state/store';
 import { fs } from '../lib/fs';
 import { writeFile } from '@tauri-apps/plugin-fs';
 
@@ -40,9 +51,9 @@ interface MenuState {
 }
 
 export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
-  // 订阅队列变化
-  const { voiceTick } = useVoiceTick();
-  const card = voiceController.getCard(cardId);
+  // 订阅队列变化 (卡片本身从 store 读, 因此选中记录 / 任务回填都会触发重渲染)
+  const voiceTick = useVoiceTick();
+  const card = useVoiceCard(cardId);
   const selectedId = card?.selectedHistoryId ?? null;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [errorEntry, setErrorEntry] = useState<HistoryEntry | null>(null);
@@ -61,13 +72,18 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
 
   if (!card) return null;
 
-  const running = card.history.filter((entry) => entry.status === 'pending' || entry.status === 'running');
+  const active = card.history.filter((entry) => entry.status === 'pending' || entry.status === 'running');
   const done = card.history.filter((entry) => entry.status === 'done');
   const failed = card.history.filter((entry) => entry.status === 'failed' || entry.status === 'canceled');
 
   const entryOfLine = (line: number | null) =>
     line === null ? null : (card.history.find((entry) => entry.line === line && entry.applied) ?? null);
   const appliedEntry = entryOfLine(card.cursorLine);
+
+  const togglePriority = (entry: HistoryEntry) => {
+    voiceController.setPriority(entry.id, entry.priority === 'immediate' ? 'normal' : 'immediate');
+    onChanged();
+  };
 
   const doApply = async (entry: HistoryEntry) => {
     try {
@@ -101,7 +117,7 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
   };
 
   const renderEntry = (entry: HistoryEntry) => {
-    const isRunning = entry.status === 'pending' || entry.status === 'running';
+    const inFlight = entry.status === 'pending' || entry.status === 'running';
     const isSelected = entry.id === selectedId;
     return (
       <div
@@ -113,16 +129,57 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           setMenu({ x: event.clientX, y: event.clientY, entry });
         }}
       >
+        {/* 基本信息与操作图标同一行 */}
         <div className="history-head">
           <span className={`history-kind ${entry.kind}`}>
             {entry.kind === 'test' ? '测试' : '生成'} x{entry.params.sampleSteps}
           </span>
+          <PriorityChip
+            priority={entry.priority}
+            onToggle={entry.status === 'pending' ? () => togglePriority(entry) : undefined}
+          />
           <span className="history-time">{formatTime(entry.createdAt)}</span>
           {entry.applied && (
             <span className="history-applied" title="已应用到脚本">
               <CheckmarkCircleRegular />
             </span>
           )}
+
+          <span className="history-head-actions" onClick={(event) => event.stopPropagation()}>
+            {inFlight ? (
+              /*
+                生成中的项**不提供播放/删除**: 还没有音频可放, 也不该在跑的时候把记录
+                删掉。留下的两件事是"改优先级"(仅排队中) 和"取消"。
+              */
+              <Button
+                size="small"
+                appearance="subtle"
+                icon={<DismissRegular />}
+                title={
+                  entry.status === 'running' ? '取消（推理无法中断，返回后丢弃结果）' : '取消（还没开始，直接撤下）'
+                }
+                onClick={() => {
+                  voiceController.cancel(entry.id);
+                  onChanged();
+                }}
+              />
+            ) : (
+              <>
+                {entry.status === 'done' && entry.audioPath && <AudioButton path={entry.audioPath} />}
+                <Button
+                  className="danger-text"
+                  size="small"
+                  appearance="subtle"
+                  icon={<DeleteRegular />}
+                  title="删除记录"
+                  onClick={() => {
+                    voiceController.dropHistory(cardId, entry.id);
+                    onChanged();
+                  }}
+                />
+              </>
+            )}
+          </span>
         </div>
 
         <div className="history-text">{entry.text || '（空）'}</div>
@@ -135,10 +192,16 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
           {entry.duration !== undefined && <span>{entry.duration.toFixed(2)}s</span>}
         </div>
 
-        {isRunning && (
+        {inFlight && (
           <div className="history-progress">
-            <Spinner size="extra-tiny" />
-            <ProgressBar />
+            {entry.status === 'running' ? (
+              <TaskProgress kind={entry.kind} text={entry.text} startedAt={entry.startedAt} />
+            ) : (
+              <>
+                <Spinner size="extra-tiny" />
+                <TaskProgress kind={entry.kind} text={entry.text} />
+              </>
+            )}
           </div>
         )}
 
@@ -161,33 +224,6 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
             <span className="error-chip-more">详情</span>
           </button>
         )}
-
-        <div className="history-actions" onClick={(event) => event.stopPropagation()}>
-          {entry.status === 'done' && entry.audioPath && <AudioButton path={entry.audioPath} />}
-          {isRunning ? (
-            <Button
-              size="small"
-              appearance="subtle"
-              icon={<StopRegular />}
-              title="取消"
-              onClick={() => {
-                voiceController.cancel(entry.id);
-                onChanged();
-              }}
-            />
-          ) : (
-            <Button
-              size="small"
-              appearance="subtle"
-              icon={<DeleteRegular />}
-              title="删除记录"
-              onClick={() => {
-                voiceController.dropHistory(cardId, entry.id);
-                onChanged();
-              }}
-            />
-          )}
-        </div>
       </div>
     );
   };
@@ -198,35 +234,35 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
         <span className="history-title">历史</span>
         <span className="history-count">
           {done.length} 已生成
-          {running.length > 0 && ` · ${running.length} 进行中`}
+          {active.length > 0 && ` · ${active.length} 进行中`}
           {failed.length > 0 && ` · ${failed.length} 未完成`}
         </span>
         <span className="voice-actions-spacer" />
+        {/* 批量清理只留图标 (与工作台队列一致, 文案放悬浮提示); 两项都是删除, 用危险色 */}
         <Button
+          className="danger-text"
           size="small"
           appearance="subtle"
+          icon={<FilterDismissRegular />}
           title="删除全部测试记录"
           disabled={!card.history.some((entry) => entry.kind === 'test')}
           onClick={() => {
             voiceController.dropAllHistory(cardId, 'test');
             onChanged();
           }}
-        >
-          清测试
-        </Button>
-
+        />
         <Button
+          className="danger-text"
           size="small"
           appearance="subtle"
+          icon={<BroomRegular />}
           title="删除全部记录（不影响已应用的 -vocal=）"
           disabled={card.history.length === 0}
           onClick={() => {
             voiceController.dropAllHistory(cardId);
             onChanged();
           }}
-        >
-          清空
-        </Button>
+        />
       </div>
 
       <div className="history-list" data-tick={voiceTick}>
@@ -262,7 +298,7 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
               setMenu(null);
             }}
           >
-            应用
+            <CheckmarkRegular /> 应用
           </button>
           <button
             disabled={!menu.entry.audioPath}
@@ -292,55 +328,66 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
               onChanged();
             }}
           >
-            以此参数重试
+            <ArrowSyncRegular /> 以此参数重试
           </button>
+          {/* 排队中才有的两项: 未完成时"隐藏"而不是"禁用" —— 禁用项读起来像功能坏了 */}
+          {menu.entry.status === 'pending' && (
+            <button
+              title={`当前：${menu.entry.priority === 'immediate' ? '优先' : '常规'}队列`}
+              onClick={() => {
+                togglePriority(menu.entry);
+                setMenu(null);
+              }}
+            >
+              {menu.entry.priority === 'immediate' ? <ArrowDownRegular /> : <ArrowUpRegular />}
+              {menu.entry.priority === 'immediate' ? '降为常规' : '改为优先'}
+            </button>
+          )}
+          {(menu.entry.status === 'pending' || menu.entry.status === 'running') && (
+            <button
+              onClick={() => {
+                voiceController.cancel(menu.entry.id);
+                setMenu(null);
+                onChanged();
+              }}
+            >
+              <DismissRegular /> 取消
+            </button>
+          )}
           <button
-            disabled={menu.entry.status !== 'pending'}
-            onClick={() => {
-              voiceController.cancel(menu.entry.id);
-              setMenu(null);
-              onChanged();
-            }}
-          >
-            取消
-          </button>
-          <button
+            className="danger-text"
             onClick={() => {
               voiceController.dropHistory(cardId, menu.entry.id);
               setMenu(null);
               onChanged();
             }}
           >
-            删除
+            <DeleteRegular /> 删除
           </button>
           <button
+            className="danger-text"
             onClick={() => {
               voiceController.dropAllHistory(cardId, 'test');
               setMenu(null);
               onChanged();
             }}
           >
-            删除全部测试
+            <FilterDismissRegular /> 删除全部测试
           </button>
           <button
+            className="danger-text"
             onClick={() => {
               voiceController.dropAllHistory(cardId);
               setMenu(null);
               onChanged();
             }}
           >
-            删除全部
+            <BroomRegular /> 删除全部
           </button>
         </div>
       )}
     </div>
   );
-}
-
-/** 订阅队列变化令牌 */
-function useVoiceTick(): { voiceTick: number } {
-  const voiceTick = useAppStore((state) => state.voiceTick);
-  return { voiceTick };
 }
 
 function formatTime(timestamp: number): string {

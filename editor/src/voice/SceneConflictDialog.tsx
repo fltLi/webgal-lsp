@@ -93,26 +93,42 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
     onResolved('keep-editor');
   };
 
+  /*
+   * 三个裁决项**全部放在底部操作栏**, 主体只说清楚发生了什么。
+   *
+   * 之前把"保留编辑器内容"单独摆在正文里, 另外两项在底栏的两端, 于是同一组三选一被拆
+   * 成了三处, 视线要在弹窗里来回找。现在: 底栏左侧是少用的"备份后加载磁盘", 右侧依次
+   * 是三个裁决 —— 保留编辑器 / 用 git 合并 / 加载磁盘。
+   */
   return (
     <AppDialog
       title="场景文件已被外部修改"
+      description={<code>{scenePath}</code>}
       size="medium"
-      height={320}
+      height="auto"
       onClose={() => onResolved('keep-editor')}
       footerLeading={
         <Button
-          appearance="secondary"
-          disabled={busy || !inRepository}
-          title={inRepository ? '打开独立的 git 合并页面' : '当前项目不在 git 仓库中'}
-          onClick={onOpenGitMerge}
+          appearance="subtle"
+          disabled={busy}
+          title="先把编辑器里的内容另存一份再加载磁盘"
+          onClick={() => void backupAndTakeDisk()}
         >
-          用 git 合并
+          备份后加载磁盘
         </Button>
       }
       footer={
         <>
-          <Button appearance="secondary" disabled={busy} onClick={() => void backupAndTakeDisk()}>
-            备份后加载磁盘
+          <Button appearance="secondary" disabled={busy} onClick={() => void keepEditor()}>
+            保留编辑器内容
+          </Button>
+          <Button
+            appearance="secondary"
+            disabled={busy || !inRepository}
+            title={inRepository ? '打开独立的 git 合并页面' : '当前项目不在 git 仓库中'}
+            onClick={onOpenGitMerge}
+          >
+            用 git 合并
           </Button>
           <Button appearance="primary" disabled={busy || diskPreview === null} onClick={() => void takeDisk()}>
             加载磁盘内容
@@ -121,12 +137,12 @@ export function SceneConflictDialog({ open, cardId, scenePath, inRepository, onR
       }
     >
       <p className="voice-dialog-hint">
-        <code>{scenePath}</code> 在磁盘上发生了变化（例如 git 切换分支或另一处编辑）。 请先决定保留哪一份内容，之后 Ink
-        会把配音历史重新对齐到最终的对话列表。
+        {inRepository
+          ? '这份文件在磁盘上被改过（例如切换分支、外部编辑器或另一个窗口），编辑器里这一份与它不同。'
+          : '这份文件在磁盘上被改过（例如外部编辑器或另一个窗口），编辑器里这一份与它不同。'}
+        「保留编辑器内容」沿用内存中的这一份, 「加载磁盘内容」改用磁盘上的那一份, 「用 git 合并」打开差异页逐块取舍。
+        无论选哪一项, Ink 之后都会把配音历史重新对齐到最终的对话列表。
       </p>
-      <Button appearance="secondary" disabled={busy} onClick={() => void keepEditor()}>
-        保留编辑器内容并继续
-      </Button>
       {error && <p className="voice-error">{error}</p>}
     </AppDialog>
   );
