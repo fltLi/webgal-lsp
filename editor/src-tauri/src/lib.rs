@@ -77,6 +77,7 @@ pub fn run() {
             service::voice::voice_list_characters,
             service::voice::voice_load_character,
             service::voice::voice_save_character,
+            service::voice::voice_update_character,
             service::voice::voice_remove_character,
             service::voice::voice_create_character,
             service::voice::voice_add_reference,

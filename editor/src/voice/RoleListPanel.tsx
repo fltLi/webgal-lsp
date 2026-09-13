@@ -64,7 +64,7 @@ export function RoleListPanel() {
       await Promise.all(
         characters
           .filter((item) => item.enabled)
-          .map((item) => voiceController.persistCharacter({ ...item, enabled: false }))
+          .map((item) => voiceController.updateCharacter(item.id, { enabled: false }))
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -93,13 +93,9 @@ export function RoleListPanel() {
         {/*
           「选择角色」在打开挑选对话框之前先把所有角色取消勾选 —— 侧边栏里显示的
           本来就只是"已选中的角色", 因此让它们全部退出就是"取消选择"这个动作。
+          任何情况下都**不禁用**: 一个永远可点的入口比一个灰掉的按钮好懂得多。
         */}
-        <Button
-          appearance="secondary"
-          icon={<PersonEditRegular />}
-          disabled={!characters.some((item) => item.enabled)}
-          onClick={() => void deselectAndPick()}
-        >
+        <Button appearance="secondary" icon={<PersonEditRegular />} onClick={() => void deselectAndPick()}>
           选择角色
         </Button>
       </div>

@@ -351,6 +351,31 @@ export function voiceSaveCharacter(character: Character, previousId?: string | n
   return invoke<Character>('voice_save_character', { character, previousId: previousId ?? null });
 }
 
+/** 角色字段修改 (只包含要改的字段) */
+export interface CharacterPatch {
+  /**
+   * 角色 ID。它同时也是配置文件名与参考音频目录名, 因此**不是**普通字段:
+   * 服务端会据此搬移目录并清理旧配置 (见 `voice_save_character`)。
+   */
+  id?: string;
+  name?: string;
+  description?: string;
+  language?: string;
+  model?: ModelChoice | null;
+  starred?: boolean;
+  enabled?: boolean;
+}
+
+/**
+ * 按字段修改角色。
+ *
+ * 界面上所有角色修改都走这里, **不要**再用整份记录写盘: 两个相邻/并发的修改
+ * 会互相覆盖 (勾选"参与配音"顺手把星标、模型回写成过时快照)。
+ */
+export function voiceUpdateCharacter(id: string, patch: CharacterPatch): Promise<Character> {
+  return invoke<Character>('voice_update_character', { id, patch });
+}
+
 export function voiceRemoveCharacter(id: string): Promise<void> {
   return invoke<void>('voice_remove_character', { id });
 }
@@ -378,6 +403,8 @@ export function voiceImportCharacter(source: string): Promise<Character> {
 /** `.list` 批量导入结果 */
 export interface ListImportReport {
   imported: number;
+  /** 其中被自动裁剪过的条数 (过长音频按静音边界截到 10 秒内) */
+  autoTrimmed: number;
   skipped: number;
   characters: string[];
 }

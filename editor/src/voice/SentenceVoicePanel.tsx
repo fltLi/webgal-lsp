@@ -13,6 +13,7 @@ import { Button, Input, Slider, Textarea } from '@fluentui/react-components';
 import {
   ArrowSyncRegular,
   CheckmarkRegular,
+  ChevronDownRegular,
   DeleteRegular,
   FlashRegular,
   MicRecordRegular,
@@ -43,7 +44,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
 
   // 切换语句 / 角色库变化时重建参数
   useEffect(() => {
-    const next = voiceController.currentParams(cardId);
+    const next = voiceController.currentParams(cardId, dialogue);
     setParams(next);
     setMessage(null);
   }, [cardId, dialogue.line, dialogue.hash, refreshToken]);
@@ -82,10 +83,12 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
     }
     const reference =
       character.references.find((item) => item.hash === params.referenceHash) ?? character.references[0];
-    const task = voiceController.enqueue(cardId, kind, { ...params, referenceHash: reference.hash });
+    const task = voiceController.enqueue(cardId, kind, dialogue, { ...params, referenceHash: reference.hash });
     if (task) {
       setMessage(kind === 'test' ? '已加入立即队列（测试 x4）' : '已加入普通队列（生成 x32）');
       onChanged();
+    } else {
+      setMessage('入队失败：找不到当前场景卡，请重新打开配音卡');
     }
   };
 
@@ -179,12 +182,21 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
       <div className="voice-row">
         <label className="voice-field voice-field-reference">
           <span className="voice-label">参考音频</span>
-          <div className="voice-reference">
-            <span className="voice-reference-name">{referenceLabel(character, params.referenceHash)}</span>
-            <Button size="small" appearance="secondary" onClick={() => setPickerOpen(true)}>
-              更换…
-            </Button>
-          </div>
+          {/*
+            参考音频用下拉直接选。
+            `Select` 是就地展开的浮层, 但参考音频**需要看时长与文本**才能选, 选项里
+            放不下这些信息, 因此这里点开即弹出选择对话框 (带搜索与试听), 比
+            "只读文字 + 更换按钮"更直接: 那个按钮的文案让人以为要"更换文件"。
+          */}
+          <button
+            type="button"
+            className="select-trigger voice-reference-trigger"
+            title={referenceLabel(character, params.referenceHash)}
+            onClick={() => setPickerOpen(true)}
+          >
+            <span className="select-label">{referenceLabel(character, params.referenceHash)}</span>
+            <ChevronDownRegular className="select-chevron" />
+          </button>
         </label>
 
         <label className="voice-field voice-field-seed">

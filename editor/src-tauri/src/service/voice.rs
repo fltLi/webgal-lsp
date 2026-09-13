@@ -713,6 +713,21 @@ pub async fn voice_save_character(
         .map_err(|error| error.to_string())
 }
 
+/// 按**字段**修改角色 (服务端读-改-写)。
+///
+/// 这是界面上所有角色修改的入口: 只发送要改的字段, 因此勾选"参与配音"不会顺手
+/// 把星标/模型等其它字段回写成前端那份可能过时的快照。
+#[tauri::command]
+pub async fn voice_update_character(
+    app: tauri::AppHandle,
+    id: String,
+    patch: library::CharacterPatch,
+) -> Result<library::Character, String> {
+    library_of(&app)?
+        .patch(&id, patch)
+        .map_err(|error| error.to_string())
+}
+
 /// 删除角色
 #[tauri::command]
 pub async fn voice_remove_character(app: tauri::AppHandle, id: String) -> Result<(), String> {
@@ -870,8 +885,12 @@ pub async fn voice_import_character(
         .map_err(|error| error.to_string())
 }
 
-/// 单个角色最多导入的参考音频条数 (避免一次导入上万条)
-const LIST_IMPORT_LIMIT: usize = 48;
+/// 单个角色最多导入的参考音频条数。
+///
+/// 之前是 48, 结果"导入 109 条"会被硬截断成 48 条并静默丢掉 61 条 —— 用户看到的
+/// 是"跳过 61 条"却不知道那是上限。真实语料每个角色上百条很常见, 因此这里放宽到
+/// 一个不会误伤的量级; 过长的音频由规范化流程自动裁剪, 不再丢数据。
+const LIST_IMPORT_LIMIT: usize = 5000;
 
 /// 从 GPT-SoVITS 切片产物 (`.list` 清单 + 音频目录) 批量导入角色与参考音频。
 ///

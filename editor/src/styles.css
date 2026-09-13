@@ -357,7 +357,7 @@ body.resizing {
   align-items: center;
   gap: 6px;
   /* 左右内边距固定; 左侧略大一点, 让纯文本标题不贴边 */
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-right: 1px solid var(--app-border);
   cursor: pointer;
   font-size: 13px;
@@ -2574,7 +2574,7 @@ body.resizing {
 }
 
 .character-tile-model {
-  max-width: 46%;
+  max-width: 68%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2725,8 +2725,13 @@ body.resizing {
 }
 
 .scene-voice-panel {
-  /* 固定高度: 光标移出对话时只清空内容, 布局不跳动 */
-  height: 340px;
+  /*
+   * 高度固定: 光标移出对话时只清空内容, 布局不跳动。
+   * 取 360px 是因为「语句面板」默认内容 (角色/语言、文本、参考音频/种子、
+   * 温度/语速、高级设置开关、操作按钮、状态行) 约需 340px —— 之前取 340px 顶着
+   * 边界, 于是默认状态就出现滚动条。
+   */
+  height: 360px;
   border-top: 1px solid var(--app-border);
   overflow: hidden;
   display: flex;
@@ -2757,6 +2762,12 @@ body.resizing {
 }
 
 .scene-voice-hint {
+  font-size: 12px;
+}
+
+/* 参考音频下拉: 点开即弹出选择对话框 (带搜索与试听) */
+.voice-reference-trigger {
+  width: 100%;
   font-size: 12px;
 }
 
@@ -2851,8 +2862,8 @@ body.resizing {
 .voice-advanced-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px;
+  gap: 6px;
+  padding: 6px;
   border: 1px dashed var(--app-border);
   border-radius: 6px;
 }

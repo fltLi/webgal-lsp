@@ -46,6 +46,8 @@ import {
   voiceSynthesize,
   voiceTakeLogs,
   voiceTrimSuggestion,
+  voiceUpdateCharacter,
+  type CharacterPatch,
 } from '../commands/voice';
 import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
@@ -227,11 +229,16 @@ class VoiceController {
   // -------- 参数 --------
 
   /** 当前语句的配音参数: 选中历史项则回填其参数, 否则按角色与默认配置构造 */
-  currentParams(id: string): VoiceParams | null {
+  /**
+   * 某条对话的当前配音参数 (未选中历史项时为默认值)。
+   *
+   * **直接接收对话本身**而不是用 `card.cursorLine` 反查: 调用方 (语句面板) 手上
+   * 已经有那条对话, 再反查一次就会在"光标行号还没同步过来"的窗口里静默返回 null,
+   * 于是测试/生成按钮点了没反应。少一次反查就少一个失配的机会。
+   */
+  currentParams(id: string, line: SayLine): VoiceParams | null {
     const card = this.cards.get(id);
-    if (!card || card.cursorLine === null) return null;
-    const line = card.dialogues.find((dialogue) => dialogue.line === card.cursorLine);
-    if (!line) return null;
+    if (!card) return null;
 
     const selected = this.selectedHistory(id);
     const defaults = this.settings.defaults;
@@ -263,11 +270,12 @@ class VoiceController {
 
   // -------- 入队 --------
 
-  enqueue(id: string, kind: 'test' | 'generate', params: VoiceParams): VoiceTask | null {
+  /**
+   * 入队一次合成。`line` 由调用方直接给出 (见 `currentParams` 的说明)。
+   */
+  enqueue(id: string, kind: 'test' | 'generate', line: SayLine, params: VoiceParams): VoiceTask | null {
     const card = this.cards.get(id);
-    if (!card || card.cursorLine === null) return null;
-    const line = card.dialogues.find((dialogue) => dialogue.line === card.cursorLine);
-    if (!line) return null;
+    if (!card) return null;
 
     const character = this.characterById(params.characterId);
     const reference = character?.references.find((item) => item.hash === params.referenceHash) ?? null;
@@ -752,16 +760,36 @@ class VoiceController {
 
   /** 保存角色并同步到全局列表 */
   /**
-   * 保存角色。
+   * 保存角色的**部分字段** (服务端读-改-写)。
    *
-   * `previousId` 用于**改名**: id 同时是配置文件名与参考音频目录名, 后端据此把
-   * 音频目录一并搬走。列表按 `createdAt` 排序, 因此改设置不会让卡片换位置。
+   * 这是界面上所有角色修改的入口。不要改成"发整份记录": 那会让两个相邻的修改
+   * 互相覆盖 —— 勾选"参与配音"会顺手把星标、模型等字段回写成过时快照。
+   */
+  async updateCharacter(id: string, patch: CharacterPatch): Promise<Character> {
+    const saved = await voiceUpdateCharacter(id, patch);
+    this.applyCharacter(saved);
+    return saved;
+  }
+
+  /**
+   * 保存整份角色记录, 用于**改名** (`id` 本身变了, 无法用字段补丁表达)。
+   *
+   * `previousId` 是改名前的 id: id 同时是配置文件名与参考音频目录名,
+   * 后端据此把音频目录一并搬走。
    */
   async persistCharacter(character: Character, previousId?: string | null): Promise<Character> {
     const saved = await voiceSaveCharacter(character, previousId);
     const rest = this.characters.filter((item) => item.id !== saved.id && item.id !== (previousId ?? saved.id));
     this.setCharacters([...rest, saved]);
     return saved;
+  }
+
+  /** 把服务端返回的角色并回本地列表 (其余角色不动) */
+  private applyCharacter(saved: Character): void {
+    const exists = this.characters.some((item) => item.id === saved.id);
+    this.setCharacters(
+      exists ? this.characters.map((item) => (item.id === saved.id ? saved : item)) : [...this.characters, saved]
+    );
   }
 
   /** 新建角色 */
@@ -854,7 +882,7 @@ class VoiceController {
     if (!line) return null;
 
     // 复用原参数, 但文本跟随当前场景内容
-    return this.enqueue(cardId, entry.kind, { ...entry.params, text: line.text });
+    return this.enqueue(cardId, entry.kind, line, { ...entry.params, text: line.text });
   }
 
   /** 该场景当前是否处于配音编辑模式 */

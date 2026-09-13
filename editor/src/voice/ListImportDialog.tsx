@@ -50,7 +50,8 @@ export function ListImportDialog({ onClose, onImported, onError }: Props) {
       const report = await voiceController.importFromList(listPath.trim(), audioDir.trim());
       onImported(
         `已导入 ${report.imported} 条参考音频，涉及 ${report.characters.length} 个角色` +
-          (report.skipped > 0 ? `，跳过 ${report.skipped} 条` : '')
+          (report.autoTrimmed > 0 ? `，其中 ${report.autoTrimmed} 条过长已自动裁剪` : '') +
+          (report.skipped > 0 ? `，跳过 ${report.skipped} 条（音频缺失或无法读取）` : '')
       );
       onClose();
     } catch (caught) {

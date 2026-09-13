@@ -322,6 +322,10 @@ export const useAppStore = create<AppStore>((set) => ({
    * 曾经这里会"切到哪个场景就自动让它进入配音编辑模式", 结果是进入配音模式后
    * 每切一次卡就多一张配音卡, 而麦克风开关又被自动规则覆盖掉 (点了没反应,
    * 切走再切回来才发现生效)。进入与退出现在只有一个入口: 当前场景卡上的麦克风。
+   *
+   * 顺带把光标位置清空: 它是**全局**状态, 切卡时上一条记录的行号会被新文档继承,
+   * 于是配音卡一挂载就拿着"上一张卡的光标行"去选中对话 —— 选中错误的行、
+   * 甚至因为该行不是对话而清空整张卡。
    */
   activateTab: (id) =>
     set((s) => {
@@ -330,7 +334,7 @@ export const useAppStore = create<AppStore>((set) => ({
       // 回到场景卡时仍然知道"当前场景"是哪一张。
       const currentSceneTabId = tab?.kind === 'scene' ? tab.id : s.currentSceneTabId;
       if (s.activeTabId === id && s.currentSceneTabId === currentSceneTabId) return {};
-      return { activeTabId: id, currentSceneTabId };
+      return { activeTabId: id, currentSceneTabId, cursor: null };
     }),
   moveTab: (id, toIndex) => set((s) => ({ tabs: moveTab(s.tabs, id, toIndex) })),
   retargetSceneTabs: (oldPath, newPath) =>

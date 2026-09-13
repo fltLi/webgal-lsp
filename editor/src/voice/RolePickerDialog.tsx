@@ -58,7 +58,7 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
 
   const toggleEnabled = async (character: Character, enabled: boolean) => {
     try {
-      await voiceController.persistCharacter({ ...character, enabled });
+      await voiceController.updateCharacter(character.id, { enabled });
     } catch (caught) {
       report(caught);
     }
@@ -66,7 +66,7 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
 
   const toggleStarred = async (character: Character, starred: boolean) => {
     try {
-      await voiceController.persistCharacter({ ...character, starred });
+      await voiceController.updateCharacter(character.id, { starred });
     } catch (caught) {
       report(caught);
     }
@@ -150,7 +150,6 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
                 <span className="character-block-name">{character.name}</span>
                 <span className="character-block-meta">
                   {character.id} · 参考音频 {character.references.length}
-                  {!character.enabled && ' · 未启用'}
                 </span>
               </div>
               <Button

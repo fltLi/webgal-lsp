@@ -17,7 +17,12 @@ import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
 import type { Character, ModelCandidate, ReferenceAudio } from '../commands/voice';
-import { voiceExportCharacter, voiceListCharacters, voiceRemoveReference } from '../commands/voice';
+import {
+  voiceExportCharacter,
+  voiceListCharacters,
+  voiceRemoveReference,
+  type CharacterPatch,
+} from '../commands/voice';
 import { AppDialog } from '../components/AppDialog';
 import { Select } from '../components/Select';
 import { useAppStore } from '../state/store';
@@ -45,14 +50,23 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
     savedId.current = character.id;
   }, [character.id, character.updatedAt]);
 
-  /** 立即落盘 (没有"保存"按钮) */
-  const commit = async (patch: Partial<Character>) => {
-    const next = { ...draft, ...patch };
+  /**
+   * 立即落盘 (没有"保存"按钮)。
+   *
+   * 默认走**字段补丁** (`updateCharacter`): 只发送这一项改动, 服务端读-改-写,
+   * 因此不会把别的字段回写成过时快照。
+   *
+   * 唯一例外是**改名**: `id` 本身变了, 没法用字段补丁表达 (服务端要据此搬移参考
+   * 音频目录), 那种情况才发送整份记录。
+   */
+  const commit = async (patch: CharacterPatch) => {
+    const next = { ...draft, ...patch } as Character;
     setDraft(next);
     try {
-      // 角色 id 可编辑: 它同时是配置文件名与参考音频目录名, 改名由后端连带搬移
-      const previous = next.id === savedId.current ? undefined : savedId.current;
-      const saved = await voiceController.persistCharacter(next, previous);
+      const renamed = typeof patch.id === 'string' && patch.id !== savedId.current;
+      const saved = renamed
+        ? await voiceController.persistCharacter(next, savedId.current)
+        : await voiceController.updateCharacter(savedId.current, patch);
       savedId.current = saved.id;
       setDraft(saved);
       onError(null);

@@ -74,6 +74,18 @@ fn default_enabled() -> bool {
     true
 }
 
+/// 角色字段修改 (只包含要改的字段)
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CharacterPatch {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub language: Option<LanguageCode>,
+    pub model: Option<Option<ModelChoice>>,
+    pub starred: Option<bool>,
+    pub enabled: Option<bool>,
+}
+
 /// 本地模型选择
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,6 +201,8 @@ pub fn normalize_language(language: &str) -> LanguageCode {
 pub struct ListImportReport {
     /// 成功导入的参考音频条数
     pub imported: usize,
+    /// 其中被自动裁剪过的条数 (过长音频按静音边界截到 10 秒内)
+    pub auto_trimmed: usize,
     /// 跳过条数 (音频缺失 / 无法规范化 / 超出上限 / 行格式错误)
     pub skipped: usize,
     /// 涉及的角色名 (去重)
@@ -300,6 +314,39 @@ impl Library {
         }
         let text = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&text)?)
+    }
+
+    /// 按**字段**修改角色: 只改动给出的字段, 其余以磁盘上的当前内容为准。
+    ///
+    /// 这是角色修改的唯一入口。原因: 前端曾经把**整份角色记录**发回来写盘, 于是
+    /// 两个并发/相邻的修改会互相覆盖 —— 勾选"参与配音"会顺手把星标、模型等字段
+    /// 回写成它手上那份可能已经过时的快照。改成"服务端读-改-写"之后, 每个操作
+    /// 只影响它声明要改的字段。
+    pub fn patch(&self, id: &str, patch: CharacterPatch) -> Result<Character> {
+        let mut character = self.load(id)?;
+        if let Some(name) = patch.name {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(LibraryError::Invalid("角色名不可为空".into()));
+            }
+            character.name = name;
+        }
+        if let Some(description) = patch.description {
+            character.description = description;
+        }
+        if let Some(language) = patch.language {
+            character.language = language;
+        }
+        if let Some(model) = patch.model {
+            character.model = model;
+        }
+        if let Some(starred) = patch.starred {
+            character.starred = starred;
+        }
+        if let Some(enabled) = patch.enabled {
+            character.enabled = enabled;
+        }
+        self.save(character)
     }
 
     /// 写入单个角色 (更新时间戳)
@@ -478,12 +525,16 @@ impl Library {
                     report.skipped += 1;
                     continue;
                 };
-                // 规范化 (过短补尾、过长裁剪) 后入库
+                // 规范化: 过短的补尾静音, 过长的按静音边界**自动裁剪**, 超出部分夹到上限。
+                // 不因为"太长"而丢数据 —— 单条添加走同一套自动裁剪, 失败才由界面弹手动裁剪。
                 let Ok(normalized) = super::audio::normalize_reference(&audio_path, &staged, None)
                 else {
                     report.skipped += 1;
                     continue;
                 };
+                if normalized.trimmed {
+                    report.auto_trimmed += 1;
+                }
                 if !kept.insert(normalized.hash.clone()) {
                     report.skipped += 1;
                     continue;
@@ -776,6 +827,59 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn patch_changes_only_the_given_fields() {
+        // 这是"勾选参与配音却把星标/模型一起回写成过时快照"这个 bug 的回归测试:
+        // 字段补丁必须只动它声明的那一项。
+        let library = temp_library("patch");
+        let mut base = character("anon", "千早爱音");
+        base.starred = true;
+        base.model = Some(ModelChoice {
+            gpt_weights: Some("GPT_weights_v4/anon-e15.ckpt".into()),
+            sovits_weights: Some("SoVITS_weights_v4/anon_e8_s208.pth".into()),
+        });
+        library.save(base).unwrap();
+
+        let patched = library
+            .patch(
+                "anon",
+                CharacterPatch {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        assert!(!patched.enabled);
+        // 其余字段原样保留
+        assert!(patched.starred);
+        assert_eq!(patched.name, "千早爱音");
+        assert_eq!(
+            patched.model.unwrap().gpt_weights.as_deref(),
+            Some("GPT_weights_v4/anon-e15.ckpt")
+        );
+        // 落盘的也是同一份
+        let reloaded = library.load("anon").unwrap();
+        assert!(!reloaded.enabled);
+        assert!(reloaded.starred);
+    }
+
+    #[test]
+    fn patch_rejects_empty_name() {
+        let library = temp_library("patch-name");
+        library.save(character("anon", "千早爱音")).unwrap();
+        let error = library
+            .patch(
+                "anon",
+                CharacterPatch {
+                    name: Some("   ".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("角色名"));
     }
 
     #[test]
