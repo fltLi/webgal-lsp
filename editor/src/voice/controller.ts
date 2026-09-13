@@ -975,13 +975,32 @@ class VoiceController {
     return card.history.some((entry) => entry.status === 'pending' || entry.status === 'running');
   }
 
-  /** 磁盘内容是否与打开时不同 */
+  /**
+   * 磁盘内容是否被**外部**改过。
+   *
+   * 判据是"磁盘既不同于打开时的基准, 也不同于编辑器里现在这一份":
+   *
+   * * 只比基准是不够的。基准 (`diskHash`) 只在打开卡片时记录, 而文件随时可能被**我们自己**
+   *   写回去 —— 配音「应用」、手动 `Ctrl+S`、自动保存。只比基准的话, 下一次轮询就会把
+   *   这些自写当成"外部修改", 弹出一个别无选择的裁决对话框。
+   * * 只比编辑器内容也不够: 编辑器有未保存的改动时, 磁盘与它本来就不同, 那是脏标记而
+   *   不是冲突。
+   */
   async checkDiskChange(id: string): Promise<boolean> {
     const card = this.cards.get(id);
     if (!card) return false;
     try {
       const content = await fs.readTextLossy(card.scenePath);
-      return hashText(normalizeEol(content)) !== card.diskHash;
+      const diskHash = hashText(normalizeEol(content));
+      if (diskHash === card.diskHash) return false;
+
+      // 磁盘内容与编辑器里的一致 -> 是我们自己刚保存过, 顺手把基准对齐, 不打扰用户
+      const doc = this.store().documents.find((item) => item.path === card.scenePath);
+      if (doc && hashText(normalizeEol(doc.content)) === diskHash) {
+        card.diskHash = diskHash;
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }
