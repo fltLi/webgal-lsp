@@ -2,8 +2,8 @@
 
 // 任务进度条 (历史记录与工作台队列共用)。
 //
-// 服务端在推理过程中**不提供任何进度**, 因此进度只能是"已用时间 / 预估时间", 预估
-// 由 `estimator` 用实测样本校准 (见 estimate.ts)。据此:
+// 服务端在推理过程中**不提供任何进度**, 因此进度只能是"已用时间 / 预估时间", 预估由
+// `estimator` 按**采样步数分桶**并用实测样本校准 (见 estimate.ts)。据此:
 // * 进度条会随时间往前走, 但走到头不等于一定完成 —— 偏慢的任务会停在 100% 等结果;
 // * 排队中的任务还没有开始时间, 因此只显示"预计"。
 //
@@ -15,16 +15,17 @@ import { useEffect, useState } from 'react';
 import { estimator, formatDuration, formatEta } from './estimate';
 
 interface Props {
-  kind: 'test' | 'generate';
+  /** 这次生成用的采样步数 (预估按它分桶) */
+  steps: number;
   /** 任务文本 (估算按字符数) */
   text: string;
   /** 开始推理的时刻; 未开始 (排队中) 时省略 */
   startedAt?: number;
 }
 
-export function TaskProgress({ kind, text, startedAt }: Props) {
+export function TaskProgress({ steps, text, startedAt }: Props) {
   const now = useTicker(startedAt !== undefined);
-  const total = estimator.estimate(kind, text.length);
+  const total = estimator.estimate(steps, text.length);
 
   if (startedAt === undefined) {
     return (

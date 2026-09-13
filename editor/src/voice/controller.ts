@@ -463,7 +463,15 @@ class VoiceController {
         task.audioHash = result.entry.hash;
         task.audioPath = result.entry.path;
         task.duration = result.duration;
-        estimator.observe(task.kind, task.params.text.length, Date.now() - (task.startedAt ?? Date.now()));
+        /*
+         * 校准样本 = 这一次请求的实测往返耗时 (API 响应时间), 按**采样步数**归档。
+         * 排队等待不计入 (startedAt 是发出请求的时刻)。
+         */
+        estimator.observe(
+          task.params.sampleSteps,
+          task.params.text.length,
+          Date.now() - (task.startedAt ?? Date.now())
+        );
         this.store().upsertVoiceCache(result.entry);
       }
     } catch (error) {
@@ -674,7 +682,11 @@ class VoiceController {
     if (config) this.updateSettings({ launch: config });
 
     const store = this.store();
-    estimator.reset();
+    /*
+     * 不要清空估算样本: 机器没变, 上一次会话学到的东西仍然有效 (样本已持久化)。
+     * 但要跳过**本次启动后的第一个任务** —— 它包含模型加载, 比正常推理高一个量级。
+     */
+    estimator.skipNextSample();
     store.setVoiceLogs([]);
     store.setVoiceStatus('starting', null);
 
@@ -719,7 +731,7 @@ class VoiceController {
       this.probeTimer = null;
     }
     await voiceShutdown();
-    estimator.reset();
+    // 样本保留: 下次启动的机器与模型还是一样的 (第一个任务由 `startGsv` 标为冷启动)
     this.store().setVoiceStatus('stopped', null);
   }
 
@@ -838,6 +850,8 @@ class VoiceController {
   async switchModel(gptWeights: string | null, sovitsWeights: string | null): Promise<void> {
     if (!gptWeights && !sovitsWeights) throw new Error('请先填写至少一项权重路径');
     await voiceSetModel(gptWeights, sovitsWeights);
+    // 切换权重后服务端要重载底模并合并 LoRA: 下一个任务的耗时包含这部分, 不进估算样本
+    estimator.skipNextSample();
   }
 
   /** 清理已完成/已取消的任务记录 (历史记录不受影响) */

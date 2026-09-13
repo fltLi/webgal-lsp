@@ -349,10 +349,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
                 <Select
                   value={String(params.sampleSteps)}
                   title="正式生成使用的采样步数"
-                  options={[4, 8, 16, 32].map((steps) => ({
-                    value: String(steps),
-                    label: `x${steps}${steps === GENERATE_SAMPLE_STEPS ? '（默认）' : ''}`,
-                  }))}
+                  options={[4, 8, 16, 32].map((steps) => ({ value: String(steps), label: `x${steps}` }))}
                   onChange={(value) => update({ sampleSteps: Number.parseInt(value, 10) || GENERATE_SAMPLE_STEPS })}
                 />
               </label>

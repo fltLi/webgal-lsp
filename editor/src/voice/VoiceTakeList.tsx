@@ -196,11 +196,11 @@ export function VoiceTakeList({ cardId, onChanged, onApplied }: Props) {
         {inFlight && (
           <div className="history-progress">
             {entry.status === 'running' ? (
-              <TaskProgress kind={entry.kind} text={entry.text} startedAt={entry.startedAt} />
+              <TaskProgress steps={entry.params.sampleSteps} text={entry.text} startedAt={entry.startedAt} />
             ) : (
               <>
                 <Spinner size="extra-tiny" />
-                <TaskProgress kind={entry.kind} text={entry.text} />
+                <TaskProgress steps={entry.params.sampleSteps} text={entry.text} />
               </>
             )}
           </div>

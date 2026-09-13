@@ -2,14 +2,38 @@
 
 // 配音任务耗时估算。
 //
-// 服务端在推理完成前不提供任何进度, 因此进度只能靠**估算 + 实测校准**:
-// 用已完成的任务回归出「固定开销 + 每字符耗时」两个系数, 再据此给出剩余时间。
-// 测试 (x4) 与正式生成 (x32) 的耗时量级相差数倍, 必须分别校准。
+// 服务端在推理完成前不提供任何进度, 因此进度只能是"已用时间 / 预估时间"。预估必须
+// 跟着**实测**走, 手写死的先验只该负责"这个桶的第一个任务"。
+//
+// 关键决定:
+// * **按采样步数分桶** (4/8/16/32), 不按「测试 / 生成」。真正决定耗时的是步数; 测试与
+//   生成只是默认档位 (生成还能选 8/16), 优先级更是随时能改 —— 拿它们当桶会互相污染。
+// * 每个桶里维护 `耗时 ≈ 固定开销 + 每字耗时 × 字数`:
+//   - ≥3 个样本: 最小二乘拟合两个参数;
+//   - 1~2 个样本: 拟合不出两个参数, 但"整体偏快还是偏慢"一个样本就看得出 —— 保留先验
+//     的**形状**, 整体乘一个由实测得到的修正系数;
+//   - 0 个样本: 用先验。
+// * **只剔除偏高的离群值** (超过 `中位数 + 4×MAD`): 一次被系统调度拖慢的推理不该长期
+//   污染预估; 而偏快的样本没有这个问题, 留着反而让预估更乐观一点。
+// * 样本口径是**一次请求的实测往返耗时** (发出请求到拿到响应, 即 API 响应时间)。本地把
+//   wav 写进缓存的开销也在里面, 但那是几毫秒的量级。
+// * 样本**持久化**在 localStorage, 换一次会话不必从零学起。服务刚启动或刚切换权重后的
+//   第一个任务包含模型加载, 由调用方显式 `skipNextSample()` 跳过 (否则一次三分钟会把
+//   整个桶带偏很久)。
 
-/** 最小样本数: 少于该数量时沿用先验系数 */
-const MIN_SAMPLES = 3;
+/** 一个样本: 字数、实测毫秒、记录时刻 */
+export interface Sample {
+  chars: number;
+  millis: number;
+  at: number;
+}
 
-/** 先验系数 (毫秒): 由 GPT-SoVITS v4 在 CPU 上的实测结果粗略拟合 */
+/** 估算所需的最小任务描述 (按该任务的采样步数与文本长度) */
+export interface EstimateTask {
+  params: { text: string; sampleSteps: number };
+}
+
+/** `耗时 = constant + perChar × 字数` (毫秒) */
 interface Coefficients {
   /** 固定开销 (参考音频处理 / prompt 特征 / 调度) */
   constant: number;
@@ -17,83 +41,219 @@ interface Coefficients {
   perChar: number;
 }
 
-const PRIOR: Record<'test' | 'generate', Coefficients> = {
-  // x4: 短句约 20s, 27 字约 60s
-  test: { constant: 12000, perChar: 1800 },
-  // x32: 短句约 60s, 27 字约 280s
-  generate: { constant: 30000, perChar: 9000 },
+/** 每桶保留的最近样本数 */
+const MAX_SAMPLES = 40;
+/** 少于该数量时用"先验形状 × 修正系数", 达到后用最小二乘拟合 */
+const MIN_FIT_SAMPLES = 3;
+/** 离群判据: 高于 `中位数 + MAD_K × MAD` 的样本剔除 */
+const MAD_K = 4;
+/** MAD 可能为 0 (样本几乎一致), 因此给它一个下限: 中位数的 10% */
+const MIN_SPREAD_RATIO = 0.1;
+/** 预估下限, 避免拟合出 0 让进度条瞬间跑满 */
+const MIN_ESTIMATE = 500;
+
+/**
+ * 先验系数 (毫秒): 每个步数一档, 只用于"该桶还没有样本"的时候。
+ *
+ * 数值来自一台 CPU 推理机器上的实测: x4 十六字约 3 秒, x32 十六字约 40 秒, 中间两档
+ * 线性内插。它们**不是**要长期生效的参数 —— 第一个样本回来就会整体纠偏。
+ */
+const PRIOR: Record<number, Coefficients> = {
+  4: { constant: 1000, perChar: 130 },
+  8: { constant: 4000, perChar: 620 },
+  16: { constant: 7000, perChar: 1250 },
+  32: { constant: 10000, perChar: 1900 },
 };
 
-/** 一个样本 */
-export interface Sample {
-  chars: number;
-  millis: number;
+const PRIOR_STEPS = Object.keys(PRIOR)
+  .map(Number)
+  .sort((a, b) => a - b);
+
+/** 该步数的先验; 未知步数取最接近的更大一档 */
+function priorOf(steps: number): Coefficients {
+  const exact = PRIOR[steps];
+  if (exact) return { ...exact };
+  const nearest = PRIOR_STEPS.find((candidate) => candidate >= steps) ?? PRIOR_STEPS[PRIOR_STEPS.length - 1];
+  return { ...PRIOR[nearest] };
 }
 
-/** 估算所需的最小任务描述 */
-export interface EstimateTask {
-  kind: 'test' | 'generate';
-  params: { text: string };
+/** 样本的存取 (测试里可以换成内存实现) */
+export interface SampleStorage {
+  read: () => string | null;
+  write: (text: string) => void;
 }
 
-/** 估算器 (每个会话一份; 不持久化, 因为换机器后系数完全不同) */
+const STORAGE_KEY = 'webgal-ink.voice.estimate.v1';
+const STORAGE_VERSION = 1;
+
+interface StoredSamples {
+  v: number;
+  buckets: Record<string, [number, number, number][]>;
+}
+
+/** 浏览器里的实现; 非浏览器环境 (单测) 返回 null, 于是不持久化 */
+function browserStorage(): SampleStorage | null {
+  const store = globalThis.localStorage as Storage | undefined;
+  if (!store) return null;
+  return {
+    read: () => {
+      try {
+        return store.getItem(STORAGE_KEY);
+      } catch {
+        return null;
+      }
+    },
+    write: (text) => {
+      try {
+        store.setItem(STORAGE_KEY, text);
+      } catch {
+        // 存储不可用时静默忽略 (估算退化成会话内)
+      }
+    },
+  };
+}
+
+/** 估算器 (每个会话一份; 样本会持久化, 因此换会话也能接着用) */
 export class DurationEstimator {
-  private samples: Record<'test' | 'generate', Sample[]> = { test: [], generate: [] };
+  private buckets = new Map<number, Sample[]>();
+  private skipNext = false;
 
-  /** 记录一次真实耗时 */
-  observe(kind: 'test' | 'generate', chars: number, millis: number): void {
-    if (millis <= 0 || chars < 0) return;
-    const bucket = this.samples[kind];
-    bucket.push({ chars, millis });
-    // 只保留最近的样本, 让系数跟随当前机器/模型状态
-    if (bucket.length > 40) bucket.shift();
+  constructor(private storage: SampleStorage | null = browserStorage()) {
+    this.restore();
   }
 
-  /** 当前系数 (样本足够时用最小二乘拟合 `millis = a + b * chars`) */
-  coefficients(kind: 'test' | 'generate'): Coefficients {
-    const bucket = this.samples[kind];
-    if (bucket.length < MIN_SAMPLES) return { ...PRIOR[kind] };
+  /**
+   * 跳过下一个样本。
+   *
+   * 用于"这次推理里包含模型加载"的时刻 (服务刚启动、刚切换权重): 它的耗时比正常推理
+   * 高一个量级, 收进来会让该桶的预估长期偏大。
+   */
+  skipNextSample(): void {
+    this.skipNext = true;
+  }
 
-    const n = bucket.length;
-    const meanX = bucket.reduce((sum, sample) => sum + sample.chars, 0) / n;
-    const meanY = bucket.reduce((sum, sample) => sum + sample.millis, 0) / n;
-    const variance = bucket.reduce((sum, sample) => sum + (sample.chars - meanX) ** 2, 0);
+  /** 记录一次真实耗时 (毫秒) */
+  observe(steps: number, chars: number, millis: number): void {
+    if (this.skipNext) {
+      this.skipNext = false;
+      return;
+    }
+    if (!Number.isFinite(millis) || millis <= 0 || chars < 0) return;
+    const bucket = this.bucket(steps);
+    bucket.push({ chars, millis, at: Date.now() });
+    if (bucket.length > MAX_SAMPLES) bucket.splice(0, bucket.length - MAX_SAMPLES);
+    this.persist();
+  }
 
-    // 字符数几乎一致时无法回归出斜率, 退回先验斜率并只校准截距
-    if (variance < 1e-6) {
-      const prior = PRIOR[kind];
-      return {
-        constant: Math.max(1000, meanY - prior.perChar * meanX),
-        perChar: prior.perChar,
-      };
+  /** 当前系数 */
+  coefficients(steps: number): Coefficients {
+    const prior = priorOf(steps);
+    const samples = this.cleaned(steps);
+    if (samples.length === 0) return prior;
+
+    const meanChars = mean(samples.map((sample) => sample.chars));
+    const meanMillis = mean(samples.map((sample) => sample.millis));
+
+    if (samples.length < MIN_FIT_SAMPLES) {
+      // 样本太少, 拟合两个参数没有意义: 保留先验形状, 用实测与先验的比值整体纠偏
+      const predicted = mean(samples.map((sample) => prior.constant + prior.perChar * sample.chars));
+      const ratio = predicted > 0 ? meanMillis / predicted : 1;
+      const safe = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+      return { constant: prior.constant * safe, perChar: prior.perChar * safe };
     }
 
-    const covariance = bucket.reduce((sum, sample) => sum + (sample.chars - meanX) * (sample.millis - meanY), 0);
-    const perChar = Math.max(50, covariance / variance);
-    const constant = Math.max(1000, meanY - perChar * meanX);
-    return { constant, perChar };
+    const variance = samples.reduce((sum, sample) => sum + (sample.chars - meanChars) ** 2, 0);
+    if (variance < 1e-6) {
+      // 字数几乎一致, 斜率回归不出来: 沿用先验斜率, 只校准截距
+      return { constant: Math.max(MIN_ESTIMATE, meanMillis - prior.perChar * meanChars), perChar: prior.perChar };
+    }
+
+    const covariance = samples.reduce(
+      (sum, sample) => sum + (sample.chars - meanChars) * (sample.millis - meanMillis),
+      0
+    );
+    const perChar = Math.max(20, covariance / variance);
+    return { constant: Math.max(MIN_ESTIMATE, meanMillis - perChar * meanChars), perChar };
   }
 
   /** 估算单个任务耗时 (毫秒) */
-  estimate(kind: 'test' | 'generate', chars: number): number {
-    const { constant, perChar } = this.coefficients(kind);
-    return constant + perChar * chars;
+  estimate(steps: number, chars: number): number {
+    const { constant, perChar } = this.coefficients(steps);
+    return Math.max(MIN_ESTIMATE, constant + perChar * chars);
   }
 
   /** 估算一组任务的总耗时 (毫秒) */
   estimateAll(tasks: EstimateTask[]): number {
-    return tasks.reduce((sum, task) => sum + this.estimate(task.kind, task.params.text.length), 0);
+    return tasks.reduce((sum, task) => sum + this.estimate(task.params.sampleSteps, task.params.text.length), 0);
   }
 
-  /** 清空校准数据 (切换机器 / 重启服务后调用) */
-  reset(): void {
-    this.samples = { test: [], generate: [] };
+  /** 某步数桶里的样本数 (供测试与排查) */
+  sampleCount(steps: number): number {
+    return this.bucket(steps).length;
   }
 
-  /** 供 UI 展示的样本量 */
-  sampleCount(kind: 'test' | 'generate'): number {
-    return this.samples[kind].length;
+  /** 该桶里"不算离谱"的样本: 只剔除偏高的离群值 */
+  private cleaned(steps: number): Sample[] {
+    const bucket = this.bucket(steps);
+    if (bucket.length < 4) return bucket;
+    const center = median(bucket.map((sample) => sample.millis));
+    const spread = Math.max(
+      median(bucket.map((sample) => Math.abs(sample.millis - center))),
+      center * MIN_SPREAD_RATIO
+    );
+    const limit = center + MAD_K * spread;
+    return bucket.filter((sample) => sample.millis <= limit);
   }
+
+  private bucket(steps: number): Sample[] {
+    let bucket = this.buckets.get(steps);
+    if (!bucket) {
+      bucket = [];
+      this.buckets.set(steps, bucket);
+    }
+    return bucket;
+  }
+
+  private restore(): void {
+    const raw = this.storage?.read();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as StoredSamples;
+      if (parsed.v !== STORAGE_VERSION) return;
+      for (const [key, rows] of Object.entries(parsed.buckets ?? {})) {
+        const steps = Number(key);
+        if (!Number.isFinite(steps) || !Array.isArray(rows)) continue;
+        const samples = rows
+          .filter((row) => Array.isArray(row) && row.length >= 2)
+          .map(([chars, millis, at]) => ({ chars, millis, at: at ?? 0 }))
+          .slice(-MAX_SAMPLES);
+        if (samples.length > 0) this.buckets.set(steps, samples);
+      }
+    } catch {
+      // 数据坏了就当没有
+    }
+  }
+
+  private persist(): void {
+    if (!this.storage) return;
+    const buckets: Record<string, [number, number, number][]> = {};
+    for (const [steps, samples] of this.buckets) {
+      buckets[String(steps)] = samples.map((sample) => [sample.chars, sample.millis, sample.at]);
+    }
+    this.storage.write(JSON.stringify({ v: STORAGE_VERSION, buckets } satisfies StoredSamples));
+  }
+}
+
+function mean(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 /** 会话级单例 */

@@ -7,14 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  executionOrder,
-  groupByCharacter,
-  nextTask,
-  queueView,
-  summarize,
-  type QueueTask,
-} from '../src/voice/queue';
+import { executionOrder, groupByCharacter, nextTask, queueView, summarize, type QueueTask } from '../src/voice/queue';
 
 function task(
   id: string,
@@ -84,10 +77,7 @@ describe('executionOrder', () => {
 
   it('优先级只看任务自己的字段, 与 kind 无关', () => {
     // 一条被降级的测试任务不该再抢在生成任务前面
-    const order = executionOrder([
-      task('test', 'test', 'anon', 'pending', 'normal'),
-      task('gen', 'generate', 'soyo'),
-    ]);
+    const order = executionOrder([task('test', 'test', 'anon', 'pending', 'normal'), task('gen', 'generate', 'soyo')]);
     // 同优先级时按角色分组, 首次出现的角色在前
     expect(order.map((item) => item.id)).toEqual(['test', 'gen']);
   });

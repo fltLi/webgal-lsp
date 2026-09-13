@@ -2749,8 +2749,12 @@ body.resizing {
 }
 
 .scene-voice-split {
+  /*
+   * 左（操作台）宽、右（历史）窄: 操作台一行要放角色/语言/参考音频三个下拉, 历史列表
+   * 只是"一条记录几行字", 让它窄一点更划算。
+   */
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 1.75fr) minmax(220px, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -2832,7 +2836,9 @@ body.resizing {
  */
 .voice-field-character,
 .voice-field-language {
-  flex: 0 1 124px;
+  /* 等长; 取值要放得下"千早爱音"与"自动（多语种）"这类完整标签, 再窄就截断了 */
+  flex: 0 1 164px;
+  min-width: 148px;
 }
 .voice-field-reference {
   flex: 1 1 180px;

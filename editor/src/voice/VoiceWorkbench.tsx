@@ -456,9 +456,9 @@ export function VoiceWorkbench() {
                     />
                   )}
                   {task.status === 'running' && (
-                    <TaskProgress kind={task.kind} text={task.text} startedAt={task.startedAt} />
+                    <TaskProgress steps={task.params.sampleSteps} text={task.text} startedAt={task.startedAt} />
                   )}
-                  {task.status === 'pending' && <TaskProgress kind={task.kind} text={task.text} />}
+                  {task.status === 'pending' && <TaskProgress steps={task.params.sampleSteps} text={task.text} />}
                   {task.status === 'failed' && task.error && (
                     /*
                       报错只占一行 (整行独占, 见 `.voice-task-error`): 原文有几十行,
