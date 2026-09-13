@@ -356,7 +356,12 @@ export function CodeEditor({
     };
   }, [doc.path]);
 
-  // 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。
+  /*
+   * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。
+   *
+   * `highlightLine.line` 是**后端给的 0 起算行号**, 而 `monaco.Range` 收的是
+   * 1 起算行号 —— 必须 `+1`, 否则高亮会整体飘到上面一行。
+   */
   useEffect(() => {
     const collection = highlightDecorations.current;
     const model = editorRef.current?.getModel();
@@ -365,9 +370,10 @@ export function CodeEditor({
       collection.clear();
       return;
     }
-    const lineCount = model.getLineCount();
-    const start = Math.min(Math.max(1, highlightLine.line), Math.max(1, lineCount));
-    const end = Math.min(start + Math.max(1, highlightLine.count) - 1, lineCount);
+    const lineCount = Math.max(1, model.getLineCount());
+    const count = Math.max(1, highlightLine.count);
+    const start = Math.min(Math.max(0, highlightLine.line), lineCount - 1) + 1;
+    const end = Math.min(start + count - 1, lineCount);
     collection.set([
       {
         range: new monaco.Range(start, 1, end, model.getLineMaxColumn(end)),
