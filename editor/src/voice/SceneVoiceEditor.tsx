@@ -127,9 +127,20 @@ export function SceneVoiceEditor({ docPath }: { docPath: string }) {
       <div className="scene-voice-panel">
         {/* TEMP-DEBUG: 行号对不上时用来定位, 定位完成后整块删除 */}
         <div className="scene-voice-debug">
-          光标行(1起算)={cursor && cursor.path === docPath ? cursor.line : '—'} 卡片记录 cursorLine(0起算)=
-          {card.cursorLine ?? '—'} 高亮行={dialogue ? dialogue.line : '—'} 对话总数=
-          {card.dialogues.length} 首条对话行={card.dialogues[0]?.line ?? '—'}
+          <div>
+            光标行(1起算)={cursor && cursor.path === docPath ? cursor.line : '—'} 卡片cursorLine(0起算)=
+            {card.cursorLine ?? '—'} 高亮行={dialogue ? dialogue.line : '—'} 卡片对话总数={card.dialogues.length}{' '}
+            卡片前五行=[
+            {card.dialogues
+              .slice(0, 5)
+              .map((item) => item.line)
+              .join(', ')}
+            ]
+          </div>
+          <div>
+            doc总行数={doc.content.split('\n').length} 首行=[{doc.content.split('\n')[0]?.slice(0, 30)}] 第9行=[
+            {doc.content.split('\n')[8]?.slice(0, 45)}] 第10行=[{doc.content.split('\n')[9]?.slice(0, 45)}]
+          </div>
         </div>
         {dialogue ? (
           <div className="scene-voice-split">
