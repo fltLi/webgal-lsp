@@ -84,6 +84,7 @@ pub fn run() {
             service::voice::voice_export_character,
             service::voice::voice_import_character,
             service::voice::voice_import_characters_from_list,
+            service::voice::voice_preview_import,
             service::voice::voice_list_cache,
             service::voice::voice_store_cache,
             service::voice::voice_drop_cache,

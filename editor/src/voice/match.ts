@@ -2,27 +2,74 @@
 
 // 对话者到角色的静默匹配。
 //
-// 依据来自两处:
-// 1. 场景里该说话者出现过的 `-figureId=` / 位置糖 (立绘引用通常与角色一一对应);
-// 2. 角色名本身。
+// 依据来自三处, 强度从高到低:
+// 1. 角色名 / 角色 id 与对话者**完全相同**;
+// 2. 场景里该说话者出现过的 `-figureId=` / 位置糖 (立绘引用通常与角色一一对应);
+// 3. **包含关系**: 对话者里含有角色名 (「千早爱音（教室）」) 或角色名里含有对话者
+//    (「爱音」对应「千早爱音」)。
 //
-// "别名"机制已移除: 它要求维护一份额外的字符串清单, 而实际效果完全可以由
-// **把角色名写成场景里使用的那个名字** (或反过来改场景里的对话者名) 达成。
+// 第 3 条是后来补上的: 只做精确比对时, 场景里写成「千早爱音（黑）」这种带后缀的
+// 对话者、或者作者随手写的简称, 一律匹配不上 —— 而这两种写法在真实剧本里非常常见,
+// 匹配不上就意味着整段对话要手工选一遍。
 //
-// 匹配是静默的: 不提供"匹配"按钮, 失败时仅表现为下拉框未选中,
-// 由用户手动选择; 用户的手动选择会作为场景级覆盖被记住。
+// "别名"机制仍然没有: 它要求维护一份额外的字符串清单, 而包含关系已经覆盖了绝大多数
+// 场景; 剩下真正任意的称呼由用户手动选择 (并作为场景级覆盖被记住)。
+//
+// 匹配是静默的: 不提供"匹配"按钮, 失败时仅表现为下拉框未选中。
+// **宁可漏也不能错**: 包含关系出现同等强度的多个候选时按"无法判断"处理 (见下),
+// 因为错配会让整段对话用错音色, 而漏配只是没选中。
 
 import type { Character, SayLine } from '../commands/voice';
 
 export interface CharacterMatch {
   characterId: string | null;
   /** 匹配依据, 仅用于悬浮提示 */
-  reason: 'figureId' | 'name' | 'override' | 'narration' | 'none';
+  reason: 'figureId' | 'name' | 'namePartial' | 'override' | 'narration' | 'none';
 }
+
+/**
+ * 包含关系成立的最短长度。
+ *
+ * 单字角色名 ("音" / "爱") 命中任何含该字的对话者, 错配率远高于命中率, 因此不参与。
+ */
+const MIN_PARTIAL_LENGTH = 2;
 
 /** 归一化字符串 (大小写、空白、全角空格) */
 function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+/** 一个候选角色的匹配强度 */
+interface Candidate {
+  characterId: string;
+  /** 依据强度: 3 = 精确名称/ID, 2 = 精确立绘引用, 1 = 包含关系 */
+  rank: number;
+  /** 命中的字符串长度 (包含关系下越长越可信, 用它消歧) */
+  overlap: number;
+}
+
+/** `needle` 出现在 `haystack` 中时返回其长度, 否则 0 */
+function partialOverlap(haystack: string, needle: string): number {
+  if (needle.length < MIN_PARTIAL_LENGTH) return 0;
+  return haystack.includes(needle) ? needle.length : 0;
+}
+
+/** 按强度挑选候选; 包含关系上出现同等强度的多个候选时返回 null (不猜) */
+function pickCandidate(candidates: Candidate[]): Candidate | null {
+  let best: Candidate | null = null;
+  let tied = false;
+  for (const candidate of candidates) {
+    if (!best || candidate.rank > best.rank || (candidate.rank === best.rank && candidate.overlap > best.overlap)) {
+      best = candidate;
+      tied = false;
+    } else if (candidate.rank === best.rank && candidate.overlap === best.overlap) {
+      tied = true;
+    }
+  }
+  // 精确命中 (名称/ID/立绘) 是明确的标识, 同名同 id 由用户自己避免, 因此只在
+  // "包含关系"这一档上把并列视作无法判断。
+  if (best && tied && best.rank < 2) return null;
+  return best;
 }
 
 /** 从对话列表中统计"说话者 -> 其出现过的立绘引用" */
@@ -61,31 +108,43 @@ export function matchCharacter(line: SayLine, context: MatchContext): CharacterM
   }
 
   const speaker = normalize(line.speaker);
+  if (!speaker) return { characterId: null, reason: 'none' };
 
   const override = context.overrides[speaker];
   if (override && enabled.some((character) => character.id === override)) {
     return { characterId: override, reason: 'override' };
   }
 
-  // 立绘引用精确匹配: 角色 id 或角色名命中该立绘引用即视为同一角色
-  const figureIds = context.figureIds.get(speaker);
-  if (figureIds && figureIds.size > 0) {
-    for (const character of enabled) {
-      const keys = [character.id, character.name].map(normalize);
-      if ([...figureIds].some((figure) => keys.includes(normalize(figure)))) {
-        return { characterId: character.id, reason: 'figureId' };
-      }
-    }
-  }
+  const figureIds = [...(context.figureIds.get(speaker) ?? [])].map(normalize);
+  const candidates: Candidate[] = [];
 
-  // 名称精确匹配
   for (const character of enabled) {
-    if (normalize(character.name) === speaker) {
-      return { characterId: character.id, reason: 'name' };
+    // 角色名与角色 id 都是这个角色的标识, 二者平权
+    const keys = [character.name, character.id].map(normalize).filter((key) => key.length > 0);
+
+    if (keys.includes(speaker)) {
+      candidates.push({ characterId: character.id, rank: 3, overlap: speaker.length });
+      continue;
     }
+    // 立绘引用精确匹配: 角色 id 或角色名命中该立绘引用即视为同一角色
+    if (figureIds.some((figure) => keys.includes(figure))) {
+      candidates.push({ characterId: character.id, rank: 2, overlap: 0 });
+      continue;
+    }
+    // 包含关系 (两个方向都算): 取该角色最长的命中
+    const overlap = keys.reduce(
+      (longest, key) => Math.max(longest, partialOverlap(speaker, key), partialOverlap(key, speaker)),
+      0
+    );
+    if (overlap > 0) candidates.push({ characterId: character.id, rank: 1, overlap });
   }
 
-  return { characterId: null, reason: 'none' };
+  const best = pickCandidate(candidates);
+  if (!best) return { characterId: null, reason: 'none' };
+  return {
+    characterId: best.characterId,
+    reason: best.rank === 3 ? 'name' : best.rank === 2 ? 'figureId' : 'namePartial',
+  };
 }
 
 /**

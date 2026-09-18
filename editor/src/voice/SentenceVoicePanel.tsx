@@ -84,6 +84,16 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
   const match = card?.matches.get(dialogue.line);
   const matchHint = describeMatch(match?.reason);
 
+  /*
+   * 参考音频选择框只对**当前这个角色**有意义。
+   *
+   * 角色一旦变化 (换人、或被删除后重新选一个), 就把打开状态收掉: 否则会出现
+   * "对话框因为角色为空而没渲染, 但状态还挂着", 等角色一填上就自己弹出来。
+   */
+  useEffect(() => {
+    setPickerOpen(false);
+  }, [params?.characterId]);
+
   if (!params) return <div className="voice-sentence-panel" />;
 
   const update = (patch: Partial<VoiceParams>) => {
@@ -233,12 +243,23 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
               `Select` 是就地展开的浮层, 但参考音频**需要看时长与文本**才能选, 选项里
               放不下这些信息, 因此这里点开即弹出选择对话框 (带搜索与试听), 比
               "只读文字 + 更换按钮"更直接: 那个按钮的文案让人以为要"更换文件"。
+
+              **没有角色时不打开**: 参考音频是角色的东西, 那时弹出来只会是个空壳。
+              之前直接 `setPickerOpen(true)`, 对话框在 `character` 为空时自己返回 null,
+              于是这个"已打开"的状态一直挂着 —— 等用户随后选好角色, 它**立刻自己弹出来**,
+              像是在替用户做决定。根因是打开动作缺少前提校验, 不是对话框的渲染条件。
             */}
             <button
               type="button"
               className="select-trigger voice-reference-trigger"
-              title={referenceLabel(character, params.referenceHash)}
-              onClick={() => setPickerOpen(true)}
+              title={character ? referenceLabel(character, params.referenceHash) : '请先在左侧选择角色, 再挑选参考音频'}
+              onClick={() => {
+                if (!character) {
+                  setMessage('请先选择角色，再挑选参考音频');
+                  return;
+                }
+                setPickerOpen(true);
+              }}
             >
               <span className="select-label">{referenceLabel(character, params.referenceHash)}</span>
               <ChevronDownRegular className="select-chevron" />
@@ -426,6 +447,8 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
           update({ referenceHash: hash });
           setPickerOpen(false);
         }}
+        /* 加完一条就把它当成当前参考音频, 但**不关闭**这个对话框: 补语料通常是连着加几条 */
+        onAdded={(hash) => update({ referenceHash: hash })}
         onClose={() => setPickerOpen(false)}
         onCharactersChanged={onChanged}
       />
@@ -452,6 +475,8 @@ function describeMatch(reason: string | undefined): string {
       return '按立绘匹配';
     case 'name':
       return '按名称匹配';
+    case 'namePartial':
+      return '按名称包含匹配';
     case 'narration':
       return '继承旁白';
     default:

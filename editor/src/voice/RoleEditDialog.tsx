@@ -3,45 +3,44 @@
 // 编辑角色对话框。
 //
 // 角色的全部可编辑内容都在这里: 名称 / ID / 两个 GPT-SoVITS 模型 / 描述,
-// 以及**下方的参考音频编辑列表** (增删与试听)。
+// 以及**下方的参考音频编辑列表** (搜索 / 增删 / 试听, 见 `ReferenceListEditor`)。
 //
 // 两个刻意的交互决定:
 // * **改动即时生效**, 没有"保存"按钮 —— 输入框失焦、下拉选中、开关切换都会立刻落盘,
 //   底部按钮只是"关闭"。用户填完就能直接看到列表里的变化。
 // * 参考音频列表**自己滚动**, 而不是把整个对话框撑长: 整页滚动时标题栏与
 //   "添加参考音频"按钮都会跑出视野。
+//
+// `hideModel` 用于「选择角色」对话框里点开的那一份: 那里只是想看看/改改这个角色的
+// 参考音频, **权重是服务端本机的路径**, 与"这个角色叫什么、有哪些参考音频"无关,
+// 摆在那里只会让人以为改它就能换音色。
 
 import { Button, Field, Input, Textarea } from '@fluentui/react-components';
-import { AddRegular, ArrowDownloadRegular, DeleteRegular } from '@fluentui/react-icons';
+import { ArrowDownloadRegular } from '@fluentui/react-icons';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 
-import type { Character, ModelCandidate, ReferenceAudio } from '../commands/voice';
-import {
-  voiceExportCharacter,
-  voiceListCharacters,
-  voiceRemoveReference,
-  type CharacterPatch,
-} from '../commands/voice';
+import type { Character, ModelCandidate } from '../commands/voice';
+import { voiceExportCharacter, type CharacterPatch } from '../commands/voice';
 import { AppDialog } from '../components/AppDialog';
 import { Select } from '../components/Select';
 import { useAppStore } from '../state/store';
-import { AddReferenceDialog } from './AddReferenceDialog';
-import { AudioButton } from './AudioButton';
 import { voiceController } from './controller';
+import { ReferenceListEditor } from './ReferenceListEditor';
 
 interface Props {
   character: Character;
   models: ModelCandidate[];
+  /** 隐藏「GPT-SoVITS 模型」一项 (在「选择角色」里点开时) */
+  hideModel?: boolean;
   onClose: () => void;
   /** 内容已变化 (调用方据此刷新自己持有的角色快照) */
   onChanged: () => void;
   onError: (error: string | null) => void;
 }
 
-export function RoleEditDialog({ character, models, onClose, onChanged, onError }: Props) {
+export function RoleEditDialog({ character, models, hideModel = false, onClose, onChanged, onError }: Props) {
   const [draft, setDraft] = useState(character);
-  const [addOpen, setAddOpen] = useState(false);
   /** 已经落盘的 id; 与 `draft.id` 不同表示用户改了 id (需要搬移参考音频目录) */
   const savedId = useRef(character.id);
 
@@ -78,30 +77,16 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
     }
   };
 
-  /** 重新读取该角色 (参考音频增删后同步最新内容) */
-  const reload = async (id: string) => {
-    try {
-      const all = await voiceListCharacters();
-      voiceController.setCharacters(all);
-      const latest = all.find((item) => item.id === id);
-      if (latest) setDraft(latest);
-      onChanged();
-    } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
-    }
-  };
-
-  const removeReference = async (reference: ReferenceAudio) => {
-    try {
-      const updated = await voiceRemoveReference(character.id, reference.hash);
-      setDraft(updated);
-      voiceController.setCharacters(
-        useAppStore.getState().voiceCharacters.map((item) => (item.id === updated.id ? updated : item))
-      );
-      onChanged();
-    } catch (caught) {
-      onError(caught instanceof Error ? caught.message : String(caught));
-    }
+  /**
+   * 参考音频增删后，把**列表**换成刚落盘的那一份。
+   *
+   * 只合并 `references`: 名称 / 描述这些字段可能还停在"正在输入、尚未失焦"的状态，
+   * 整份覆盖会把用户刚敲的字抹掉。
+   */
+  const syncReferences = () => {
+    const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === savedId.current);
+    if (latest) setDraft((current) => ({ ...current, references: latest.references }));
+    onChanged();
   };
 
   const exportCharacter = async () => {
@@ -121,44 +106,44 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
   };
 
   return (
-    <>
-      <AppDialog
-        title={`编辑角色 · ${character.name}`}
-        size="large"
-        height={640}
-        compact
-        onClose={onClose}
-        footerLeading={
-          <Button appearance="secondary" icon={<ArrowDownloadRegular />} onClick={() => void exportCharacter()}>
-            导出角色
-          </Button>
-        }
-        footer={
-          <Button appearance="primary" onClick={onClose}>
-            关闭
-          </Button>
-        }
-      >
-        <div className="role-edit-form">
-          <Field label="角色名">
-            <Input
-              value={draft.name}
-              placeholder="角色名"
-              onChange={(_, data) => setDraft({ ...draft, name: data.value })}
-              onBlur={() => void commit({ name: draft.name })}
-            />
-          </Field>
+    <AppDialog
+      title={`编辑角色 · ${character.name}`}
+      size="large"
+      height={640}
+      compact
+      onClose={onClose}
+      footerLeading={
+        <Button appearance="secondary" icon={<ArrowDownloadRegular />} onClick={() => void exportCharacter()}>
+          导出角色
+        </Button>
+      }
+      footer={
+        <Button appearance="primary" onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      <div className="role-edit-form">
+        <Field label="角色名">
+          <Input
+            value={draft.name}
+            placeholder="角色名"
+            onChange={(_, data) => setDraft({ ...draft, name: data.value })}
+            onBlur={() => void commit({ name: draft.name })}
+          />
+        </Field>
 
-          <Field label="角色 ID">
-            <Input
-              value={draft.id}
-              placeholder="角色 ID"
-              title="同时是配置文件名与 game/vocal 下的目录名"
-              onChange={(_, data) => setDraft({ ...draft, id: data.value })}
-              onBlur={() => void commit({ id: draft.id })}
-            />
-          </Field>
+        <Field label="角色 ID">
+          <Input
+            value={draft.id}
+            placeholder="角色 ID"
+            title="同时是配置文件名与 game/vocal 下的目录名"
+            onChange={(_, data) => setDraft({ ...draft, id: data.value })}
+            onBlur={() => void commit({ id: draft.id })}
+          />
+        </Field>
 
+        {!hideModel && (
           <Field label="GPT-SoVITS 模型" className="role-edit-span">
             <div className="role-edit-models">
               <Select
@@ -183,68 +168,21 @@ export function RoleEditDialog({ character, models, onClose, onChanged, onError 
               />
             </div>
           </Field>
+        )}
 
-          <Field label="描述" className="role-edit-span">
-            <Textarea
-              className="character-description"
-              resize="vertical"
-              value={draft.description}
-              onChange={(_, data) => setDraft({ ...draft, description: data.value })}
-              onBlur={() => void commit({ description: draft.description })}
-            />
-          </Field>
-        </div>
+        <Field label="描述" className="role-edit-span">
+          <Textarea
+            className="character-description"
+            resize="vertical"
+            value={draft.description}
+            onChange={(_, data) => setDraft({ ...draft, description: data.value })}
+            onBlur={() => void commit({ description: draft.description })}
+          />
+        </Field>
+      </div>
 
-        {/* 参考音频编辑列表: 自己滚动, 不把整个对话框撑长 */}
-        <div className="role-edit-references">
-          <div className="role-edit-references-head">
-            <span className="voice-label">参考音频（{draft.references.length}）</span>
-            <span className="workbench-spacer" />
-            <Button size="small" appearance="primary" icon={<AddRegular />} onClick={() => setAddOpen(true)}>
-              添加参考音频
-            </Button>
-          </div>
-
-          <div className="dialog-scroll reference-list">
-            {draft.references.length === 0 ? (
-              <p className="voice-dialog-empty">暂无参考音频。参考文本必须与音频逐字一致, 时长 3~10 秒。</p>
-            ) : (
-              draft.references.map((reference) => (
-                <div key={reference.hash} className="reference-item">
-                  <div className="reference-main">
-                    <div className="reference-text">{reference.text || '（未填写参考文本）'}</div>
-                    <div className="reference-meta">
-                      {reference.language} · {reference.duration.toFixed(2)}s ·{' '}
-                      {Math.round(reference.sampleRate / 1000)}kHz
-                      {reference.tags.length > 0 && ` · ${reference.tags.join(' / ')}`}
-                    </div>
-                  </div>
-                  <AudioButton
-                    path={voiceController.referencePathFor(character.id, reference.file)}
-                    label={reference.text}
-                  />
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    className="danger-icon"
-                    icon={<DeleteRegular />}
-                    title="删除该参考音频"
-                    onClick={() => void removeReference(reference)}
-                  />
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </AppDialog>
-
-      {addOpen && (
-        <AddReferenceDialog
-          character={draft}
-          onClose={() => setAddOpen(false)}
-          onAdded={() => void reload(character.id)}
-        />
-      )}
-    </>
+      {/* 参考音频列表 (搜索 + 增删 + 试听), 与「选择参考音频」对话框是同一个组件 */}
+      <ReferenceListEditor character={draft} onChanged={syncReferences} />
+    </AppDialog>
   );
 }

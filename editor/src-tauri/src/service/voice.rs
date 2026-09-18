@@ -834,16 +834,10 @@ pub async fn voice_import_character(
         .map_err(|error| error.to_string())
 }
 
-/// 单个角色最多导入的参考音频条数。
-///
-/// 之前是 48, 结果"导入 109 条"会被硬截断成 48 条并静默丢掉 61 条 —— 用户看到的
-/// 是"跳过 61 条"却不知道那是上限。真实语料每个角色上百条很常见, 因此这里放宽到
-/// 一个不会误伤的量级; 过长的音频由规范化流程自动裁剪, 不再丢数据。
-const LIST_IMPORT_LIMIT: usize = 5000;
-
 /// 从 GPT-SoVITS 切片产物 (`.list` 清单 + 音频目录) 批量导入角色与参考音频。
 ///
-/// 用户分别提供**清单文件**与**音频目录** (两者位置无关)。
+/// 用户分别提供**清单文件**与**音频目录** (两者位置无关)。条数不受限制:
+/// 是否需要谨慎由用户在导入前通过 `voice_preview_import` 看到条数后自己决定。
 #[tauri::command]
 pub async fn voice_import_characters_from_list(
     app: tauri::AppHandle,
@@ -853,11 +847,27 @@ pub async fn voice_import_characters_from_list(
     let library = library_of(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         library
-            .import_from_list(
-                Path::new(&list_path),
-                Path::new(&audio_dir),
-                LIST_IMPORT_LIMIT,
-            )
+            .import_from_list(Path::new(&list_path), Path::new(&audio_dir))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 预览一次 `.list` 导入: 将导入多少条、涉及哪些角色。
+///
+/// 界面用它决定"要不要先问一句" —— 条数很多时导入会明显耗时, 而且每段音频都会被拷贝
+/// 进角色库。数量本身**不是**限制, 只是一个该被看见的事实。
+#[tauri::command]
+pub async fn voice_preview_import(
+    app: tauri::AppHandle,
+    list_path: String,
+    audio_dir: String,
+) -> Result<library::ListImportPreview, String> {
+    let library = library_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library
+            .preview_from_list(Path::new(&list_path), Path::new(&audio_dir))
             .map_err(|error| error.to_string())
     })
     .await

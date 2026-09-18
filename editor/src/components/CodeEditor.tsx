@@ -22,7 +22,9 @@ const TRIGGER_SET = new Set(TRIGGER_CHARACTERS);
  *
  * * 场景编辑器集成 git 行内差异 (行号旁色块 + 点击后在两行之间就地插入差异区);
  * * `readOnly` 用于配音卡: 该模式只做"读场景 + 选语句", 编辑一律回到普通场景卡,
- *   因此禁掉所有写入入口 (编辑、自动保存、预览同步与 git 差异);
+ *   因此禁掉写入入口 (手工编辑与自动保存)。但**差异色块与预览同步照常工作** ——
+ *   「应用」一条配音本来就是在改这个文件, 改了哪一行正是配音时最需要看见的东西;
+ *   只读的是"你自己敲字", 不是"看变化";
  * * `highlightLine` 为整条语句施加行高亮 (配音卡用它表示"正在配置哪一句")。
  */
 export function CodeEditor({
@@ -242,7 +244,7 @@ export function CodeEditor({
     const gutterDecorations = editor.createDecorationsCollection();
     let unsubscribeGit: (() => void) | null = null;
     const applyGitGutter = async () => {
-      if (!isScene || readOnly) return;
+      if (!isScene) return;
       const store = useAppStore.getState();
       const project = store.projectPath;
       const rel = project ? absToRel(project, path) : '';

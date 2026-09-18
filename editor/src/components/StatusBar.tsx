@@ -4,6 +4,10 @@
 //
 // GSOV 状态**只在配音工作台打开时出现**: 未启用配音功能时, 状态栏保持干净;
 // 一旦工作台打开, 无论当前是否停在场景卡上, 都能在底部看到服务是否就绪。
+//
+// 它和 LSP 那一项是同一种东西: **名称 + 一句话状态**, 不承载计数。待处理的配音任务
+// 数属于"工作台里正在发生什么", 由工作台选项卡的角标负责 —— 状态栏里再放一个
+// `队列 3` 只会让人以为那是常驻指标。
 
 import { isVoiceWorkbenchOpen, useAppStore } from '../state/store';
 
@@ -24,7 +28,6 @@ export function StatusBar() {
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
   const voiceStatus = useAppStore((s) => s.voiceStatus);
   const voiceStatusDetail = useAppStore((s) => s.voiceStatusDetail);
-  const voiceQueuePending = useAppStore((s) => s.voiceQueuePending);
 
   // 活动选项卡决定展示哪一类统计信息
   const active = useAppStore((s) => s.tabs.find((item) => item.id === s.activeTabId) ?? null);
@@ -55,7 +58,6 @@ export function StatusBar() {
       {workbenchOpen && (
         <span className={`status-voice status-voice-${voiceStatus}`}>
           GSOV: {GSV_LABELS[voiceStatus] ?? voiceStatus}
-          {voiceQueuePending > 0 && ` · 队列 ${voiceQueuePending}`}
         </span>
       )}
 

@@ -1317,7 +1317,19 @@ body.resizing {
   overflow: hidden;
 }
 
-.dialog-compact .dialog-body > * {
+/*
+ * 直接子项默认不参与伸缩 (紧凑模式下由内部的列表滚动), 但 `.dialog-scroll` 例外。
+ *
+ * 两条约定:
+ * * 必须显式排除 `.dialog-scroll`: 之前写成 `.dialog-compact .dialog-body > *`,
+ *   特异性高于 `.dialog-scroll { flex: 1 }`, 于是"参考音频选择"对话框里的列表被压成
+ *   `flex: none` —— 内容超出后既不滚动也被 `overflow: hidden` 裁掉, 看起来就是
+ *   "列表没有滚动条"。每个对话框都靠自己写一条更高特异性的规则去抢回 `flex` 是治标。
+ * * 包一层容器的情况用 `:where()` 降权 (见 `.reference-editor`): 容器本身不是滚动区,
+ *   但它的子项是, 那种容器只需要一条 (0,3,0) 的规则就能重新拿回 `flex: 1`,
+ *   不必依赖"谁写在后面"。
+ */
+.dialog-compact .dialog-body > :where(:not(.dialog-scroll)) {
   flex: none;
 }
 
@@ -2620,13 +2632,6 @@ body.resizing {
   min-width: 0;
 }
 
-.role-edit-switches {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  grid-column: 1 / -1;
-}
-
 /* 描述与模型要占满整行 */
 .role-edit-span {
   grid-column: 1 / -1;
@@ -2640,34 +2645,35 @@ body.resizing {
 }
 
 /*
- * 参考音频列表自己滚动。
+ * 参考音频列表编辑器 (「编辑角色」与「选择参考音频」共用): 工具栏固定, 列表自己滚动。
  *
- * 三条缺一不可:
- * * `.dialog-compact .dialog-body > *` 会把直接子项设成 `flex: none`, 因此这里必须
- *   用同等或更高特异性把 `flex: 1` 抢回来;
- * * `min-height: 0` 让它在 flex 容器里真的能被压缩;
- * * `overflow-y: auto` 才是滚动条出现的地方。
- * 少了任何一条, 内容都会把对话框整体撑高 —— 于是滚动条跑到**整个对话框**上,
+ * 两条缺一不可:
+ * * `.dialog-compact .dialog-body > :where(:not(.dialog-scroll))` 会把直接子项设成
+ *   `flex: none`, 而这个容器不是滚动区本身 —— 必须把 `flex: 1` + `min-height: 0`
+ *   抢回来 (它比那条规则高一档, 不依赖书写顺序);
+ * * 列表本身是 `.dialog-scroll` (见上一条规则), 它才有真正的滚动条。
+ * 少了任何一条, 内容都会把对话框撑高 —— 于是滚动条跑到**整个对话框**上,
  * 标题栏和"添加参考音频"按钮一起被滚走。
  */
-.dialog-compact .dialog-body > .role-edit-references {
+.dialog-compact .dialog-body > .reference-editor {
   flex: 1;
   min-height: 0;
 }
 
-.role-edit-references {
+.reference-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   border-top: 1px solid var(--app-border);
   padding-top: 10px;
 }
 
-.role-edit-references-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 参考音频条数 (工具栏右侧, 添加按钮左边) */
+.reference-count {
   flex: none;
+  font-size: 12px;
+  color: var(--app-muted);
+  white-space: nowrap;
 }
 
 /* -------- 选择角色对话框: 每行三块 -------- */
@@ -2676,10 +2682,6 @@ body.resizing {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   align-content: start;
-}
-
-.character-grid-pick .character-block-main {
-  cursor: default;
 }
 
 .character-block {
@@ -3355,29 +3357,6 @@ input[type='number'].voice-control {
 }
 
 /* -------- 对话框 -------- */
-.voice-dialog {
-  max-width: 760px;
-  width: 760px;
-}
-.voice-dialog-scroll {
-  max-height: 46vh;
-  overflow: auto;
-}
-.voice-dialog-toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.voice-dialog-toolbar > :first-child {
-  flex: 1;
-}
-.voice-dialog-section {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 .voice-dialog-empty {
   color: var(--app-muted);
   font-size: 12px;
@@ -3386,6 +3365,25 @@ input[type='number'].voice-control {
   color: var(--app-muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* 清单导入的预览 (条数较多, 导入前先确认) */
+.import-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+.import-preview-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 150px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--app-muted);
 }
 .voice-warn-block {
   font-size: 12px;
@@ -3413,12 +3411,26 @@ input[type='number'].voice-control {
 .reference-item.selected {
   border-color: var(--app-accent);
 }
+/*
+ * 条目主体: 选择器场景里是 `<button>` (点一下就选它), 编辑角色里是 `<div>`。
+ * 按钮要清掉浏览器默认外观, 两种元素才能长得一样。
+ */
 .reference-main {
   flex: 1;
-  cursor: pointer;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.reference-main-static {
+  cursor: default;
 }
 .reference-text {
   font-size: 13px;

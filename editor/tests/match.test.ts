@@ -3,7 +3,8 @@
 // 对话者到角色的静默匹配测试。
 //
 // 匹配失败只是"下拉框没选中", 但错误匹配会让整段对话用错音色, 因此这里重点覆盖:
-// 立绘优先、名称匹配、旁白继承、显式空说话者 (旁白) 不继承。
+// 立绘优先、名称匹配、**包含关系**、包含关系上的歧义不猜、
+// 旁白继承、显式空说话者 (旁白) 不继承。
 // (别名机制已移除, 因此不再有别名相关用例。)
 
 import { describe, expect, it } from 'vitest';
@@ -65,7 +66,8 @@ describe('figureIdsBySpeaker', () => {
 
 describe('matchCharacter', () => {
   it('立绘引用命中角色 id', () => {
-    const dialogues = [say(0, '千早爱音', '内容', 'anon')];
+    // 说话者刻意不是角色名: 这一条只验证立绘这条线索本身
+    const dialogues = [say(0, '同班同学', '内容', 'anon')];
     const result = matchCharacter(dialogues[0], context([anon, soyo], dialogues));
     expect(result).toEqual({ characterId: 'anon', reason: 'figureId' });
   });
@@ -116,6 +118,65 @@ describe('matchCharacter', () => {
       characterId: null,
       reason: 'none',
     });
+  });
+
+  it('对话者里含有角色名时按包含关系匹配', () => {
+    // 真实剧本里极常见的写法: 对话者带后缀 / 带括号注释
+    for (const speaker of ['千早爱音（教室）', '千早爱音A', '（黑）千早爱音']) {
+      const line = say(0, speaker, '内容');
+      expect(matchCharacter(line, context([anon, soyo], [line]))).toEqual({
+        characterId: 'anon',
+        reason: 'namePartial',
+      });
+    }
+  });
+
+  it('角色名里含有对话者时同样匹配 (简称)', () => {
+    const line = say(0, '爱音', '内容');
+    const result = matchCharacter(line, context([anon, soyo], [line]));
+    expect(result).toEqual({ characterId: 'anon', reason: 'namePartial' });
+  });
+
+  it('精确匹配优先于包含关系', () => {
+    // 「爱音」既是精确的角色名, 也是「千早爱音」的一部分 -> 取精确的那一个
+    const short = character('anon-short', '爱音');
+    const line = say(0, '爱音', '内容');
+    expect(matchCharacter(line, context([anon, short], [line]))).toEqual({
+      characterId: 'anon-short',
+      reason: 'name',
+    });
+  });
+
+  it('包含关系命中更长的一方优先', () => {
+    const teni = character('teni', '千早爱音');
+    const partial = character('partial', '千早');
+    const line = say(0, '千早爱音（黑）', '内容');
+    // 两个角色都包含在对话者里, 但「千早爱音」更长 -> 更可信
+    expect(matchCharacter(line, context([teni, partial], [line]))?.characterId).toBe('teni');
+  });
+
+  it('包含关系上同等强度的多个候选不猜', () => {
+    const a = character('a', '爱音');
+    const b = character('b', '音乃');
+    const line = say(0, '爱音乃', '内容');
+    // 「爱音」与「音乃」都命中且长度相同, 无法判断 -> 交给用户手选
+    expect(matchCharacter(line, context([a, b], [line]))).toEqual({
+      characterId: null,
+      reason: 'none',
+    });
+  });
+
+  it('单字角色名不参与包含关系匹配', () => {
+    const single = character('single', '音');
+    const line = say(0, '路人甲的音', '内容');
+    expect(matchCharacter(line, context([single], [line])).characterId).toBeNull();
+  });
+
+  it('立绘引用优先于包含关系', () => {
+    // 对话者里含有 anon 的名字, 但立绘明确指向 soyo
+    const dialogues = [say(0, '千早爱音的替身', '内容', 'soyo')];
+    const result = matchCharacter(dialogues[0], context([anon, soyo], dialogues));
+    expect(result).toEqual({ characterId: 'soyo', reason: 'figureId' });
   });
 });
 

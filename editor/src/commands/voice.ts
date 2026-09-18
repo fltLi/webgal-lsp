@@ -400,14 +400,36 @@ export interface ListImportReport {
   characters: string[];
 }
 
+/** 预览里某个角色将会导入的条数 */
+export interface ListImportCharacter {
+  name: string;
+  count: number;
+}
+
+/** `.list` 导入预览 (导入前让用户看清"会发生什么") */
+export interface ListImportPreview {
+  /** 清单中的有效记录数 */
+  records: number;
+  /** 其中能在音频目录里按文件名找到的条数 */
+  matched: number;
+  /** 按角色聚合 (条数从多到少) */
+  characters: ListImportCharacter[];
+}
+
 /**
  * 从 GPT-SoVITS 切片产物批量导入角色与参考音频。
  *
  * `listPath` 是清单文件（行格式 `音频路径|说话者|语言|文本`）；
  * `audioDir` 是切好的音频目录（可嵌套）。两者位置无关，匹配**按文件名**进行。
+ * 导入条数**不受限制**。
  */
 export function voiceImportCharactersFromList(listPath: string, audioDir: string): Promise<ListImportReport> {
   return invoke<ListImportReport>('voice_import_characters_from_list', { listPath, audioDir });
+}
+
+/** 预览一次 `.list` 导入（条数与角色分布），用于导入前确认。 */
+export function voicePreviewImport(listPath: string, audioDir: string): Promise<ListImportPreview> {
+  return invoke<ListImportPreview>('voice_preview_import', { listPath, audioDir });
 }
 
 // -------- 缓存 / 引用扫描 / 对齐 --------

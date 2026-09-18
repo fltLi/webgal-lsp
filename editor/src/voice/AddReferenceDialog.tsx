@@ -15,7 +15,7 @@ import { FolderRegular } from '@fluentui/react-icons';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useState } from 'react';
 
-import type { Character } from '../commands/voice';
+import type { Character, ReferenceAudio } from '../commands/voice';
 import { voiceAddReference } from '../commands/voice';
 import { AppDialog } from '../components/AppDialog';
 import { Select, toOptions } from '../components/Select';
@@ -27,7 +27,8 @@ import { LANGUAGE_LABELS } from './types';
 interface Props {
   character: Character;
   onClose: () => void;
-  onAdded: () => void;
+  /** 添加成功 (已经把新条目并入全局角色列表) */
+  onAdded: (added: ReferenceAudio) => void;
 }
 
 export function AddReferenceDialog({ character, onClose, onAdded }: Props) {
@@ -67,21 +68,38 @@ export function AddReferenceDialog({ character, onClose, onAdded }: Props) {
     }
   };
 
+  /**
+   * 真正入库。
+   *
+   * 自己兜住异常: 裁剪对话框的「确认」直接调用它, 走不到 `confirm` 的 try —— 入库失败
+   * (例如后端判定时长仍不合规) 时如果不接, 就是一个静默的未处理 rejection, 用户点了
+   * 确认却什么都没发生。失败时保留裁剪对话框, 用户改一下区间就能重试。
+   */
   const add = async (path: string, start?: number, end?: number) => {
-    const updated = await voiceAddReference(character.id, {
-      source: path,
-      text: text.trim(),
-      language,
-      tags: [],
-      start,
-      end,
-    });
-    voiceController.setCharacters(
-      useAppStore.getState().voiceCharacters.map((item) => (item.id === updated.id ? updated : item))
-    );
-    setTrim(null);
-    onAdded();
-    onClose();
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await voiceAddReference(character.id, {
+        source: path,
+        text: text.trim(),
+        language,
+        tags: [],
+        start,
+        end,
+      });
+      voiceController.setCharacters(
+        useAppStore.getState().voiceCharacters.map((item) => (item.id === updated.id ? updated : item))
+      );
+      setTrim(null);
+      // `voice_add_reference` 把新条目追加在末尾, 因此最后一条就是刚加进来的
+      const added = updated.references[updated.references.length - 1];
+      onClose();
+      if (added) onAdded(added);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const ready = source.trim().length > 0 && text.trim().length > 0 && !busy;

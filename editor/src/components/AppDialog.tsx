@@ -12,7 +12,7 @@
 //
 // 不使用 portal: 与项目其余弹层一致, 避免 WebView 中的定位/动画异常。
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 export type DialogSize = 'small' | 'medium' | 'large';
 
@@ -56,10 +56,20 @@ export function AppDialog({
   onClose,
   children,
 }: Props) {
-  // Esc 关闭 (与自绘对话框一致; 不监听输入法组合键)
+  const surfaceRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * Esc 关闭 (与自绘对话框一致; 不监听输入法组合键)。
+   *
+   * 对话框可以不使用 portal 地**嵌套** (例如「选择参考音频」里再打开「添加参考音频」),
+   * 而每个实例都在 window 上监听按键 —— 不做判断的话一次 Esc 会把整叠对话框一起关掉。
+   * 判据用 DOM 包含关系而不是"打开顺序栈": 谁里面还有别的对话框, 谁就不是最上层。
+   */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.isComposing) onClose();
+      if (event.key !== 'Escape' || event.isComposing) return;
+      if (surfaceRef.current?.querySelector('.modal-surface')) return;
+      onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -70,6 +80,7 @@ export function AppDialog({
   return (
     <div className="modal-backdrop" onClick={closeOnBackdrop ? onClose : undefined}>
       <div
+        ref={surfaceRef}
         className={`modal-surface dialog-surface dialog-${size}${compact ? ' dialog-compact' : ''}${
           flush ? ' dialog-flush' : ''
         }${className ? ` ${className}` : ''}`}

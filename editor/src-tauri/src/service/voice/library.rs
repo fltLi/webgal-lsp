@@ -203,10 +203,30 @@ pub struct ListImportReport {
     pub imported: usize,
     /// 其中被自动裁剪过的条数 (过长音频按静音边界截到 10 秒内)
     pub auto_trimmed: usize,
-    /// 跳过条数 (音频缺失 / 无法规范化 / 超出上限 / 行格式错误)
+    /// 跳过条数 (音频缺失 / 无法规范化 / 行格式错误)
     pub skipped: usize,
     /// 涉及的角色名 (去重)
     pub characters: Vec<String>,
+}
+
+/// 预览中某个角色将会导入的条数
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListImportCharacter {
+    pub name: String,
+    pub count: usize,
+}
+
+/// `.list` 导入预览
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListImportPreview {
+    /// 清单里能解析出的记录数 (不含无法解析的行)
+    pub records: usize,
+    /// 其中能在音频目录里按文件名找到的条数 (即真正会被导入的量级)
+    pub matched: usize,
+    /// 按角色聚合 (条数从多到少)
+    pub characters: Vec<ListImportCharacter>,
 }
 
 /// 导出用清单 (不含模型选择)
@@ -425,61 +445,26 @@ impl Library {
     /// * 说话者即角色名 (不存在则新建角色); 清单没有说话者时退回清单文件名;
     /// * 语言取 `.list` 中的标识 (如 `JA` -> `ja`), 无法识别时退回 `auto`;
     /// * 每段音频都按参考音频约束规范化 (过短补静音、过长按静音边界裁剪);
-    /// * 同一角色的参考音频数量上限由 `max_per_character` 限制, 避免导入上万条。
+    /// * **没有条数上限**。曾经有过一个上限 (先是 48, 后是 5000), 结果是"导入 109 条"
+    ///   被静默截断, 用户只看到"跳过 61 条"却不知道那是上限。真实语料每个角色上百条
+    ///   很常见, 是否需要谨慎由用户在导入前判断 (见 [`Library::preview_from_list`]),
+    ///   而不是由这里替他丢数据。
     pub fn import_from_list(
         &self,
         list_path: &Path,
         audio_dir: &Path,
-        max_per_character: usize,
     ) -> Result<ListImportReport> {
-        if !list_path.is_file() {
-            return Err(LibraryError::Invalid(format!(
-                "清单文件不存在: {}",
-                list_path.display()
-            )));
-        }
-        if !audio_dir.is_dir() {
-            return Err(LibraryError::Invalid(format!(
-                "音频目录不存在: {}",
-                audio_dir.display()
-            )));
-        }
+        let (by_speaker, malformed) = self.read_list_by_speaker(list_path, audio_dir)?;
 
-        let mut report = ListImportReport::default();
+        let mut report = ListImportReport {
+            skipped: malformed,
+            ..Default::default()
+        };
         let staging_root = self.root.join(".import-staging");
         std::fs::create_dir_all(&staging_root)?;
 
         // 音频索引: 文件名 (小写) -> 绝对路径, 供清单里的相对路径反查
         let audio_index = index_audio_files(audio_dir);
-
-        let text = std::fs::read_to_string(list_path)?;
-        // 角色优先取清单内的说话者; 无说话者时退回清单文件名
-        let file_stem = list_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("character")
-            .to_string();
-
-        // 逐行解析并按说话者聚合
-        let mut by_speaker: std::collections::BTreeMap<String, Vec<ListRecord>> =
-            std::collections::BTreeMap::new();
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            match parse_list_line(line) {
-                Some(record) => {
-                    let speaker = if record.speaker.trim().is_empty() {
-                        file_stem.clone()
-                    } else {
-                        record.speaker.trim().to_string()
-                    };
-                    by_speaker.entry(speaker).or_default().push(record);
-                }
-                None => report.skipped += 1,
-            }
-        }
 
         for (speaker, records) in by_speaker {
             let existing = self.find_by_name(&speaker)?;
@@ -517,10 +502,6 @@ impl Library {
                 .collect();
 
             for record in records {
-                if character.references.len() >= max_per_character {
-                    report.skipped += 1;
-                    continue;
-                }
                 let Some(audio_path) = lookup_audio(&audio_index, &record.audio) else {
                     report.skipped += 1;
                     continue;
@@ -561,6 +542,101 @@ impl Library {
         report.characters.sort();
         report.characters.dedup();
         Ok(report)
+    }
+
+    /// 读取清单并按说话者聚合。
+    ///
+    /// 导入与预览共用这一份解析: 两边各自实现一次的话, "预览说 320 条、实际导入 280 条"
+    /// 这类不一致迟早会出现, 而用户正是拿这个数字决定要不要继续。
+    ///
+    /// 返回值第二项是无法解析的行数 (会被计入 `skipped`)。
+    fn read_list_by_speaker(
+        &self,
+        list_path: &Path,
+        audio_dir: &Path,
+    ) -> Result<(std::collections::BTreeMap<String, Vec<ListRecord>>, usize)> {
+        if !list_path.is_file() {
+            return Err(LibraryError::Invalid(format!(
+                "清单文件不存在: {}",
+                list_path.display()
+            )));
+        }
+        if !audio_dir.is_dir() {
+            return Err(LibraryError::Invalid(format!(
+                "音频目录不存在: {}",
+                audio_dir.display()
+            )));
+        }
+
+        let text = std::fs::read_to_string(list_path)?;
+        // 角色优先取清单内的说话者; 无说话者时退回清单文件名
+        let file_stem = list_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("character")
+            .to_string();
+
+        let mut by_speaker: std::collections::BTreeMap<String, Vec<ListRecord>> =
+            std::collections::BTreeMap::new();
+        let mut malformed = 0usize;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match parse_list_line(line) {
+                Some(record) => {
+                    let speaker = if record.speaker.trim().is_empty() {
+                        file_stem.clone()
+                    } else {
+                        record.speaker.trim().to_string()
+                    };
+                    by_speaker.entry(speaker).or_default().push(record);
+                }
+                None => malformed += 1,
+            }
+        }
+        Ok((by_speaker, malformed))
+    }
+
+    /// 预览一次 `.list` 导入: 有多少条、涉及哪些角色、各多少条。
+    ///
+    /// 供界面在**真正导入前**决定要不要提醒用户 (条数很多时导入很慢, 而且每段音频都会
+    /// 被拷贝进角色库)。条数与角色直接来自清单解析, 与导入完全同一套规则;
+    /// `matched` 只判断"音频目录里能不能按文件名找到", 不做解码与规范化
+    /// (那才是导入慢的原因), 因此它可能在个别文件损坏时略高于实际导入数。
+    pub fn preview_from_list(
+        &self,
+        list_path: &Path,
+        audio_dir: &Path,
+    ) -> Result<ListImportPreview> {
+        // 无法解析的行不进预览: 界面上的数字要能一一对应到"将会导入什么"
+        let (by_speaker, _malformed) = self.read_list_by_speaker(list_path, audio_dir)?;
+        let audio_index = index_audio_files(audio_dir);
+
+        let mut characters = Vec::new();
+        let mut records = 0usize;
+        let mut matched = 0usize;
+        for (name, items) in by_speaker {
+            records += items.len();
+            let hits = items
+                .iter()
+                .filter(|record| lookup_audio(&audio_index, &record.audio).is_some())
+                .count();
+            matched += hits;
+            characters.push(ListImportCharacter {
+                name,
+                count: hits,
+            });
+        }
+        // 条数多的排前面: 用户要判断的正是"有没有哪个角色特别多"
+        characters.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+
+        Ok(ListImportPreview {
+            records,
+            matched,
+            characters,
+        })
     }
 
     /// 按名称查找角色 (大小写与首尾空白不敏感)
@@ -1129,5 +1205,90 @@ mod tests {
         let list = library.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].references.len(), 1);
+    }
+
+    /// 写一份 `.list` (每行 `音频路径|说话者|语言|文本`)
+    fn write_list(dir: &Path, name: &str, rows: &[(String, &str)]) -> PathBuf {
+        let mut text = String::new();
+        for (audio, speaker) in rows {
+            text.push_str(&format!("output\\slicer_opt\\{speaker}\\{audio}|{speaker}|ZH|文本\n"));
+        }
+        // 末尾加一条无法解析的行 (没有分隔符) —— 它只应计入 skipped
+        text.push_str("这不是一行合法的清单\n");
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn preview_and_import_agree_on_counts() {
+        // 预览与导入必须用同一套解析: 用户是拿预览里的数字决定要不要继续的
+        let library = temp_library("list-preview");
+        let audio_dir = library.root().join("sliced");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        let rows: Vec<(String, &str)> = (0..4)
+            .map(|index| {
+                // 内容各不相同 (时长不同 -> 哈希不同), 否则会被内容寻址去重
+                let file = format!("anon_{index}.wav");
+                write_reference(&audio_dir, &file, 4.0 + index as f64 * 0.1);
+                (file, "千早爱音")
+            })
+            .collect();
+        let list = write_list(library.root(), "train.list", &rows);
+
+        let preview = library.preview_from_list(&list, &audio_dir).unwrap();
+        assert_eq!(preview.records, 4);
+        assert_eq!(preview.matched, 4);
+        assert_eq!(preview.characters.len(), 1);
+        assert_eq!(preview.characters[0].name, "千早爱音");
+        assert_eq!(preview.characters[0].count, 4);
+
+        let report = library.import_from_list(&list, &audio_dir).unwrap();
+        assert_eq!(report.imported, preview.matched);
+        assert_eq!(report.skipped, 1, "无法解析的那一行应计入 skipped");
+        assert_eq!(library.load("character").unwrap().references.len(), 4);
+    }
+
+    #[test]
+    fn import_from_list_has_no_per_character_limit() {
+        // 曾经有过 48 / 5000 的硬上限, 结果是超出部分被静默丢掉。条数不该有上限。
+        let library = temp_library("list-no-limit");
+        let audio_dir = library.root().join("sliced");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        let count = 60usize;
+        let mut rows = Vec::new();
+        for index in 0..count {
+            let file = format!("line_{index}.wav");
+            // 每个文件时长都不同 (内容寻址按内容去重, 时长重复会被当成同一段音频)
+            write_reference(&audio_dir, &file, 3.0 + index as f64 * 0.1);
+            rows.push((file, "千早爱音"));
+        }
+        let list = write_list(library.root(), "big.list", &rows);
+
+        let report = library.import_from_list(&list, &audio_dir).unwrap();
+        assert_eq!(report.imported, count);
+        assert_eq!(library.load("character").unwrap().references.len(), count);
+    }
+
+    #[test]
+    fn preview_reports_missing_audio_as_unmatched() {
+        let library = temp_library("list-preview-missing");
+        let audio_dir = library.root().join("sliced");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        write_reference(&audio_dir, "here.wav", 4.0);
+        let list = write_list(
+            library.root(),
+            "partial.list",
+            &[
+                ("here.wav".to_string(), "千早爱音"),
+                ("gone.wav".to_string(), "千早爱音"),
+            ],
+        );
+
+        let preview = library.preview_from_list(&list, &audio_dir).unwrap();
+        assert_eq!(preview.records, 2);
+        assert_eq!(preview.matched, 1);
+        // 角色仍然列出来 (条数是"能找到的条数"), 界面据此告诉用户有多少条会跳过
+        assert_eq!(preview.characters[0].count, 1);
     }
 }
