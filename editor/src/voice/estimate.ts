@@ -116,28 +116,41 @@ function browserStorage(): SampleStorage | null {
 /** 估算器 (每个会话一份; 样本会持久化, 因此换会话也能接着用) */
 export class DurationEstimator {
   private buckets = new Map<number, Sample[]>();
-  private skipNext = false;
+  private coldStartPending = false;
 
   constructor(private storage: SampleStorage | null = browserStorage()) {
     this.restore();
   }
 
   /**
-   * 跳过下一个样本。
+   * 标记"下一次真正发出的推理包含模型加载" (服务刚启动、刚切换权重)。
    *
-   * 用于"这次推理里包含模型加载"的时刻 (服务刚启动、刚切换权重): 它的耗时比正常推理
-   * 高一个量级, 收进来会让该桶的预估长期偏大。
+   * 注意是**下一次发出的推理**, 不是"下一次记录样本": 那条推理可能被取消或失败, 于是
+   * 根本不会有样本。标记必须在请求发出时就被取走 (见 `takeColdStart`), 否则它会一直挂着,
+   * 把后面一条正常任务的样本也吃掉 —— 预估就更难变准了。
    */
   skipNextSample(): void {
-    this.skipNext = true;
+    this.coldStartPending = true;
   }
 
-  /** 记录一次真实耗时 (毫秒) */
+  /**
+   * 取走冷启动标记; 返回 true 表示"这次推理的耗时不要计入样本"。
+   *
+   * 由调用方在请求发出前调用一次, 结果随这次任务走 (成功时才据此决定要不要 `observe`)。
+   */
+  takeColdStart(): boolean {
+    const pending = this.coldStartPending;
+    this.coldStartPending = false;
+    return pending;
+  }
+
+  /**
+   * 记录一次真实耗时 (毫秒)。
+   *
+   * 调用方必须**只对真正跑完且没被取消的任务**调用: 取消的任务可能只跑了一半, 报错的
+   * 任务可能是在等超时, 这些耗时收进样本会把预估带偏。
+   */
   observe(steps: number, chars: number, millis: number): void {
-    if (this.skipNext) {
-      this.skipNext = false;
-      return;
-    }
     if (!Number.isFinite(millis) || millis <= 0 || chars < 0) return;
     const bucket = this.bucket(steps);
     bucket.push({ chars, millis, at: Date.now() });

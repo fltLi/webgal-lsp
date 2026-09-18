@@ -6,6 +6,7 @@
 // Monaco model / 预处理器会话 / 配音卡), 但都必须走同一条路径, 否则容易出现
 // "关掉了 DOM 却留下状态"这类不一致。这里集中处理。
 
+import { requestConfirm } from '../confirm';
 import { disposeModel } from '../lsp/monaco';
 import { disposeNovelTab } from '../novel/registry';
 import { useAppStore } from '../state/store';
@@ -19,20 +20,27 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
   const store = useAppStore.getState();
 
   if (tab.kind === 'scene') {
-    if (voiceController.hasUnfinished(tab.path)) {
-      const ok = window.confirm(
-        '该场景还有未完成的配音任务，关闭选项卡会撤下这些任务（已生成的历史记录不会丢失）。仍要关闭吗？'
-      );
-      if (!ok) return;
+    const close = () =>
+      confirmClose(() => {
+        // 撤下这个场景未完成的任务再销毁卡片: 卡片没了以后任务完成也没地方回填
+        voiceController.abandonCard(tab.path);
+        disposeModel(tab.path);
+        useAppStore.getState().closeDocument(tab.path);
+        useAppStore.getState().closeTab(tab.id);
+      }, tab.path);
+
+    const count = voiceController.unfinishedCount(tab.path);
+    if (count > 0) {
+      requestConfirm({
+        title: '这个场景还有配音任务',
+        description: `还有 ${count} 个任务没跑完。关闭选项卡会取消它们（已经生成出来的记录不受影响），也可以先在配音工作台里等它们跑完。`,
+        confirmLabel: '关闭并取消',
+        danger: true,
+        action: close,
+      });
+      return;
     }
-    // 未保存更改交给统一的确认流程 (只检查这一个文档)
-    confirmClose(() => {
-      // 撤下这个场景未完成的任务再销毁卡片: 卡片没了以后任务完成也没地方回填
-      voiceController.abandonCard(tab.path);
-      disposeModel(tab.path);
-      useAppStore.getState().closeDocument(tab.path);
-      useAppStore.getState().closeTab(tab.id);
-    }, tab.path);
+    close();
     return;
   }
 
@@ -43,8 +51,8 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
   }
 
   if (tab.id === WORKBENCH_TAB_ID) {
-    // 工作台是配音功能的开关: 关闭时确认未完成任务, 并顺手停掉 GSOV 服务
-    // (确认与停止都在 `closeVoiceWorkbench` 里, 顶部按钮走的是同一个入口)
+    // 工作台是配音功能的开关: 关闭时确认未完成任务、撤下它们, 并顺手停掉 GSOV 服务
+    // (确认与收尾都在 `closeVoiceWorkbench` 里, 顶部按钮走的是同一个入口)
     closeVoiceWorkbench();
     return;
   }

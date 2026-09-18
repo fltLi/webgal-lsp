@@ -146,6 +146,8 @@ interface AppStore {
 
   settingsOpen: boolean;
   unsavedDialog: boolean;
+  /** 通用确认框是否打开 (内容见 `confirm.ts`) */
+  confirmDialog: boolean;
   /** 打开设置时定位到的分类 */
   settingsCategory: SettingsCategory;
   /** 预览刷新令牌 (自增触发 iframe 整体重挂) */
@@ -195,6 +197,7 @@ interface AppStore {
   setSettingsOpen: (open: boolean) => void;
   setSettingsCategory: (category: SettingsCategory) => void;
   setUnsavedDialog: (open: boolean) => void;
+  setConfirmDialog: (open: boolean) => void;
   requestPreviewReload: () => void;
 }
 
@@ -240,6 +243,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   settingsOpen: false,
   unsavedDialog: false,
+  confirmDialog: false,
   settingsCategory: 'general',
   previewReloadToken: 0,
 
@@ -467,6 +471,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSettingsCategory: (category) => set({ settingsCategory: category }),
   setUnsavedDialog: (open) => set({ unsavedDialog: open }),
+  setConfirmDialog: (open) => set({ confirmDialog: open }),
   requestPreviewReload: () => set((s) => ({ previewReloadToken: s.previewReloadToken + 1 })),
 }));
 

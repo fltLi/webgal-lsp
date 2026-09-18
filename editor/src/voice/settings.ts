@@ -19,34 +19,48 @@ export interface VoiceSettings {
 
 const STORAGE_KEY = 'webgal-ink.voice';
 
+/**
+ * 存储结构版本。
+ *
+ * 只在"代码里的默认值变了, 需要把老用户存储里那份旧默认值迁过来"时 +1。
+ * 迁移**只改那些仍然等于旧默认值的项**: 用户自己调过的值一律保留 —— 改了默认值就
+ * 把用户的选择一起重置, 是最招人烦的那种"贴心"。
+ */
+const SETTINGS_VERSION = 2;
+
+/** 各版本的旧默认值 (仅用于一次性迁移) */
+const LEGACY_DEFAULTS: Array<Partial<VoiceDefaults>> = [{ topK: 5, topP: 1, repetitionPenalty: 1.35 }];
+
 export const defaultVoiceSettings: VoiceSettings = {
   launch: null,
   defaults: { ...DEFAULT_VOICE_DEFAULTS },
   testSampleSteps: 4,
 };
 
-/**
- * 读取配音设置。
- *
- * **推理参数的默认值只认代码里的常量, 不认存储里的旧值。**
- *
- * 默认值写进 localStorage 之后就会一直盖住代码里的新默认值: 改了代码里的默认 topK,
- * 只有"从没打开过配音"的人会看到新值, 老用户永远看到旧值 —— 表现就是"默认值改了却没
- * 生效"。因此存储里只保留**界面上真正可编辑**的那一项 (默认语言); 温度 / 语速 / topK /
- * topP / 重复惩罚 / 采样步数一律以当前代码为准。
- */
+/** 把仍等于旧默认值的项迁到当前默认值; 用户改过的值原样保留 */
+function migrateDefaults(stored: Partial<VoiceDefaults>): Partial<VoiceDefaults> {
+  let result = { ...stored };
+  for (const legacy of LEGACY_DEFAULTS) {
+    for (const [key, oldValue] of Object.entries(legacy) as [keyof VoiceDefaults, number][]) {
+      if (result[key] === oldValue) {
+        result = { ...result, [key]: DEFAULT_VOICE_DEFAULTS[key] };
+      }
+    }
+  }
+  return result;
+}
+
 export function loadVoiceSettings(): VoiceSettings {
   const fresh = (): VoiceSettings => ({ ...defaultVoiceSettings, defaults: { ...DEFAULT_VOICE_DEFAULTS } });
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fresh();
-    const parsed = JSON.parse(raw) as Partial<VoiceSettings>;
+    const parsed = JSON.parse(raw) as Partial<VoiceSettings> & { version?: number };
+    const stored = parsed.defaults ?? {};
+    const defaults = parsed.version === SETTINGS_VERSION ? stored : migrateDefaults(stored);
     return {
       launch: parsed.launch ?? null,
-      defaults: {
-        ...DEFAULT_VOICE_DEFAULTS,
-        language: parsed.defaults?.language ?? DEFAULT_VOICE_DEFAULTS.language,
-      },
+      defaults: { ...DEFAULT_VOICE_DEFAULTS, ...defaults },
       testSampleSteps: parsed.testSampleSteps ?? defaultVoiceSettings.testSampleSteps,
     };
   } catch {
@@ -56,7 +70,7 @@ export function loadVoiceSettings(): VoiceSettings {
 
 export function saveVoiceSettings(settings: VoiceSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, version: SETTINGS_VERSION }));
   } catch {
     // 存储不可用时静默忽略
   }

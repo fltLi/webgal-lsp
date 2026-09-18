@@ -9,7 +9,11 @@
 //
 // 场景的配音编辑模式规则收敛在 store 内部:
 // 工作台存在时, 当前场景卡自动进入; 关闭工作台即全部退出。
+//
+// 这里另外承担"有任务没跑完时先问一句"的职责 —— 三处都走同一个确认框 (`confirm.ts`),
+// 而不是 `window.confirm` (它在 WebView 里不一定真的弹出来, 于是询问会变成悄悄放行)。
 
+import { requestConfirm } from '../confirm';
 import { activeSceneDocumentOf, isVoiceWorkbenchOpen, isVoiceWorkbenchActive, useAppStore } from '../state/store';
 import { voiceController } from './controller';
 
@@ -19,26 +23,35 @@ export function openVoiceWorkbench(): void {
 }
 
 /**
- * 关闭配音工作台 (唯一入口, 返回是否真的关掉了)。
+ * 关闭配音工作台。
  *
- * 三件事必须一起做:
- * 1. **先问一句**: 还有任务没跑完时关闭工作台会退出配音模式, 用户可能只是误点;
- * 2. 关闭选项卡 (= 退出全部配音编辑模式);
- * 3. **顺手停掉 GSOV 服务**: 工作台是配音功能的开关, 关掉它就没必要让一个几 GB 的
- *    推理进程继续占着显存与端口 —— 以前它会一直留在后台, 直到退出编辑器。
- *    停止是异步的, 期间状态栏显示「停止中…」(见 `stopGsv`)。
+ * 还有任务没跑完时先问一句 —— 关闭工作台会:
+ * * **撤下这些任务**: 工作台一关服务就停, 留着它们只会是"永远等不到结果的排队中";
+ * * **停掉 GSOV 服务**: 工作台就是这个功能的开关, 没必要让一个几 GB 的推理进程继续
+ *   占着显存与端口 (停止期间状态栏显示「停止中…」)。
+ *
+ * 历史记录 (已经生成出来的那些) 不受影响。
  */
-export function closeVoiceWorkbench(): boolean {
+export function closeVoiceWorkbench(): void {
   const store = useAppStore.getState();
   if (store.voiceQueuePending > 0) {
-    const ok = window.confirm(
-      `还有 ${store.voiceQueuePending} 个配音任务未完成，关闭配音工作台会退出配音模式（历史记录不会丢失）。仍要关闭吗？`
-    );
-    if (!ok) return false;
+    requestConfirm({
+      title: '还有配音任务未完成',
+      description: `关闭配音工作台会取消这 ${store.voiceQueuePending} 个任务并停止 GSOV 服务。已经生成出来的记录不受影响。`,
+      confirmLabel: '关闭并取消',
+      danger: true,
+      action: reallyClose,
+    });
+    return;
   }
-  store.closeVoiceWorkbench();
+  reallyClose();
+}
+
+function reallyClose(): void {
+  // 先撤下未完成的任务再关: 服务马上就停, 悬在半空的请求不会自己回来
+  voiceController.cancelUnfinishedTasks();
+  useAppStore.getState().closeVoiceWorkbench();
   void voiceController.stopGsvIfRunning();
-  return true;
 }
 
 /** 切换配音工作台 */
@@ -75,12 +88,23 @@ export function activeSceneInVoiceMode(): boolean {
  *
  * **离开配音卡时先问一句**: 该场景还有没跑完的任务时, 用户点麦克风很可能是想"再看一眼"
  * 而不是真的要离开。任务本身不会因为离开而中止 (队列是全局的, 历史也已落盘), 但看不见
- * 进度的等待很容易被当成卡死 —— 让他确认一下比默默接受好。
+ * 进度的等待很容易被当成卡死。
  */
 export function setSceneVoiceMode(path: string, enabled: boolean): void {
-  if (!enabled && voiceController.hasUnfinished(path)) {
-    const ok = window.confirm('该场景还有未完成的配音任务，离开配音卡后它们会继续在队列里执行。确定要离开吗？');
-    if (!ok) return;
+  const leave = () => useAppStore.getState().setVoiceMode(path, false);
+  if (enabled) {
+    useAppStore.getState().setVoiceMode(path, true);
+    return;
   }
-  useAppStore.getState().setVoiceMode(path, enabled);
+  const count = voiceController.unfinishedCount(path);
+  if (count > 0) {
+    requestConfirm({
+      title: '这个场景还有配音任务',
+      description: `还有 ${count} 个任务没跑完。离开配音卡不会取消它们 —— 任务会继续在队列里执行，进度可以在配音工作台里看。`,
+      confirmLabel: '离开',
+      action: leave,
+    });
+    return;
+  }
+  leave();
 }

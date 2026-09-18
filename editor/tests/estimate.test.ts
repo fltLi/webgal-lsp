@@ -115,13 +115,30 @@ describe('离群值', () => {
 });
 
 describe('冷启动样本', () => {
-  it('skipNextSample 只跳过紧随其后的那一个', () => {
+  it('取走标记的那一次不计入样本, 之后恢复正常', () => {
     const estimator = fresh();
+    // 控制器在**请求发出前**取标记; 被取消/失败的那次推理同样会取走它
     estimator.skipNextSample();
-    estimator.observe(4, 16, 90000); // 含模型加载 -> 丢弃
+    expect(estimator.takeColdStart()).toBe(true);
+    // 冷启动那次按约定不 observe (含模型加载, 高一个量级), 于是样本里只有后面这一次
     estimator.observe(4, 16, 3000);
     expect(estimator.sampleCount(4)).toBe(1);
     expect(estimator.estimate(4, 16)).toBeCloseTo(3000, -2);
+  });
+
+  it('标记只生效一次, 不会一直吃掉后续样本', () => {
+    const estimator = fresh();
+    estimator.skipNextSample();
+    expect(estimator.takeColdStart()).toBe(true);
+    // 第一次推理被取消 (没有样本), 标记已经用掉 -> 后面这条正常任务不再被跳过
+    expect(estimator.takeColdStart()).toBe(false);
+    estimator.observe(4, 16, 3000);
+    estimator.observe(4, 16, 3200);
+    expect(estimator.sampleCount(4)).toBe(2);
+  });
+
+  it('没有标记时 takeColdStart 返回 false', () => {
+    expect(fresh().takeColdStart()).toBe(false);
   });
 });
 

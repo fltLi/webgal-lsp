@@ -5,6 +5,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { FluentProvider, webDarkTheme, webLightTheme } from '@fluentui/react-components';
 import { useEffect } from 'react';
 
+import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { EditorPage } from './components/EditorPage';
 import { SettingsDialog } from './components/SettingsDialog';
 import { UnsavedDialog } from './components/UnsavedDialog';
@@ -75,9 +76,10 @@ export default function App() {
   return (
     <FluentProvider theme={theme === 'dark' ? webDarkTheme : webLightTheme} className="app-root">
       {projectPath ? <EditorPage /> : <WelcomePage />}
-      {/* 设置/未保存对话框为应用级, 欢迎页与编辑页共用 */}
+      {/* 设置/未保存/通用确认对话框为应用级, 欢迎页与编辑页共用 */}
       <SettingsDialog />
       <UnsavedDialog />
+      <AppConfirmDialog />
     </FluentProvider>
   );
 }

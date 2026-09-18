@@ -482,6 +482,13 @@ class VoiceController {
     }
 
     const refPath = await this.referencePath(character.id, reference.file);
+    /*
+     * 冷启动标记在**请求发出前**取走, 而不是"等到记录样本时再跳过"。
+     *
+     * 取走后这次推理无论成功、取消还是报错都算"冷启动已经用掉" —— 否则标记会一直挂着,
+     * 白白吃掉后面一条正常任务的样本 (那条才是真正该学的东西)。
+     */
+    const coldStart = estimator.takeColdStart();
     task.status = 'running';
     task.startedAt = Date.now();
     this.updateHistory(task);
@@ -516,8 +523,13 @@ class VoiceController {
         task.audioHash = result.entry.hash;
         task.audioPath = result.entry.path;
         task.duration = result.duration;
-        // 校准样本就是上面那个实测响应时间, 按**采样步数**归档
-        estimator.observe(task.params.sampleSteps, task.params.text.length, task.elapsed);
+        /*
+         * 只有**真正跑完、且没被取消**的任务才进估算样本, 且冷启动那一次不算。
+         *
+         * 取消的任务可能只跑了一半就被丢弃, 报错的任务可能是在等超时 —— 它们的耗时没有
+         * 参考价值, 收进样本只会把预估带偏 (报错前干等几分钟, 就被算成"这句话要几分钟")。
+         */
+        if (!coldStart) estimator.observe(task.params.sampleSteps, task.params.text.length, task.elapsed);
         this.store().upsertVoiceCache(result.entry);
       }
     } catch (error) {
@@ -814,6 +826,15 @@ class VoiceController {
         })();
       }, PROBE_INTERVAL);
     });
+
+    /*
+     * 服务就绪后**接着跑队列**。
+     *
+     * 队列可能因为服务停了而卡住 (例如手动停过一次服务, 或者上次关闭工作台时留下的
+     * 排队任务), 那时没有新任务入队就不会有人再触发调度 —— 界面上就是"一直排队中"。
+     * 启动服务是"重新具备执行条件"的时刻, 顺手推一把。
+     */
+    void this.pump();
   }
 
   /**
@@ -1138,11 +1159,24 @@ class VoiceController {
     return this.store().voiceModePaths.includes(path);
   }
 
-  /** 关闭场景卡时的未完成检查 */
-  hasUnfinished(id: string): boolean {
+  /** 某场景还没跑完的任务数 (排队中 + 运行中) */
+  unfinishedCount(id: string): number {
     const card = this.cards.get(id);
-    if (!card) return false;
-    return card.history.some((entry) => entry.status === 'pending' || entry.status === 'running');
+    if (!card) return 0;
+    return card.history.filter((entry) => entry.status === 'pending' || entry.status === 'running').length;
+  }
+
+  /**
+   * 撤下**全部**未完成的任务。
+   *
+   * 关闭配音工作台时调用: 服务马上要停, 留在队列里的任务再也等不到结果, 只会变成
+   * "永远排队中" (重开工作台看到它们还在, 却什么都不会发生)。已经生成出来的记录不受
+   * 影响 —— 撤下的只是没产出音频的那几条。
+   */
+  cancelUnfinishedTasks(): void {
+    for (const task of [...this.tasks]) {
+      if (task.status === 'pending' || task.status === 'running') this.cancel(task.id);
+    }
   }
 
   /**
