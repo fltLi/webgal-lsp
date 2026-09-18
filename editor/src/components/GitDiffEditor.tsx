@@ -9,7 +9,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { gitCommitDiff, gitDiff, type GitFileDiff } from '../commands/git';
 import { LANGUAGE_ID } from '../lsp/monaco';
-import { useAppStore, type DiffTab } from '../state/store';
+import { useAppStore } from '../state/store';
+import type { DiffTab } from '../tabs/model';
 
 export function GitDiffEditor({ tab }: { tab: DiffTab }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -29,9 +30,9 @@ export function GitDiffEditor({ tab }: { tab: DiffTab }) {
       let diff: GitFileDiff;
       try {
         diff =
-          tab.kind === 'commit' && tab.commitId
+          tab.diffKind === 'commit' && tab.commitId
             ? await gitCommitDiff(projectPath, tab.file, tab.commitId)
-            : await gitDiff(projectPath, tab.file, tab.kind === 'staged' ? 'staged' : 'unstaged');
+            : await gitDiff(projectPath, tab.file, tab.diffKind === 'staged' ? 'staged' : 'unstaged');
       } catch (e) {
         if (!cancelled) setMessage(`加载差异失败：${String(e)}`);
         return;

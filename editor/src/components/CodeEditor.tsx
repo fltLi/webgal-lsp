@@ -10,14 +10,41 @@ import { useEffect, useRef } from 'react';
 import { gitFileChanges, gitFileRegion } from '../commands/git';
 import { absToRel } from '../git/util';
 import { fs } from '../lib/fs';
+import { lspClient } from '../lsp/client';
 import { applyDiagnostics, bindModel, openModel, TRIGGER_CHARACTERS } from '../lsp/monaco';
 import { previewClient } from '../preview/client';
 import { useAppStore, type OpenDocument } from '../state/store';
 
 const TRIGGER_SET = new Set(TRIGGER_CHARACTERS);
 
-export function CodeEditor({ doc }: { doc: OpenDocument }) {
+/**
+ * 单个文档的 Monaco 编辑器 (仅活动文档被挂载)。
+ *
+ * * 场景编辑器集成 git 行内差异 (行号旁色块 + 点击后在两行之间就地插入差异区);
+ * * `readOnly` 用于配音卡: 该模式只做"读场景 + 选语句", 编辑一律回到普通场景卡,
+ *   因此禁掉写入入口 (手工编辑与自动保存)。但**差异色块与预览同步照常工作** ——
+ *   「应用」一条配音本来就是在改这个文件, 改了哪一行正是配音时最需要看见的东西;
+ *   只读的是"你自己敲字", 不是"看变化";
+ * * `highlightLine` 为整条语句施加行高亮 (配音卡用它表示"正在配置哪一句")。
+ */
+export function CodeEditor({
+  doc,
+  readOnly = false,
+  highlightLine = null,
+}: {
+  doc: OpenDocument;
+  readOnly?: boolean;
+  highlightLine?: { line: number; count: number } | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const highlightDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  /** 当前编辑器承载的文档路径 (外部内容回灌前要确认没认错文档) */
+  const editorPathRef = useRef<string | null>(null);
+  /** 主 effect 里的"同步预览"函数 (外部内容回灌后要触发一次) */
+  const syncRef = useRef<(() => void) | null>(null);
+  /** 正在把外部内容写进 model: 这期间的内容变更不是用户编辑, 不再回写 store */
+  const pushingExternal = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -35,6 +62,9 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
+      readOnly,
+      // 只读时不显示光标插入符, 避免误以为可以编辑
+      domReadOnly: readOnly,
       fontFamily: initialSettings.editorFontFamily,
       fontSize: initialSettings.editorFontSize,
       minimap: { enabled: initialSettings.editorMinimap },
@@ -42,7 +72,14 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       // 显式启用语义高亮: 内置主题的 semanticHighlighting 恒为 false,
       // 不开启则语义 token 不会被请求/着色 (与 parse-playground 一致的做法)
       'semanticHighlighting.enabled': true,
+      // 当前语句整行高亮 (配音卡用它表示"正在配置哪一句")
+      renderLineHighlight: 'all',
     });
+
+    // 供 highlightLine 装饰复用 (避免因高亮变化而重建编辑器)
+    editorRef.current = editor;
+    editorPathRef.current = path;
+    highlightDecorations.current = editor.createDecorationsCollection();
 
     // 编辑器设置变化时热更新 (避免重建编辑器丢失光标)
     const settingsSub = useAppStore.subscribe((state, prev) => {
@@ -63,6 +100,12 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       }
     });
 
+    /**
+     * 把编辑器里的内容写回磁盘。
+     *
+     * `readOnly` (配音卡) 下也允许: 配音「应用」在关闭自动保存时只会更新文档与 Monaco,
+     * 落盘要靠用户自己 —— 那时 Ctrl+S 必须有效, 否则改动永远留在内存里。
+     */
     const saveDoc = async () => {
       const text = editor.getValue();
       try {
@@ -73,16 +116,44 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       }
     };
 
+    /**
+     * 自动保存。
+     *
+     * 配音卡 (只读) 也走同一条路: 那里的内容变化来自撤销/重做 (应用了一条配音又后悔),
+     * 与普通编辑没有区别 —— 是否落盘只看自动保存设置。
+     */
     const scheduleAutoSave = () => {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveDoc(), 600);
     };
 
+    // Ctrl+S 在两种模式下都注册 (配音卡本身不能编辑, 但文档可能是脏的)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveDoc();
     });
 
-    // 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)
+    /*
+     * 撤销 / 重做。
+     *
+     * 只读模式下 Monaco 会把内置的撤销/重做命令禁用 (它们的前提是"可写"), 但配音卡里
+     * 恰恰最需要它: 「应用」一条配音就是在改这个文件, 点错了要能退回去。这里显式接管
+     * 这几个快捷键 —— 前提是外部改动以**编辑**的方式写进 model (见下方 `applyEdits`),
+     * 而不是 `setValue` (那会清空撤销栈)。
+     */
+    if (readOnly) {
+      // 用 `trigger` 而不是 `getAction().run()`: 只读下那个 action 会被判定为不可用
+      const runCommand = (id: string) => editor.trigger('voice', id, null);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => runCommand('undo'));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => runCommand('redo'));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () => runCommand('redo'));
+    }
+
+    /*
+     * 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)。
+     *
+     * 配音卡**也要同步**: "点一句对话 -> 预览跳到那一句"正是配音时最需要的反馈;
+     * 之前这里对只读编辑器直接 return, 于是开着实时预览也没反应。
+     */
     const scheduleSync = () => {
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = setTimeout(async () => {
@@ -93,21 +164,60 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
         if (position) void previewClient.syncScene(path, position.lineNumber);
       }, 150);
     };
+    // 供"外部内容回灌"那一段在替换完内容后触发一次同步
+    syncRef.current = scheduleSync;
+
+    /*
+     * 光标: 挂载时恢复, 移动时上报, 卸载时记档。
+     *
+     * 顺序很重要 —— 先恢复位置, 再注册监听, 否则恢复动作会先触发一次误同步。
+     */
+    const remembered = useAppStore.getState().cursors[path];
+    if (remembered) {
+      // 文件可能在别处被改短, 因此夹到当前实际行数内
+      const maxLine = Math.max(1, model.getLineCount());
+      const line = Math.min(Math.max(1, remembered.line), maxLine);
+      editor.setPosition({ lineNumber: line, column: remembered.column });
+      editor.revealLineInCenterIfOutsideViewport(line);
+    }
+
+    /** 把当前光标同时写进"状态栏用的光标"与"本档留档" */
+    const publishCursor = () => {
+      const position = editor.getPosition();
+      if (!position) return;
+      const store = useAppStore.getState();
+      store.setCursor({ path, line: position.lineNumber, column: position.column });
+      store.rememberCursor(path, { line: position.lineNumber, column: position.column });
+    };
 
     // 光标移动 -> 状态栏位置 + 跨行时触发预览同步
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
-      useAppStore.getState().setCursor({ line: e.position.lineNumber, column: e.position.column });
+      publishCursor();
       if (e.position.lineNumber !== lastSyncLine) {
         lastSyncLine = e.position.lineNumber;
         scheduleSync();
       }
     });
+    // 编辑器创建时不会触发上面的事件, 因此主动上报一次初始位置
+    publishCursor();
 
     let unbindModel: (() => void) | null = null;
     let unsubscribeDiagnostics: (() => void) | null = null;
 
     if (isScene) {
+      /*
+       * 两种模式都绑定 model (语言服务同步 + 内容回写)。
+       *
+       * 配音卡以前刻意不绑: 它不改文档, 绑了只会在外部回灌时重复写一次 store。但
+       * "不改文档"并不成立 —— 「应用」与「加载磁盘内容」都会替换全文, 而用户在只读
+       * 编辑器里唯一的补救手段就是撤销。要能撤销, 就必须让 model 的变更 (包括撤销)
+       * 照常回写 store, 否则撤销只改画面、不改文档, 下一次保存/应用又把旧内容写回去。
+       *
+       * 外部回灌 (apply/裁决) 期间用 `pushingExternal` 静音: 那份内容本来就是从 store
+       * 来的, 再写回去会把它重新标脏 (看起来像"点了应用却还是未保存")。
+       */
       unbindModel = bindModel(model, path, (text) => {
+        if (pushingExternal.current) return;
         const store = useAppStore.getState();
         store.updateDocument(path, { content: text, dirty: true });
         if (store.settings.autoSave) scheduleAutoSave();
@@ -275,9 +385,83 @@ export function CodeEditor({ doc }: { doc: OpenDocument }) {
       if (unsubscribeGit) unsubscribeGit();
       if (saveTimer) clearTimeout(saveTimer);
       if (syncTimer) clearTimeout(syncTimer);
+      /*
+       * 卸载前记下光标。
+       *
+       * 编辑器只挂载活动文档, 不记档的话切走再切回来就回到第一行 —— 普通卡与配音卡
+       * 都受影响。收尾时再记一次是必须的: 用户可能只是"点一下"某行就切走, 期间没有
+       * 再次移动光标, 但位置已经变了。
+       */
+      const position = editor.getPosition();
+      if (position) {
+        useAppStore.getState().rememberCursor(path, { line: position.lineNumber, column: position.column });
+      }
+      highlightDecorations.current = null;
+      editorRef.current = null;
+      editorPathRef.current = null;
+      syncRef.current = null;
       editor.dispose();
     };
   }, [doc.path]);
+
+  /*
+   * 外部内容变化 (配音「应用」、冲突裁决「加载磁盘」、备份回滚) 回灌进 model。
+   *
+   * 编辑器只在挂载时读一次 `doc.content`, 之后文档被别处改掉, 画面上仍是旧文本 ——
+   * 用户看到的就是"点了应用却什么都没变"。以 store 为准回灌即可解决。
+   *
+   * 用一次**编辑** (applyEdits) 而不是 `setValue` 整份替换: `setValue` 会清空撤销栈,
+   * 于是「应用」之后再也撤不回去。代价是这次替换会作为一步进撤销栈 (正是我们要的)。
+   * 语言服务的 `didChange` 由 `bindModel` 自动发出; 预览按"场景 + 语句号"同步, 这里
+   * 主动推一次。
+   *
+   * 编辑器自己敲的字不会走到这里 (两边内容相等, 直接返回), 因此不打断输入。
+   */
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || editorPathRef.current !== doc.path) return;
+    if (model.getValue() === doc.content) return;
+
+    const position = editor.getPosition();
+    pushingExternal.current = true;
+    try {
+      model.applyEdits([{ range: model.getFullModelRange(), text: doc.content }]);
+    } finally {
+      pushingExternal.current = false;
+    }
+    if (position) editor.setPosition(position);
+
+    // 非场景文档没有绑定 model, 语言服务需要手动通知
+    if (!doc.isScene) lspClient.changeDocument(doc.path, doc.content, model.getVersionId());
+    syncRef.current?.();
+  }, [doc.content, doc.path, doc.isScene, readOnly]);
+
+  /*
+   * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。
+   *
+   * `highlightLine.line` 是**后端给的 0 起算行号**, 而 `monaco.Range` 收的是
+   * 1 起算行号 —— 必须 `+1`, 否则高亮会整体飘到上面一行。
+   */
+  useEffect(() => {
+    const collection = highlightDecorations.current;
+    const model = editorRef.current?.getModel();
+    if (!collection || !model) return;
+    if (!highlightLine) {
+      collection.clear();
+      return;
+    }
+    const lineCount = Math.max(1, model.getLineCount());
+    const count = Math.max(1, highlightLine.count);
+    const start = Math.min(Math.max(0, highlightLine.line), lineCount - 1) + 1;
+    const end = Math.min(start + count - 1, lineCount);
+    collection.set([
+      {
+        range: new monaco.Range(start, 1, end, model.getLineMaxColumn(end)),
+        options: { isWholeLine: true, className: 'voice-line-highlight' },
+      },
+    ]);
+  }, [doc.path, highlightLine]);
 
   return (
     <div className="code-editor">

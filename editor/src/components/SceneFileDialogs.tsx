@@ -6,6 +6,8 @@
 import { Button, Input } from '@fluentui/react-components';
 import { useEffect, useRef, useState } from 'react';
 
+import { AppDialog } from './AppDialog';
+
 interface BaseDialogProps {
   onClose: () => void;
 }
@@ -79,38 +81,41 @@ export function NameInputDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-surface small-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">{title}</h2>
-        <div className="prompt-field">
-          <span className="settings-label">{label}</span>
-          <Input
-            ref={inputRef}
-            value={value}
-            placeholder={placeholder}
-            onChange={(_, data) => {
-              setValue(data.value);
-              setError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
-              if (e.key === 'Escape') onClose();
-            }}
-            disabled={busy}
-          />
-          {hint ? <span className="prompt-hint">{hint}</span> : null}
-          {error ? <span className="prompt-error">{error}</span> : null}
-        </div>
-        <div className="modal-actions">
-          <Button appearance="primary" disabled={busy} onClick={() => void submit()}>
-            {submitLabel}
-          </Button>
+    <AppDialog
+      title={title}
+      size="small"
+      height={300}
+      onClose={onClose}
+      footer={
+        <>
           <Button appearance="secondary" disabled={busy} onClick={onClose}>
             取消
           </Button>
-        </div>
+          <Button appearance="primary" disabled={busy} onClick={() => void submit()}>
+            {submitLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="prompt-field">
+        <span className="settings-label">{label}</span>
+        <Input
+          ref={inputRef}
+          value={value}
+          placeholder={placeholder}
+          onChange={(_, data) => {
+            setValue(data.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submit();
+          }}
+          disabled={busy}
+        />
+        {hint ? <span className="prompt-hint">{hint}</span> : null}
+        {error ? <span className="prompt-error">{error}</span> : null}
       </div>
-    </div>
+    </AppDialog>
   );
 }
 
@@ -143,12 +148,16 @@ export function ConfirmDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-surface small-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">{title}</h2>
-        <p className="confirm-message">{message}</p>
-        {error ? <p className="prompt-error">{error}</p> : null}
-        <div className="modal-actions">
+    <AppDialog
+      title={title}
+      size="small"
+      height={260}
+      onClose={onClose}
+      footer={
+        <>
+          <Button appearance="secondary" disabled={busy} onClick={onClose}>
+            取消
+          </Button>
           <Button
             appearance="primary"
             className={danger ? 'danger-button' : undefined}
@@ -157,11 +166,11 @@ export function ConfirmDialog({
           >
             {confirmLabel}
           </Button>
-          <Button appearance="secondary" disabled={busy} onClick={onClose}>
-            取消
-          </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="confirm-message">{message}</p>
+      {error ? <p className="prompt-error">{error}</p> : null}
+    </AppDialog>
   );
 }

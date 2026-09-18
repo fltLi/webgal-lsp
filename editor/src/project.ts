@@ -11,14 +11,16 @@ import { disposeModel } from './lsp/monaco';
 import { disposeAllNovelTabs } from './novel/registry';
 import { previewClient } from './preview/client';
 import { useAppStore } from './state/store';
+import { voiceController } from './voice/controller';
 
-/** 读取并打开一个文件为新文档。 */
+/** 读取并打开一个文件: 登记文档并打开 (或聚焦) 对应选项卡。 */
 export async function openFile(path: string): Promise<void> {
   const content = await fs.readText(path);
   const normalized = path.replace(/\\/g, '/');
   const isScene = normalized.includes('/game/scene/');
   const name = normalized.split('/').pop() ?? path;
-  useAppStore.getState().openDocument({
+  const store = useAppStore.getState();
+  store.openDocument({
     path,
     name,
     uri: toUri(path),
@@ -26,6 +28,8 @@ export async function openFile(path: string): Promise<void> {
     dirty: false,
     isScene,
   });
+  // 文档与选项卡是两件事: 只登记文档的话界面上不会出现任何选项卡
+  store.openSceneTab(path, name);
 }
 
 /** 销毁当前所有文档对应的 Monaco model。 */
@@ -59,6 +63,7 @@ export async function openProject(path: string): Promise<void> {
   // 关闭旧项目的所有文档与 model
   disposeAllModels();
   disposeAllNovelTabs();
+  voiceController.resetProject();
   store.setProject(path);
   store.updateSettings(pushRecentProject(store.settings, path));
   previewClient.resetSite();
@@ -72,6 +77,7 @@ export function closeProject(): void {
   }
   disposeAllModels();
   disposeAllNovelTabs();
+  voiceController.resetProject();
   store.setProject(null);
   previewClient.resetSite();
 }

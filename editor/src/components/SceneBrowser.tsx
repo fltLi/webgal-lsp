@@ -12,12 +12,13 @@ import {
   RenameRegular,
 } from '@fluentui/react-icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { createFile, createFolder, deletePath, ensureSceneExtension, renamePath, validateName } from '../fileops';
 import { fs } from '../lib/fs';
 import { openFile } from '../project';
 import { useAppStore } from '../state/store';
+import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
 import { FileTree, type FileNode } from './FileTree';
 import { ConfirmDialog, NameInputDialog } from './SceneFileDialogs';
@@ -26,29 +27,16 @@ type PromptState = { mode: 'newFile' | 'newFolder'; dir: string } | { mode: 'ren
 
 export function SceneBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);
-  const activePath = useAppStore((s) => s.activePath);
+  // 场景浏览器高亮"当前正在编辑的场景": 即活动选项卡为场景类时对应的路径
+  const activePath = useAppStore((s) => {
+    const tab = s.tabs.find((item) => item.id === s.activeTabId);
+    return tab?.kind === 'scene' ? tab.path : null;
+  });
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [menu, setMenu] = useState<{ node: FileNode; x: number; y: number } | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [deleting, setDeleting] = useState<FileNode | null>(null);
-
-  // 关闭右键菜单: 点击遮罩 / Esc / 滚动或窗口变化
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, { capture: true });
-    window.addEventListener('resize', close);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close, { capture: true });
-      window.removeEventListener('resize', close);
-    };
-  }, [menu]);
 
   if (!projectPath) return <div className="resource-browser empty">未打开项目</div>;
 
@@ -56,10 +44,8 @@ export function SceneBrowser() {
 
   const openMenu = (node: FileNode, e: React.MouseEvent) => {
     e.preventDefault();
-    // 贴近视口边缘时收拢菜单
-    const x = Math.min(e.clientX, window.innerWidth - 190);
-    const y = Math.min(e.clientY, window.innerHeight - 140);
-    setMenu({ node, x, y });
+    // 贴边收拢交给 `ContextMenu` (它按实测尺寸算), 这里只给出指针位置
+    setMenu({ node, x: e.clientX, y: e.clientY });
   };
 
   /** 新建/重命名的目标路径与重名校验 */
@@ -206,38 +192,26 @@ export function SceneBrowser() {
       />
 
       {menu ? (
-        <>
-          <div
-            className="context-menu-backdrop"
-            onClick={() => setMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu(null);
-            }}
-          />
-          <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                setPrompt({ mode: 'rename', node: menu.node });
-                setMenu(null);
-              }}
-            >
-              <RenameRegular />
-              重命名
-            </button>
-            <button
-              className="context-menu-item danger"
-              onClick={() => {
-                setDeleting(menu.node);
-                setMenu(null);
-              }}
-            >
-              <DeleteRegular />
-              删除
-            </button>
-          </div>
-        </>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[
+            {
+              key: 'rename',
+              label: '重命名',
+              icon: <RenameRegular />,
+              onClick: () => setPrompt({ mode: 'rename', node: menu.node }),
+            },
+            {
+              key: 'delete',
+              label: '删除',
+              icon: <DeleteRegular />,
+              danger: true,
+              onClick: () => setDeleting(menu.node),
+            },
+          ]}
+          onClose={() => setMenu(null)}
+        />
       ) : null}
 
       {prompt && promptProps ? (

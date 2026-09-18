@@ -27,7 +27,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use percent_encoding::percent_decode_str;
-use tauri::{ipc::Channel, State as TauriState};
+use tauri::{ipc::Channel, State};
 use tokio::{
     net::TcpListener,
     sync::{mpsc, oneshot, Mutex, RwLock},
@@ -414,7 +414,7 @@ fn normalize_project_path(path: &str) -> Result<(String, PathBuf), String> {
 
 #[tauri::command]
 pub async fn start_preview_server(
-    state: TauriState<'_, Mutex<PreviewState>>,
+    state: State<'_, Mutex<PreviewState>>,
     host: String,
     port: u16,
     on_message: Channel<String>,
@@ -514,7 +514,7 @@ pub async fn start_preview_server(
 
 #[tauri::command]
 pub async fn add_static_site(
-    state: TauriState<'_, Mutex<PreviewState>>,
+    state: State<'_, Mutex<PreviewState>>,
     project_path: String,
     engine_path: Option<String>,
 ) -> Result<String, String> {
@@ -544,7 +544,7 @@ pub async fn add_static_site(
 
 #[tauri::command]
 pub async fn set_active_preview_session(
-    state: TauriState<'_, Mutex<PreviewState>>,
+    state: State<'_, Mutex<PreviewState>>,
     game_id: Option<String>,
 ) -> Result<(), String> {
     let app_state = state.lock().await.app_state.clone();
@@ -558,7 +558,7 @@ pub async fn set_active_preview_session(
 
 #[tauri::command]
 pub async fn set_embedded_preview_launch_id(
-    state: TauriState<'_, Mutex<PreviewState>>,
+    state: State<'_, Mutex<PreviewState>>,
     embedded_launch_id: Option<String>,
 ) -> Result<(), String> {
     let app_state = state.lock().await.app_state.clone();
@@ -572,7 +572,7 @@ pub async fn set_embedded_preview_launch_id(
 
 #[tauri::command]
 pub async fn send_preview_command(
-    state: TauriState<'_, Mutex<PreviewState>>,
+    state: State<'_, Mutex<PreviewState>>,
     request: String,
 ) -> Result<(), String> {
     let app_state = state.lock().await.app_state.clone();

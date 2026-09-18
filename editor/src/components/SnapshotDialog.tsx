@@ -6,6 +6,7 @@ import { Button } from '@fluentui/react-components';
 import { useEffect, useRef, useState } from 'react';
 
 import { packSnapshot, type SnapshotEvent, type SnapshotResult } from '../commands/snapshot';
+import { AppDialog } from './AppDialog';
 
 interface SnapshotDialogProps {
   /** 项目根目录 */
@@ -136,68 +137,69 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
   const packRatio = progress.packSize === 0 ? 0 : Math.round((progress.packCompressed / progress.packSize) * 100);
 
   return (
-    <div className="modal-backdrop" onClick={() => phase === 'done' && onClose()}>
-      <div className="modal-surface snapshot-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">生成快照</h2>
+    <AppDialog
+      title="生成快照"
+      size="medium"
+      height={340}
+      closeOnBackdrop={phase === 'done'}
+      onClose={onClose}
+      footer={
+        <Button appearance="primary" disabled={phase !== 'done'} onClick={onClose}>
+          关闭
+        </Button>
+      }
+    >
+      <p className="snapshot-destination" title={destination}>
+        {destination}
+      </p>
 
-        <p className="snapshot-destination" title={destination}>
-          {destination}
-        </p>
-
-        {phase !== 'done' && (
-          <>
-            {phase === 'scanning' ? (
+      {phase !== 'done' && (
+        <>
+          {phase === 'scanning' ? (
+            <p className="snapshot-line">
+              正在收集 {progress.scanFile || '…'} · {progress.scanCount} 个文件 · {formatSize(progress.scanSize)}
+            </p>
+          ) : (
+            <>
+              <div className="snapshot-bar">
+                <div className="snapshot-bar-fill" style={{ width: `${packPercent}%` }} />
+              </div>
               <p className="snapshot-line">
-                正在收集 {progress.scanFile || '…'} · {progress.scanCount} 个文件 · {formatSize(progress.scanSize)}
+                {progress.packProcessed}/{progress.packCount} ({packPercent}%) · {formatSize(progress.packSize)} →{' '}
+                {formatSize(progress.packCompressed)} (压缩 {packRatio}%)
               </p>
-            ) : (
-              <>
-                <div className="snapshot-bar">
-                  <div className="snapshot-bar-fill" style={{ width: `${packPercent}%` }} />
-                </div>
-                <p className="snapshot-line">
-                  {progress.packProcessed}/{progress.packCount} ({packPercent}%) · {formatSize(progress.packSize)} →{' '}
-                  {formatSize(progress.packCompressed)} (压缩 {packRatio}%)
-                </p>
-              </>
-            )}
-            {errors.length > 0 && (
+            </>
+          )}
+          {errors.length > 0 && (
+            <ul className="snapshot-errors">
+              {errors.map((message, i) => (
+                <li key={i}>{message}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {phase === 'done' && result && (
+        <>
+          {result.aborted ? (
+            <p className="snapshot-error-text">打包被终止, 压缩包未完整生成</p>
+          ) : result.errors.length > 0 ? (
+            <>
+              <p className="snapshot-error-text">打包完成, 共 {result.errors.length} 个错误</p>
               <ul className="snapshot-errors">
-                {errors.map((message, i) => (
+                {result.errors.map((message, i) => (
                   <li key={i}>{message}</li>
                 ))}
               </ul>
-            )}
-          </>
-        )}
-
-        {phase === 'done' && result && (
-          <>
-            {result.aborted ? (
-              <p className="snapshot-error-text">打包被终止, 压缩包未完整生成</p>
-            ) : result.errors.length > 0 ? (
-              <>
-                <p className="snapshot-error-text">打包完成, 共 {result.errors.length} 个错误</p>
-                <ul className="snapshot-errors">
-                  {result.errors.map((message, i) => (
-                    <li key={i}>{message}</li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="snapshot-success">
-                已生成快照: {result.count} 个文件 · {formatSize(result.totalSize)} → {formatSize(result.finalSize)}
-              </p>
-            )}
-          </>
-        )}
-
-        <div className="modal-actions">
-          <Button appearance="primary" disabled={phase !== 'done'} onClick={onClose}>
-            关闭
-          </Button>
-        </div>
-      </div>
-    </div>
+            </>
+          ) : (
+            <p className="snapshot-success">
+              已生成快照: {result.count} 个文件 · {formatSize(result.totalSize)} → {formatSize(result.finalSize)}
+            </p>
+          )}
+        </>
+      )}
+    </AppDialog>
   );
 }

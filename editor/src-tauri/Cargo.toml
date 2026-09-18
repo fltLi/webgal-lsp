@@ -19,10 +19,16 @@ webgal-language-server.workspace = true
 webgal-language-service.workspace = true
 webgal-snapshot.workspace = true
 
+thiserror.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 
 percent-encoding.workspace = true
+zip.workspace = true
+walkdir.workspace = true
+sha2 = "0.10"
+hound = "3.5"
 trash = "5.2"
 git2 = { version = "0.20", default-features = false, features = [
     "vendored-libgit2",
@@ -46,8 +52,15 @@ tokio = { workspace = true, features = [
     "net",
     "io-util",
     "fs",
+    "process",
 ] }
 tokio-util.workspace = true
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "query",
+    "rustls",
+    "rustls-native-certs",
+] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

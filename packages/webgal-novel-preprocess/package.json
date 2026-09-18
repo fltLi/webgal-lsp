@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "lint": "eslint src test --ext .ts",
+    "lint": "eslint src tests --ext .ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
