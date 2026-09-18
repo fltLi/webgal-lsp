@@ -4,8 +4,21 @@
 
 import { create } from 'zustand';
 
+import type { CacheEntry, Character, GsvStatus } from '../commands/voice';
+import type { GitStatus } from '../commands/git';
 import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
+import {
+  makeSceneTab,
+  makeVoiceGuideTab,
+  makeWorkbenchTab,
+  VOICE_GUIDE_TAB_ID,
+  WORKBENCH_TAB_ID,
+  type SceneTab,
+  type WorkbenchTabItem,
+} from '../tabs/model';
+import { closeTab, insertTab, moveTab, removeTabsByKind } from '../tabs/order';
+import type { SceneVoiceState } from '../voice/types';
 
 export interface OpenDocument {
   path: string;
@@ -47,8 +60,21 @@ interface AppStore {
   /** 项目绑定 (key: 规范化项目路径 -> 引擎/模板 id) */
   projectBindings: Record<string, ProjectBinding>;
 
+  // -------- 选项卡 (单一有序序列) --------
+  /**
+   * 编辑器内的全部选项卡, 混合场景/文件、文本预处理、差异比较与配音工作台。
+   * 顺序即显示顺序, 可任意拖拽重排。
+   */
+  tabs: WorkbenchTabItem[];
+  /** 当前活动选项卡 id; `null` 表示没有打开任何选项卡 */
+  activeTabId: string | null;
+  /** 已打开文档 (按路径索引; 仅场景/文件选项卡有对应文档) */
   documents: OpenDocument[];
-  activePath: string | null;
+  /** 文本预处理选项卡的编辑器统计 (供状态栏显示)。 */
+  novelStats: { chars: number; lines: number } | null;
+
+  /** git 仓库状态 (null 表示尚未加载)。 */
+  gitStatus: GitStatus | null;
 
   lspStatus: LspStatus;
   lspError: string | null;
@@ -60,10 +86,68 @@ interface AppStore {
   previewReady: boolean;
   previewStage: StageSnapshot | null;
 
-  cursor: { line: number; column: number } | null;
+  /**
+   * 当前光标位置 (状态栏显示 / 配音卡定位用)。
+   *
+   * 它是**全局**的一份"最后观察到的位置", 因此带上了所属文档路径: 切卡时编辑器会
+   * 重新挂载, 若不带路径, 上一条记录的行号会被新文档继承 (配音卡据此选中错误的行)。
+   */
+  cursor: { path: string; line: number; column: number } | null;
+  /**
+   * 每个文档各自的光标位置, 切走再切回来时恢复。
+   *
+   * 编辑器是"只挂载活动文档"的, 卸载时若不留档, 光标就回到第一行 —— 普通卡与
+   * 配音卡都有这个问题。
+   */
+  cursors: Record<string, { line: number; column: number }>;
+
+  // -------- 配音工作流 --------
+  /** GSOV 服务状态 */
+  voiceStatus: GsvStatus;
+  /** GSOV 状态详情 (错误信息等) */
+  voiceStatusDetail: string | null;
+  /** GSOV 进程日志 */
+  voiceLogs: string[];
+  /** 角色列表 */
+  voiceCharacters: Character[];
+  /** 场景配音编辑器状态 (key 为场景路径) */
+  sceneVoiceEditors: Map<string, SceneVoiceState>;
+  /** 配音缓存条目 */
+  voiceCache: CacheEntry[];
+  /** 场景级角色覆盖: 场景路径 -> (说话者 -> 角色 id) */
+  voiceAssignments: Record<string, Record<string, string>>;
+  /** 递增令牌: 队列状态变化时触发订阅者重渲染 */
+  voiceTick: number;
+  /** 待处理 + 运行中的配音任务数 (供工作台选项卡显示角标) */
+  voiceQueuePending: number;
+  /** 处于配音编辑模式的场景路径 (仅在配音工作台打开时有意义) */
+  voiceModePaths: string[];
+  /**
+   * 最近一次处于选中态的场景卡 id。
+   *
+   * 用于回答"当前是哪个场景": 当最前面的是配音工作台选项卡时, `activeTabId` 指向
+   * 工作台而不是场景, 但用户心中的"当前场景"仍是进工作台之前看的那张卡 ——
+   * 麦克风开关就是按这个来显示的。
+   */
+  currentSceneTabId: string | null;
+
+  /** 设置某个场景的配音编辑模式开关 */
+  setVoiceMode: (path: string, enabled: boolean) => void;
+  setVoiceStatus: (status: GsvStatus, detail?: string | null) => void;
+  setVoiceLogs: (logs: string[]) => void;
+  appendVoiceLog: (line: string) => void;
+  setVoiceCharacters: (characters: Character[]) => void;
+  setSceneVoiceEditors: (cards: Map<string, SceneVoiceState>) => void;
+  setVoiceCache: (cache: CacheEntry[]) => void;
+  upsertVoiceCache: (entry: CacheEntry) => void;
+  setVoiceAssignment: (scenePath: string, assignments: Record<string, string>) => void;
+  setVoiceTick: () => void;
+  setVoiceQueuePending: (count: number) => void;
 
   settingsOpen: boolean;
   unsavedDialog: boolean;
+  /** 通用确认框是否打开 (内容见 `confirm.ts`) */
+  confirmDialog: boolean;
   /** 打开设置时定位到的分类 */
   settingsCategory: SettingsCategory;
   /** 预览刷新令牌 (自增触发 iframe 整体重挂) */
@@ -74,21 +158,46 @@ interface AppStore {
   setProject: (path: string | null) => void;
   /** 设置项目绑定 (模板) 并持久化 */
   setProjectBinding: (projectPath: string, binding: ProjectBinding) => void;
+
+  /** 打开 (或聚焦) 一个场景/文件选项卡 */
+  openSceneTab: (path: string, name: string) => void;
+  /** 打开 (或聚焦) 一个任意选项卡 */
+  openTab: (tab: WorkbenchTabItem) => void;
+  /** 关闭选项卡 (会按需由调用方先处理未保存确认) */
+  closeTab: (id: string) => void;
+  /** 激活选项卡 */
+  activateTab: (id: string) => void;
+  /** 选项卡拖拽排序 */
+  moveTab: (id: string, toIndex: number) => void;
+  /** 文档被重命名/移动后, 把对应场景选项卡迁移到新路径 (保持原位置) */
+  retargetSceneTabs: (oldPath: string, newPath: string) => void;
+
+  /** 打开配音工作台 (单例选项卡) */
+  openVoiceWorkbench: () => void;
+  /** 关闭配音工作台 */
+  closeVoiceWorkbench: () => void;
+  /** 打开配音使用说明 (单例选项卡) */
+  openVoiceGuide: () => void;
+
   openDocument: (doc: OpenDocument) => void;
   closeDocument: (path: string) => void;
-  setActiveDocument: (path: string) => void;
   updateDocument: (path: string, patch: Partial<OpenDocument>) => void;
-  /** 将文档移动到指定位置 (选项卡拖拽排序) */
-  moveDocument: (path: string, toIndex: number) => void;
+  setNovelStats: (stats: { chars: number; lines: number } | null) => void;
+  /** 打开一个文本预处理选项卡 (返回其 id) */
+  addNovelTab: (tab: WorkbenchTabItem) => void;
+  setGitStatus: (status: GitStatus | null) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (
     patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady' | 'previewStage'>>
   ) => void;
-  setCursor: (cursor: { line: number; column: number } | null) => void;
+  setCursor: (cursor: { path: string; line: number; column: number } | null) => void;
+  /** 记下某个文档的光标位置 (切走再切回来时恢复) */
+  rememberCursor: (path: string, cursor: { line: number; column: number }) => void;
   setSettingsOpen: (open: boolean) => void;
   setSettingsCategory: (category: SettingsCategory) => void;
   setUnsavedDialog: (open: boolean) => void;
+  setConfirmDialog: (open: boolean) => void;
   requestPreviewReload: () => void;
 }
 
@@ -100,8 +209,12 @@ export const useAppStore = create<AppStore>((set) => ({
   projectName: null,
   projectBindings: loadBindings(),
 
+  tabs: [],
+  activeTabId: null,
   documents: [],
-  activePath: null,
+  novelStats: null,
+
+  gitStatus: null,
 
   lspStatus: 'disconnected',
   lspError: null,
@@ -114,9 +227,23 @@ export const useAppStore = create<AppStore>((set) => ({
   previewStage: null,
 
   cursor: null,
+  cursors: {},
+
+  voiceQueuePending: 0,
+  voiceModePaths: [],
+  currentSceneTabId: null,
+  voiceStatus: 'stopped',
+  voiceStatusDetail: null,
+  voiceLogs: [],
+  voiceCharacters: [],
+  sceneVoiceEditors: new Map(),
+  voiceCache: [],
+  voiceAssignments: {},
+  voiceTick: 0,
 
   settingsOpen: false,
   unsavedDialog: false,
+  confirmDialog: false,
   settingsCategory: 'general',
   previewReloadToken: 0,
 
@@ -138,12 +265,17 @@ export const useAppStore = create<AppStore>((set) => ({
       set({
         projectPath: null,
         projectName: null,
+        tabs: [],
+        activeTabId: null,
         documents: [],
-        activePath: null,
+        novelStats: null,
+        gitStatus: null,
         diagnostics: {},
         previewSiteId: null,
         previewReady: false,
         previewStage: null,
+        voiceModePaths: [],
+        currentSceneTabId: null,
       });
     }
   },
@@ -153,44 +285,266 @@ export const useAppStore = create<AppStore>((set) => ({
       persistBindings(projectBindings);
       return { projectBindings };
     }),
+
+  // -------- 选项卡 --------
+
+  openSceneTab: (path, name) => {
+    const state = useAppStore.getState();
+    const existing = state.tabs.find((tab) => tab.kind === 'scene' && tab.path === path);
+    const tab = existing ?? makeSceneTab(path, name);
+    state.openTab(tab);
+  },
+  openTab: (tab) =>
+    set((s) => {
+      const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
+      // 注意: 打开场景卡**不会**自动进入配音编辑模式。进入与否完全由用户点麦克风决定,
+      // 否则"切到的每个场景都变成配音卡"。
+      return {
+        tabs,
+        activeTabId: activeId,
+        currentSceneTabId: tab.kind === 'scene' ? tab.id : s.currentSceneTabId,
+      };
+    }),
+  closeTab: (id) =>
+    set((s) => {
+      const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId);
+      const diagnostics = { ...s.diagnostics };
+      const closed = s.tabs.find((tab) => tab.id === id);
+      if (closed?.kind === 'scene') delete diagnostics[closed.path];
+      const closingWorkbench = closed?.kind === 'voice-workbench';
+      // 关闭场景卡时顺带清掉它的配音编辑模式, 避免残留到下次打开
+      const voiceModePaths =
+        closed?.kind === 'scene' ? s.voiceModePaths.filter((path) => path !== closed.path) : s.voiceModePaths;
+      /*
+       * 当前场景卡: 关掉的若是当前场景, 退回到仍然存在的场景卡 (优先新选中的那张)。
+       * 关掉工作台时活动项会落到邻居上, 因此这一条同时覆盖了那种情况。
+       */
+      const nextTab = tabs.find((tab) => tab.id === activeId);
+      const currentSceneTabId =
+        s.currentSceneTabId !== null && s.currentSceneTabId !== id
+          ? s.currentSceneTabId
+          : nextTab?.kind === 'scene'
+            ? nextTab.id
+            : (tabs.find((tab) => tab.kind === 'scene')?.id ?? null);
+      return {
+        tabs,
+        activeTabId: activeId,
+        diagnostics,
+        voiceModePaths,
+        currentSceneTabId,
+        // 关闭工作台即退出配音功能
+        ...(closingWorkbench ? { voiceModePaths: [] } : {}),
+      };
+    }),
+  /*
+   * 切换选项卡**不改变**任何场景的配音编辑模式。
+   *
+   * 曾经这里会"切到哪个场景就自动让它进入配音编辑模式", 结果是进入配音模式后
+   * 每切一次卡就多一张配音卡, 而麦克风开关又被自动规则覆盖掉 (点了没反应,
+   * 切走再切回来才发现生效)。进入与退出现在只有一个入口: 当前场景卡上的麦克风。
+   *
+   * 顺带把光标位置清空: 它是**全局**状态, 切卡时上一条记录的行号会被新文档继承,
+   * 于是配音卡一挂载就拿着"上一张卡的光标行"去选中对话 —— 选中错误的行、
+   * 甚至因为该行不是对话而清空整张卡。
+   */
+  activateTab: (id) =>
+    set((s) => {
+      const tab = s.tabs.find((item) => item.id === id);
+      // 只记住"最近选中的场景卡": 切到工作台/说明页时它保持不变, 于是用户从工作台
+      // 回到场景卡时仍然知道"当前场景"是哪一张。
+      const currentSceneTabId = tab?.kind === 'scene' ? tab.id : s.currentSceneTabId;
+      if (s.activeTabId === id && s.currentSceneTabId === currentSceneTabId) return {};
+      return { activeTabId: id, currentSceneTabId, cursor: null };
+    }),
+  moveTab: (id, toIndex) => set((s) => ({ tabs: moveTab(s.tabs, id, toIndex) })),
+  retargetSceneTabs: (oldPath, newPath) =>
+    set((s) => {
+      const oldLower = oldPath.replace(/\\/g, '/').toLowerCase();
+      const tabs = s.tabs.map((tab) => {
+        if (tab.kind !== 'scene') return tab;
+        const current = tab.path.replace(/\\/g, '/').toLowerCase();
+        if (current !== oldLower && !current.startsWith(`${oldLower}/`)) return tab;
+        // 目录重命名时保留原相对部分
+        const suffix = tab.path.replace(/\\/g, '/').slice(oldPath.replace(/\\/g, '/').length);
+        const nextPath = `${newPath.replace(/\\/g, '/')}${suffix}`.replace(/\//g, '\\');
+        const nextTab = makeSceneTab(nextPath, nextPath.split(/[\\/]/).pop() ?? nextPath);
+        return nextTab;
+      });
+      const activeTabId =
+        tabs.find((tab) => tab.id === s.activeTabId)?.id ??
+        tabs.find((tab) => tab.kind === 'scene')?.id ??
+        s.activeTabId;
+      return { tabs, activeTabId };
+    }),
+
+  /*
+   * 打开配音工作台**不改变**任何场景的配音编辑模式。
+   *
+   * 是否进入配音编辑模式由用户在当前场景卡上点麦克风决定; 自动开启会让人
+   * 以为"打开工作台 = 所有场景都变成配音卡"。
+   */
+  openVoiceWorkbench: () =>
+    set((s) => {
+      const { tabs, activeId } = insertTab(s.tabs, makeWorkbenchTab(), s.activeTabId);
+      return { tabs, activeTabId: activeId };
+    }),
+  closeVoiceWorkbench: () =>
+    set((s) => {
+      const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
+      return { tabs, activeTabId: activeId, voiceModePaths: [] };
+    }),
+  openVoiceGuide: () =>
+    set((s) => {
+      const { tabs, activeId } = insertTab(s.tabs, makeVoiceGuideTab(), s.activeTabId);
+      return { tabs, activeTabId: activeId };
+    }),
+
+  // -------- 文档 --------
+
   openDocument: (doc) =>
     set((s) => {
       const exists = s.documents.some((d) => d.path === doc.path);
       const documents = exists
         ? s.documents.map((d) => (d.path === doc.path ? { ...d, ...doc } : d))
         : [...s.documents, doc];
-      return { documents, activePath: doc.path };
+      return { documents };
     }),
   closeDocument: (path) =>
-    set((s) => {
-      const documents = s.documents.filter((d) => d.path !== path);
-      const activePath = s.activePath === path ? (documents[documents.length - 1]?.path ?? null) : s.activePath;
-      const diagnostics = { ...s.diagnostics };
-      delete diagnostics[path];
-      return { documents, activePath, diagnostics };
-    }),
-  setActiveDocument: (path) => set({ activePath: path }),
+    set((s) => ({
+      documents: s.documents.filter((d) => d.path !== path),
+    })),
   updateDocument: (path, patch) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.path === path ? { ...d, ...patch } : d)),
     })),
-  moveDocument: (path, toIndex) =>
+  setNovelStats: (stats) => set({ novelStats: stats }),
+  addNovelTab: (tab) =>
     set((s) => {
-      const fromIndex = s.documents.findIndex((d) => d.path === path);
-      if (fromIndex < 0 || fromIndex === toIndex) return {};
-      const documents = [...s.documents];
-      const [doc] = documents.splice(fromIndex, 1);
-      // 向后拖时, 移除后目标位置左移一位, 保证落在目标选项卡之前
-      const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
-      documents.splice(insertAt, 0, doc);
-      return { documents };
+      const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
+      return { tabs, activeTabId: activeId };
     }),
+
+  setGitStatus: (status) => set({ gitStatus: status }),
   setLspStatus: (status, error) => set({ lspStatus: status, lspError: error ?? null }),
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   setCursor: (cursor) => set({ cursor }),
+  rememberCursor: (path, cursor) =>
+    set((s) => {
+      const previous = s.cursors[path];
+      if (previous && previous.line === cursor.line && previous.column === cursor.column) return {};
+      return { cursors: { ...s.cursors, [path]: cursor } };
+    }),
+
+  // -------- 配音 --------
+
+  setVoiceMode: (path, enabled) =>
+    set((s) => {
+      const has = s.voiceModePaths.includes(path);
+      if (enabled === has) return {};
+      return {
+        voiceModePaths: enabled ? [...s.voiceModePaths, path] : s.voiceModePaths.filter((item) => item !== path),
+      };
+    }),
+  setVoiceStatus: (status, detail) => set({ voiceStatus: status, voiceStatusDetail: detail ?? null }),
+  setVoiceLogs: (logs) => set({ voiceLogs: logs }),
+  appendVoiceLog: (line) =>
+    set((s) => {
+      const voiceLogs = [...s.voiceLogs, line];
+      // 日志缓冲上限, 避免长时间运行后内存膨胀
+      if (voiceLogs.length > 500) voiceLogs.splice(0, voiceLogs.length - 500);
+      return { voiceLogs };
+    }),
+  setVoiceCharacters: (characters) => set({ voiceCharacters: characters }),
+  setSceneVoiceEditors: (cards) => set({ sceneVoiceEditors: new Map(cards) }),
+  setVoiceCache: (cache) => set({ voiceCache: cache }),
+  upsertVoiceCache: (entry) =>
+    set((s) => {
+      const rest = s.voiceCache.filter((item) => item.hash !== entry.hash);
+      return { voiceCache: [entry, ...rest] };
+    }),
+  setVoiceAssignment: (scenePath, assignments) =>
+    set((s) => ({ voiceAssignments: { ...s.voiceAssignments, [scenePath]: assignments } })),
+  setVoiceTick: () => set((s) => ({ voiceTick: s.voiceTick + 1 })),
+  setVoiceQueuePending: (count) => set({ voiceQueuePending: count }),
+
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setSettingsCategory: (category) => set({ settingsCategory: category }),
   setUnsavedDialog: (open) => set({ unsavedDialog: open }),
+  setConfirmDialog: (open) => set({ confirmDialog: open }),
   requestPreviewReload: () => set((s) => ({ previewReloadToken: s.previewReloadToken + 1 })),
 }));
+
+// -------- 派生读取 (供组件使用) --------
+
+/**
+ * 配音工作台是否打开。
+ *
+ * 它就是一个普通选项卡, 因此**不设独立开关**: 由选项卡是否存在于序列中推导,
+ * 从根上避免"开关与选项卡状态不一致"这类问题。
+ */
+export function isVoiceWorkbenchOpen(tabs: WorkbenchTabItem[]): boolean {
+  return tabs.some((tab) => tab.kind === 'voice-workbench');
+}
+
+/** 配音工作台选项卡是否处于激活状态 */
+export function isVoiceWorkbenchActive(state: AppStore): boolean {
+  return state.tabs.find((tab) => tab.id === state.activeTabId)?.kind === 'voice-workbench';
+}
+
+/**
+ * 某个场景卡的麦克风开关是否应当显示。
+ *
+ * 这是配音编辑模式**唯一**的可见性规则, 由 `EditorPage` 使用 (参数都是已订阅的
+ * 响应式值, 因此 store 变化会正常触发重渲染):
+ *
+ * * 配音工作台未打开 -> 一律不显示 (未启用配音功能时界面上不出现任何配音痕迹);
+ * * 已处于配音编辑模式 -> 始终显示 (否则就没法退出);
+ * * 未处于配音编辑模式 -> 只在**当前选中的**那张卡上显示。
+ *
+ * 第三条用的是 `activeTabId` 而不是"最近的场景卡": 切到工作台/说明页之后,
+ * 划线麦克风就不该继续挂在原来那张卡上。
+ *
+ * 最后一条是刻意的: 在其它未进入配音编辑模式的场景卡上常驻一个划线麦克风,
+ * 看起来就像那些场景都被关掉了配音。
+ */
+export function shouldShowVoiceToggle(input: {
+  /** 配音工作台是否打开 */
+  workbenchOpen: boolean;
+  /** 当前活动的选项卡 id */
+  activeTabId: string | null;
+  /** 要判断的选项卡 */
+  tab: WorkbenchTabItem;
+  /** 处于配音编辑模式的场景路径 */
+  voiceModePaths: string[];
+}): boolean {
+  const { workbenchOpen, activeTabId, tab, voiceModePaths } = input;
+  if (!workbenchOpen || tab.kind !== 'scene') return false;
+  return voiceModePaths.includes(tab.path) || tab.id === activeTabId;
+}
+
+/** 当前活动选项卡 */
+export function activeTabOf(state: AppStore): WorkbenchTabItem | null {
+  return state.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+}
+
+/** 当前活动的场景/文件选项卡 */
+export function activeSceneTabOf(state: AppStore): SceneTab | null {
+  const tab = activeTabOf(state);
+  return tab?.kind === 'scene' ? tab : null;
+}
+
+/** 当前活动的场景文档 */
+export function activeSceneDocumentOf(state: AppStore): OpenDocument | null {
+  const tab = activeSceneTabOf(state);
+  if (!tab) return null;
+  return state.documents.find((doc) => doc.path === tab.path) ?? null;
+}
+
+/** 项目内是否存在任何选项卡 */
+export function hasTabs(tabs: WorkbenchTabItem[]): boolean {
+  return tabs.length > 0;
+}
+
+export { makeSceneTab, makeWorkbenchTab, removeTabsByKind, WORKBENCH_TAB_ID, VOICE_GUIDE_TAB_ID };
+export type { WorkbenchTabItem };

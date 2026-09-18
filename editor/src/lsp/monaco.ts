@@ -6,6 +6,7 @@
 
 import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import { invoke } from '@tauri-apps/api/core';
 
 import { toUri } from '../lib/uri';
 import { useAppStore } from '../state/store';
@@ -47,7 +48,9 @@ function pathOfModel(model: monaco.editor.ITextModel): string | null {
   return modelPathMap.get(model) ?? null;
 }
 
-const SEMANTIC_TOKEN_TYPES = [
+// 语义 token 类型图例: 以服务端 (webgal-language-service) 为准, 启动时拉取,
+// 拉取失败/未就绪时回退到该静态列表 (与后端 `token_types()` 保持一致)。
+const FALLBACK_SEMANTIC_TOKEN_TYPES = [
   'type',
   'variable',
   'parameter',
@@ -61,6 +64,17 @@ const SEMANTIC_TOKEN_TYPES = [
   'regexp',
   'operator',
 ];
+
+let semanticTokenTypes: string[] = FALLBACK_SEMANTIC_TOKEN_TYPES;
+
+async function loadSemanticTokenTypes(): Promise<void> {
+  try {
+    const types = await invoke<string[]>('semantic_token_types');
+    if (Array.isArray(types) && types.length > 0) semanticTokenTypes = types;
+  } catch {
+    // 后端未就绪时保留回退列表
+  }
+}
 
 const LSP_KIND_TO_MONACO: Record<number, monaco.languages.CompletionItemKind> = {
   1: monaco.languages.CompletionItemKind.Text,
@@ -216,6 +230,9 @@ export function setupMonaco(): void {
   if (setupDone) return;
   setupDone = true;
 
+  // 异步拉取服务端语义 token 类型图例 (替换硬编码列表)。
+  void loadSemanticTokenTypes();
+
   // 补全详情面板默认展开: Monaco 的 `expandSuggestionDocs` 存储标志默认 false,
   // 导致补全项的 documentation 面板收起。直接写入 standalone 存储服务设为 true,
   // 让详情面板从一开始就展开 (无需用户按 Ctrl+Space)。
@@ -256,10 +273,19 @@ export function setupMonaco(): void {
   });
 
   monaco.languages.registerDocumentSemanticTokensProvider(LANGUAGE_ID, {
-    getLegend: () => ({ tokenTypes: SEMANTIC_TOKEN_TYPES, tokenModifiers: [] }),
+    getLegend: () => ({ tokenTypes: semanticTokenTypes, tokenModifiers: [] }),
     provideDocumentSemanticTokens: async (model) => {
       const path = pathOfModel(model);
-      if (!path) return null;
+      if (!path) {
+        // 内存文档 (如文本预处理生成的脚本): 调用后端单场景高亮。
+        try {
+          const data = await invoke<number[]>('highlight_scene', { text: model.getValue() });
+          if (!data || data.length === 0) return null;
+          return { data: new Uint32Array(data) };
+        } catch {
+          return null;
+        }
+      }
       try {
         const data = await lspClient.semanticTokens(path);
         if (!data || data.length === 0) return null;

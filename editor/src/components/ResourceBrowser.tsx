@@ -12,6 +12,7 @@ import { fs } from '../lib/fs';
 import { sniffKind } from '../lib/sniff';
 import { previewClient } from '../preview/client';
 import { useAppStore } from '../state/store';
+import { FileBadges } from './FileBadges';
 import { FileTree, type FileKind, type FileNode } from './FileTree';
 
 export function ResourceBrowser() {
@@ -94,6 +95,7 @@ export function ResourceBrowser() {
         assetUrl={assetUrl}
         refreshKey={refreshKey}
         onOpen={(file) => setSelected(file)}
+        badge={(node) => <FileBadges path={node.path} />}
         menu={(currentDir) => [
           {
             key: 'reveal',

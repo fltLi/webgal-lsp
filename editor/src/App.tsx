@@ -5,6 +5,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { FluentProvider, webDarkTheme, webLightTheme } from '@fluentui/react-components';
 import { useEffect } from 'react';
 
+import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { EditorPage } from './components/EditorPage';
 import { SettingsDialog } from './components/SettingsDialog';
 import { UnsavedDialog } from './components/UnsavedDialog';
@@ -13,6 +14,7 @@ import { lspClient } from './lsp/client';
 import { setMonacoTheme } from './lsp/monaco';
 import { useAppStore } from './state/store';
 import { confirmClose } from './unsaved';
+import { voiceController } from './voice/controller';
 
 export default function App() {
   const settings = useAppStore((s) => s.settings);
@@ -38,6 +40,11 @@ export default function App() {
   // 启动 LSP 客户端 (应用级单例)
   useEffect(() => {
     void lspClient.start();
+  }, []);
+
+  // 启动时同步配音工作流状态: GSOV 进程状态、角色库与音频缓存
+  useEffect(() => {
+    void voiceController.initialize();
   }, []);
 
   // 主窗口就绪后: 显示主窗口并关闭启动画面, 消除加载白屏
@@ -69,9 +76,10 @@ export default function App() {
   return (
     <FluentProvider theme={theme === 'dark' ? webDarkTheme : webLightTheme} className="app-root">
       {projectPath ? <EditorPage /> : <WelcomePage />}
-      {/* 设置/未保存对话框为应用级, 欢迎页与编辑页共用 */}
+      {/* 设置/未保存/通用确认对话框为应用级, 欢迎页与编辑页共用 */}
       <SettingsDialog />
       <UnsavedDialog />
+      <AppConfirmDialog />
     </FluentProvider>
   );
 }

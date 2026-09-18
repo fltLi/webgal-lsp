@@ -6,6 +6,7 @@ import { Button } from '@fluentui/react-components';
 
 import { useAppStore } from '../state/store';
 import { pendingUnsavedMessage, resolveUnsaved } from '../unsaved';
+import { AppDialog } from './AppDialog';
 
 export function UnsavedDialog() {
   const open = useAppStore((s) => s.unsavedDialog);
@@ -13,22 +14,27 @@ export function UnsavedDialog() {
   const message = pendingUnsavedMessage() ?? '场景文件有未保存的修改，关闭前是否保存？';
 
   return (
-    <div className="modal-backdrop" onClick={() => resolveUnsaved('cancel')}>
-      <div className="modal-surface unsaved-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">有未保存的更改</h2>
-        <p className="unsaved-hint">{message}</p>
-        <div className="modal-actions">
-          <Button appearance="primary" onClick={() => resolveUnsaved('save')}>
-            保存
+    <AppDialog
+      title="有未保存的更改"
+      size="small"
+      height={220}
+      closeOnBackdrop
+      onClose={() => resolveUnsaved('cancel')}
+      footer={
+        <>
+          <Button appearance="secondary" onClick={() => resolveUnsaved('cancel')}>
+            取消
           </Button>
           <Button appearance="secondary" onClick={() => resolveUnsaved('discard')}>
             不保存
           </Button>
-          <Button appearance="secondary" onClick={() => resolveUnsaved('cancel')}>
-            取消
+          <Button appearance="primary" onClick={() => resolveUnsaved('save')}>
+            保存
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="unsaved-hint">{message}</p>
+    </AppDialog>
   );
 }

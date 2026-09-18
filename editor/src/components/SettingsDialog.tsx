@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import { useAppStore, type SettingsCategory } from '../state/store';
 import type { Settings } from '../lib/settings';
+import { AppDialog } from './AppDialog';
 import { TemplateManager } from './TemplateManager';
 
 const CATEGORIES: { id: SettingsCategory; label: string }[] = [
@@ -57,122 +58,124 @@ export function SettingsDialog() {
   };
 
   return (
-    <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
-      <div className="modal-surface settings-surface" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title">设置</h2>
+    <AppDialog
+      title="设置"
+      size="medium"
+      height={560}
+      flush
+      closeOnBackdrop
+      onClose={() => setSettingsOpen(false)}
+      footer={
+        <Button appearance="primary" onClick={() => setSettingsOpen(false)}>
+          关闭
+        </Button>
+      }
+    >
+      <div className="settings-layout">
+        <nav className="settings-nav">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              className={`settings-nav-item${category === c.id ? ' active' : ''}`}
+              onClick={() => setCategory(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </nav>
 
-        <div className="settings-layout">
-          <nav className="settings-nav">
-            {CATEGORIES.map((c) => (
-              <button
-                key={c.id}
-                className={`settings-nav-item${category === c.id ? ' active' : ''}`}
-                onClick={() => setCategory(c.id)}
-              >
-                {c.label}
-              </button>
-            ))}
-          </nav>
+        <div className="settings-content">
+          {category === 'general' && (
+            <div className="settings-group">
+              <h3 className="settings-group-title">通用</h3>
 
-          <div className="settings-content">
-            {category === 'general' && (
-              <div className="settings-group">
-                <h3 className="settings-group-title">通用</h3>
-
-                <div className="settings-field">
-                  <span className="settings-label">WebGAL 引擎目录</span>
-                  <div className="engine-path-row">
-                    <Input value={settings.enginePath ?? ''} readOnly placeholder="未设置 (项目需自包含 index.html)" />
-                    <Button icon={<FolderOpenRegular />} onClick={() => void pickEngine()}>
-                      选择…
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="settings-field settings-field-start">
-                  <Button appearance="secondary" onClick={() => updateSettings({ recentProjects: [] })}>
-                    清除最近项目
+              <div className="settings-field">
+                <span className="settings-label">WebGAL 引擎目录</span>
+                <div className="engine-path-row">
+                  <Input value={settings.enginePath ?? ''} readOnly placeholder="未设置 (项目需自包含 index.html)" />
+                  <Button icon={<FolderOpenRegular />} onClick={() => void pickEngine()}>
+                    选择…
                   </Button>
                 </div>
               </div>
-            )}
-            {category === 'editor' && (
-              <div className="settings-group">
-                <h3 className="settings-group-title">编辑器</h3>
 
-                <div className="settings-field">
-                  <Switch
-                    checked={settings.autoSave}
-                    onChange={(_, data) => updateSettings({ autoSave: data.checked })}
-                    label="自动保存"
-                  />
-                </div>
-
-                <div className="settings-field">
-                  <span className="settings-label">字体</span>
-                  <Input
-                    value={settings.editorFontFamily}
-                    placeholder="FiraCode, SourceHanSans, Consolas, monospace"
-                    onChange={(_, data) => updateSettings({ editorFontFamily: data.value })}
-                  />
-                </div>
-
-                <div className="settings-field settings-field-inline">
-                  <span className="settings-label">字号</span>
-                  <Input
-                    type="number"
-                    min={8}
-                    max={48}
-                    value={String(settings.editorFontSize)}
-                    onChange={(_, data) => updateNumber('editorFontSize', data.value, 8, 48)}
-                  />
-                </div>
-
-                <div className="settings-field">
-                  <Switch
-                    checked={settings.editorWordWrap}
-                    onChange={(_, data) => updateSettings({ editorWordWrap: data.checked })}
-                    label="自动换行"
-                  />
-                </div>
-
-                <div className="settings-field">
-                  <Switch
-                    checked={settings.editorMinimap}
-                    onChange={(_, data) => updateSettings({ editorMinimap: data.checked })}
-                    label="迷你地图"
-                  />
-                </div>
+              <div className="settings-field settings-field-start">
+                <Button appearance="secondary" onClick={() => updateSettings({ recentProjects: [] })}>
+                  清除最近项目
+                </Button>
               </div>
-            )}
-            {category === 'template' && (
-              <div className="settings-group">
-                <TemplateManager />
-              </div>
-            )}
-            {category === 'about' && (
-              <div className="settings-group">
-                <h3 className="settings-group-title">关于</h3>
-                <div className="settings-link-list">
-                  {ABOUT_LINKS.map((link) => (
-                    <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
-                      {link.icon}
-                      {link.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="prompt-hint">WebGAL Ink — 轻量级 WebGAL 脚本编辑器</p>
-              </div>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+          {category === 'editor' && (
+            <div className="settings-group">
+              <h3 className="settings-group-title">编辑器</h3>
 
-        <div className="modal-actions">
-          <Button appearance="primary" onClick={() => setSettingsOpen(false)}>
-            关闭
-          </Button>
+              <div className="settings-field">
+                <Switch
+                  checked={settings.autoSave}
+                  onChange={(_, data) => updateSettings({ autoSave: data.checked })}
+                  label="自动保存"
+                />
+              </div>
+
+              <div className="settings-field">
+                <span className="settings-label">字体</span>
+                <Input
+                  value={settings.editorFontFamily}
+                  placeholder="FiraCode, SourceHanSans, Consolas, monospace"
+                  onChange={(_, data) => updateSettings({ editorFontFamily: data.value })}
+                />
+              </div>
+
+              <div className="settings-field settings-field-inline">
+                <span className="settings-label">字号</span>
+                <Input
+                  type="number"
+                  min={8}
+                  max={48}
+                  value={String(settings.editorFontSize)}
+                  onChange={(_, data) => updateNumber('editorFontSize', data.value, 8, 48)}
+                />
+              </div>
+
+              <div className="settings-field">
+                <Switch
+                  checked={settings.editorWordWrap}
+                  onChange={(_, data) => updateSettings({ editorWordWrap: data.checked })}
+                  label="自动换行"
+                />
+              </div>
+
+              <div className="settings-field">
+                <Switch
+                  checked={settings.editorMinimap}
+                  onChange={(_, data) => updateSettings({ editorMinimap: data.checked })}
+                  label="迷你地图"
+                />
+              </div>
+            </div>
+          )}
+          {category === 'template' && (
+            <div className="settings-group">
+              <TemplateManager />
+            </div>
+          )}
+          {category === 'about' && (
+            <div className="settings-group">
+              <h3 className="settings-group-title">关于</h3>
+              <div className="settings-link-list">
+                {ABOUT_LINKS.map((link) => (
+                  <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
+                    {link.icon}
+                    {link.label}
+                  </button>
+                ))}
+              </div>
+              <p className="prompt-hint">WebGAL Ink — 轻量级 WebGAL 脚本编辑器</p>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </AppDialog>
   );
 }

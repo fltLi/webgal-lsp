@@ -9,6 +9,7 @@ import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
 import { disposeModel } from './lsp/monaco';
 import { useAppStore } from './state/store';
+import { sceneTabId } from './tabs/model';
 
 /** 校验文件/文件夹名称, 返回错误信息或 null。 */
 export function validateName(name: string): string | null {
@@ -59,7 +60,8 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
       uri: toUri(newDocPath),
       isScene: newDocPath.replace(/\\/g, '/').includes('/game/scene/'),
     });
-    if (store.activePath === doc.path) store.setActiveDocument(newDocPath);
+    // 选项卡按路径索引, 需同步迁移 (保持原位置与顺序)
+    store.retargetSceneTabs(doc.path, newDocPath);
     // 若该文档是当前活动文档, CodeEditor 会以新路径重建并重新向 LSP 注册;
     // 此处对非活动文档不做额外处理 (LSP 仅跟踪活动文档)。
   }
@@ -77,5 +79,6 @@ export async function deletePath(path: string): Promise<void> {
     disposeModel(doc.path);
     lspClient.closeDocument(doc.path);
     store.closeDocument(doc.path);
+    store.closeTab(sceneTabId(doc.path));
   }
 }
