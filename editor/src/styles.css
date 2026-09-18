@@ -883,7 +883,12 @@ body.resizing {
   word-break: break-all;
 }
 
-/* -------- 文件树右键菜单 -------- */
+/* -------- 右键/下拉菜单 (见 components/ContextMenu.tsx, 全项目唯一) -------- */
+/*
+ * 遮罩必须低于菜单本身。曾经有两份 `.context-menu` 规则, 后一份 (配音记录用) 把
+ * `z-index` 从 2600 改成了 2000, 于是遮罩 (2500) 盖在菜单上面 —— 菜单看得见却点不动,
+ * 点到的全是遮罩。两份规则合并成一份之后, 这种"改一处、别处全废"的覆盖不会再发生。
+ */
 .context-menu-backdrop {
   position: fixed;
   inset: 0;
@@ -925,11 +930,16 @@ body.resizing {
   color: var(--app-muted);
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover:not(:disabled) {
   background: var(--app-hover);
 }
 
-/* 危险操作 (删除) 菜单项为红色 */
+.context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 危险操作 (删除/放弃) 菜单项为红色 */
 .context-menu-item.danger {
   color: #d13438;
 }
@@ -938,7 +948,7 @@ body.resizing {
   color: #d13438;
 }
 
-.context-menu-item.danger:hover {
+.context-menu-item.danger:hover:not(:disabled) {
   background: rgba(209, 52, 56, 0.12);
 }
 
@@ -3131,22 +3141,6 @@ input[type='number'].voice-control {
   background: var(--app-hover);
   color: var(--app-fg);
 }
-
-/*
- * 危险操作只有**右键菜单**里那一组染红 (删除 / 删除全部测试 / 删除全部)。
- * 界面上的删除图标保持中性 —— 一排红色垃圾桶比"图标本身"更吵。
- */
-.context-menu button.danger-text {
-  color: #d13438;
-}
-
-.context-menu button.danger-text:hover:not(:disabled) {
-  background: rgba(209, 52, 56, 0.12);
-}
-
-[data-theme='dark'] .context-menu button.danger-text {
-  color: #f1707b;
-}
 .history-time {
   color: var(--app-muted);
 }
@@ -3318,42 +3312,6 @@ input[type='number'].voice-control {
   margin: 8px 0 0;
   font-size: 12px;
   color: #b8860b;
-}
-
-/* -------- 右键菜单 -------- */
-.context-menu {
-  position: fixed;
-  z-index: 2000;
-  background: var(--app-panel);
-  border: 1px solid var(--app-border);
-  border-radius: 4px;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  min-width: 168px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-
-.context-menu button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: inherit;
-  text-align: left;
-  padding: 5px 8px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.context-menu button:hover:not(:disabled) {
-  background: var(--app-hover);
-}
-.context-menu button:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 /* -------- 对话框 -------- */

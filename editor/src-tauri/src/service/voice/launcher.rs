@@ -315,6 +315,11 @@ pub fn detect(root: &Path) -> DetectedRuntime {
 pub struct ModelCandidate {
     /// 推断的角色名 (由权重文件名归一化而来)
     pub name: String,
+    /// 配对用的归一化键 (去掉训练后缀与扩展名, 全小写)
+    ///
+    /// 界面按角色名自动配模型时用它来比对: 展示名 (`name`) 带 `-e15` 这类训练后缀,
+    /// 直接比会匹配不上; 而把这个规则复制到前端就等于把命名约定写两遍。
+    pub key: String,
     /// GPT (T2S) 权重路径, 相对整合包根, 正斜杠分隔
     pub gpt_weights: String,
     /// SoVITS 权重路径, 相对整合包根, 正斜杠分隔
@@ -395,6 +400,7 @@ pub fn scan_models(root: &Path) -> Vec<ModelCandidate> {
         };
         candidates.push(ModelCandidate {
             name: display_model_name(gpt_weights),
+            key: gpt_key.clone(),
             gpt_weights: gpt_weights.clone(),
             sovits_weights: sovits_weights.clone(),
         });
@@ -915,6 +921,9 @@ mod tests {
             "SoVITS_weights_v4/爱音_e4_s436_l64.pth"
         );
         assert_eq!(candidates[0].name, "爱音-e15");
+        // 配对键去掉了训练后缀: 界面按角色名自动配模型时用它
+        assert_eq!(candidates[0].key, "爱音");
+        assert_eq!(candidates[1].key, "素世(夹)");
         assert_eq!(
             candidates[1].gpt_weights,
             "GPT_weights_v4/素世(夹)-e15.ckpt"

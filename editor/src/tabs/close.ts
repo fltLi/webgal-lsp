@@ -11,6 +11,7 @@ import { disposeNovelTab } from '../novel/registry';
 import { useAppStore } from '../state/store';
 import { WORKBENCH_TAB_ID, type WorkbenchTabItem } from './model';
 import { confirmClose } from '../unsaved';
+import { closeVoiceWorkbench } from '../voice/mode';
 import { voiceController } from '../voice/controller';
 
 /** 关闭选项卡; 需要确认时先弹窗, 用户取消则什么都不做 */
@@ -19,12 +20,15 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
 
   if (tab.kind === 'scene') {
     if (voiceController.hasUnfinished(tab.path)) {
-      const ok = window.confirm('该场景还有未完成的配音任务，关闭后这些任务将丢失。仍要关闭吗？');
+      const ok = window.confirm(
+        '该场景还有未完成的配音任务，关闭选项卡会撤下这些任务（已生成的历史记录不会丢失）。仍要关闭吗？'
+      );
       if (!ok) return;
     }
     // 未保存更改交给统一的确认流程 (只检查这一个文档)
     confirmClose(() => {
-      voiceController.closeCard(tab.path);
+      // 撤下这个场景未完成的任务再销毁卡片: 卡片没了以后任务完成也没地方回填
+      voiceController.abandonCard(tab.path);
       disposeModel(tab.path);
       useAppStore.getState().closeDocument(tab.path);
       useAppStore.getState().closeTab(tab.id);
@@ -39,13 +43,9 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
   }
 
   if (tab.id === WORKBENCH_TAB_ID) {
-    // 工作台是配音功能的可见性总开关: 关闭前提示未完成任务
-    const pending = store.voiceQueuePending;
-    if (pending > 0) {
-      const ok = window.confirm(`还有 ${pending} 个配音任务未完成，关闭配音工作台会退出配音模式。仍要关闭吗？`);
-      if (!ok) return;
-    }
-    store.closeVoiceWorkbench();
+    // 工作台是配音功能的开关: 关闭时确认未完成任务, 并顺手停掉 GSOV 服务
+    // (确认与停止都在 `closeVoiceWorkbench` 里, 顶部按钮走的是同一个入口)
+    closeVoiceWorkbench();
     return;
   }
 

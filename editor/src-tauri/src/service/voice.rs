@@ -31,6 +31,7 @@ use crate::service::voice::launcher::{CondaEnv, DetectedRuntime, LaunchConfig, L
 
 pub mod audio;
 pub mod gsov;
+pub mod history;
 pub mod launcher;
 pub mod library;
 pub mod realign;
@@ -625,6 +626,54 @@ pub fn cache_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| format!("无法定位应用数据目录: {error}"))?;
     Ok(dir.join("tts"))
+}
+
+/// 配音历史根目录: `<appdata>/voice-history`
+pub fn history_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("无法定位应用数据目录: {error}"))?;
+    Ok(dir.join("voice-history"))
+}
+
+fn history_of(app: &tauri::AppHandle) -> Result<history::HistoryStore, String> {
+    Ok(history::HistoryStore::new(history_root(app)?))
+}
+
+// -------- 命令: 配音历史 --------
+
+/// 读取某场景的配音历史 (JSON 字符串; 不存在返回 `null`)
+///
+/// 历史必须**跨会话存活**: 它记录的是"这个角色的这一句已经试过哪些参数、哪一条已经
+/// 应用", 关掉配音卡、关掉编辑器都不该让它消失。存盘放在后端, 界面只负责把结构
+/// 序列化/反序列化 (见 `voice/history.rs`)。
+#[tauri::command]
+pub async fn voice_read_history(
+    app: tauri::AppHandle,
+    scene_path: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let store = history_of(&app)?;
+    Ok(store.read(&scene_path)?.map(|file| file.entries))
+}
+
+/// 写入某场景的配音历史
+#[tauri::command]
+pub async fn voice_write_history(
+    app: tauri::AppHandle,
+    scene_path: String,
+    entries: serde_json::Value,
+) -> Result<(), String> {
+    history_of(&app)?.write(&scene_path, entries)
+}
+
+/// 删除某场景的配音历史 (历史被清空时调用)
+#[tauri::command]
+pub async fn voice_clear_history(
+    app: tauri::AppHandle,
+    scene_path: String,
+) -> Result<(), String> {
+    history_of(&app)?.remove(&scene_path)
 }
 
 fn library_of(app: &tauri::AppHandle) -> Result<library::Library, String> {

@@ -78,11 +78,19 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
     }
   };
 
-  /** 导入一份角色 zip */
+  /** 导入一份角色 zip (导入后按名称自动配对 GSOV 模型) */
   const importCharacter = async () => {
     setMessage(null);
     try {
-      await voiceController.importCharacter();
+      const result = await voiceController.importCharacter();
+      if (result) {
+        setMessage(
+          `已导入角色「${result.character.name}」` +
+            (result.paired > 0
+              ? '，已按名称自动配对 GSOV 模型'
+              : '；没有自动配上 GSOV 模型（名称与整合包内的权重对不上，可手选）')
+        );
+      }
     } catch (caught) {
       report(caught);
     }
@@ -208,10 +216,8 @@ export function RolePickerDialog({ open, onClose, onError }: Props) {
           models={[]}
           hideModel
           onClose={() => setEditTarget(null)}
-          onChanged={() => {
-            const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === editTarget.id);
-            setEditTarget(latest ?? null);
-          }}
+          // 对话框把落盘后的那一份交回来 (改名后 id 会变, 不能再按旧 id 去查)
+          onChanged={setEditTarget}
           onError={(error) => {
             if (error) report(error);
           }}

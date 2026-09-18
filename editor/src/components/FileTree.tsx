@@ -6,6 +6,7 @@
 import { ArrowUpRegular, MoreVerticalRegular } from '@fluentui/react-icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { fs } from '../lib/fs';
 
 export type FileKind = 'image' | 'audio' | 'video' | 'text' | 'scene' | 'other';
@@ -80,14 +81,6 @@ async function recursiveFiles(dir: string, baseRel: string): Promise<FileNode[]>
   return result;
 }
 
-export interface ToolbarMenuItem {
-  key: string;
-  label: string;
-  icon?: ReactNode;
-  danger?: boolean;
-  onClick: () => void;
-}
-
 interface FileTreeProps {
   rootPath: string;
   onOpen: (file: FileNode) => void;
@@ -97,7 +90,7 @@ interface FileTreeProps {
   /** 内容变更 (新建/重命名/删除) 后递增, 强制重新加载当前目录 */
   refreshKey?: number;
   /** 工具栏右侧下拉菜单项 (返回上级按钮与展平按钮独立保留在工具栏上) */
-  menu?: (currentDir: string) => ToolbarMenuItem[];
+  menu?: (currentDir: string) => ContextMenuItem[];
   /** 列表项右键菜单回调 (文件与文件夹均触发) */
   onItemContextMenu?: (node: FileNode, e: React.MouseEvent) => void;
   /** 文件行右侧附加徽标 (如 git 更改类型 / 诊断数) */
@@ -308,36 +301,15 @@ export function FileTree({
         </button>
       ) : null}
       {menuOpen && menu ? (
-        <>
-          <div
-            className="context-menu-backdrop"
-            onClick={() => {
-              setMenuOpen(false);
-              setMenuPos(null);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenuOpen(false);
-              setMenuPos(null);
-            }}
-          />
-          <div className="context-menu" style={{ left: menuPos?.x ?? 0, top: menuPos?.y ?? 0 }}>
-            {menu(currentAbs).map((item) => (
-              <button
-                key={item.key}
-                className={`context-menu-item${item.danger ? ' danger' : ''}`}
-                onClick={() => {
-                  item.onClick();
-                  setMenuOpen(false);
-                  setMenuPos(null);
-                }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </>
+        <ContextMenu
+          x={menuPos?.x ?? 0}
+          y={menuPos?.y ?? 0}
+          items={menu(currentAbs)}
+          onClose={() => {
+            setMenuOpen(false);
+            setMenuPos(null);
+          }}
+        />
       ) : null}
     </div>
   );

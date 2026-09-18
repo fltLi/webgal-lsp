@@ -81,7 +81,8 @@ export function ListImportDialog({ onClose, onImported }: Props) {
     onImported(
       `已导入 ${report.imported} 条参考音频，涉及 ${report.characters.length} 个角色` +
         (report.autoTrimmed > 0 ? `，其中 ${report.autoTrimmed} 条过长已自动裁剪` : '') +
-        (report.skipped > 0 ? `，跳过 ${report.skipped} 条（音频缺失或无法读取）` : '')
+        (report.skipped > 0 ? `，跳过 ${report.skipped} 条（音频缺失或无法读取）` : '') +
+        (report.paired > 0 ? `，已按名称自动配对 ${report.paired} 个角色的 GSOV 模型` : '')
     );
     onClose();
   };

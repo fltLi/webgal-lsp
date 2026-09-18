@@ -30,6 +30,7 @@ import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
 import { useAppStore } from '../state/store';
 import { AppDialog } from './AppDialog';
+import { ContextMenu } from './ContextMenu';
 import { middleEllipsis } from './FileTree';
 import { GitHistoryDialog } from './GitHistoryDialog';
 
@@ -169,12 +170,8 @@ export function RepositoryTab() {
         onClick={() => openGitDiff(file.path, section)}
         onContextMenu={(e) => {
           e.preventDefault();
-          setMenu({
-            file,
-            section,
-            x: Math.min(e.clientX, window.innerWidth - 200),
-            y: Math.min(e.clientY, window.innerHeight - 180),
-          });
+          // 贴边收拢交给 `ContextMenu` (它按实测尺寸算)
+          setMenu({ file, section, x: e.clientX, y: e.clientY });
         }}
         title={file.path}
       >
@@ -348,31 +345,12 @@ export function RepositoryTab() {
       </div>
 
       {menu ? (
-        <>
-          <div
-            className="context-menu-backdrop"
-            onClick={() => setMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu(null);
-            }}
-          />
-          <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
-            {menuItems.map((item) => (
-              <button
-                key={item.label}
-                className={`context-menu-item${item.danger ? ' danger' : ''}`}
-                onClick={() => {
-                  setMenu(null);
-                  item.onClick();
-                }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems.map((item) => ({ ...item, key: item.label }))}
+          onClose={() => setMenu(null)}
+        />
       ) : null}
 
       {identityOpen ? (

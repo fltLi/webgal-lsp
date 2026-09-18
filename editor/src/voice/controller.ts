@@ -24,6 +24,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { CondaEnv } from '../commands/voice';
 import {
   voiceCreateCharacter,
+  voiceClearHistory,
   voiceDefaultLaunchConfig,
   voiceDropCache,
   voiceImportCharacter,
@@ -36,6 +37,7 @@ import {
   voiceParseScene,
   voiceProbe,
   voiceProbeAudio,
+  voiceReadHistory,
   voiceRealign,
   voiceRemoveCharacter,
   voiceRewriteLine,
@@ -47,12 +49,14 @@ import {
   voiceTakeLogs,
   voiceTrimSuggestion,
   voiceUpdateCharacter,
+  voiceWriteHistory,
   type CharacterPatch,
 } from '../commands/voice';
 import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { estimator, formatEta } from './estimate';
 import { matchScene, type CharacterMatch } from './match';
+import { pickModel } from './modelPair';
 import { charactersRoot, join } from './paths';
 import { executionOrder, nextTask as nextQueuedTask, summarize as summarizeQueue } from './queue';
 import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './settings';
@@ -136,13 +140,21 @@ class VoiceController {
   async openCard(id: string, scenePath: string, content: string, diskHash: string): Promise<SceneVoiceState> {
     const dialogues = await this.parse(content);
     const previous = this.cards.get(id);
+    /*
+     * 历史**跨会话存活** (见 `voice/history.rs`)。
+     *
+     * 以前历史只活在内存里, 而 `closeCard` 会把整张卡片从表里删掉 —— 于是"关掉配音卡
+     * (或关掉选项卡) 再打开", 历史就没了: 用户明明生成/应用过, 回来却是空的。这也是
+     * 重新对齐 (`realignCard`) 一直没有意义的原因 (没有东西可对齐)。
+     */
+    const history = previous?.history ?? (await this.loadHistory(scenePath));
 
     const card: SceneVoiceState = {
       id,
       scenePath,
       dialogues,
       contentVersion: 1,
-      history: previous?.history ?? [],
+      history,
       selectedHistoryId: previous?.selectedHistoryId ?? null,
       cursorLine: previous?.cursorLine ?? null,
       diskHash,
@@ -151,13 +163,31 @@ class VoiceController {
 
     this.cards.set(id, card);
     this.rematch(card);
+    this.refreshApplied(card);
     this.syncCard(card);
+    // 从磁盘读回的历史带着上次的行号, 而它会随场景编辑漂移 -> 按内容重新对齐一次
+    if (!previous) await this.realignCard(id);
     return card;
   }
 
   closeCard(id: string): void {
     this.cards.delete(id);
     this.syncCardStore();
+  }
+
+  /**
+   * 放弃一张卡片: 撤下它未完成的任务, 再关掉卡片。
+   *
+   * 用于"用户确认关闭选项卡"之后的收尾 —— 卡片没了以后任务完成也没地方回填, 留着只会
+   * 让服务端白白跑完一次推理。历史已经落盘, 不受影响。
+   */
+  abandonCard(id: string): void {
+    for (const task of this.tasks) {
+      if (task.cardId === id && (task.status === 'pending' || task.status === 'running')) {
+        this.cancel(task.id);
+      }
+    }
+    this.closeCard(id);
   }
 
   /** 关闭项目时丢弃全部场景卡与队列 (角色库属于全局, 不受影响) */
@@ -178,6 +208,7 @@ class VoiceController {
     card.dialogues = await this.parse(content);
     card.contentVersion = contentVersion;
     this.rematch(card);
+    this.refreshApplied(card);
     this.syncCard(card);
   }
 
@@ -352,6 +383,7 @@ class VoiceController {
 
     this.tasks.push(task);
     this.syncCard(card);
+    this.persistHistory(card);
     this.emit();
 
     // 缺少必要输入时直接失败, 给出可读的提示
@@ -388,6 +420,7 @@ class VoiceController {
       card.history = card.history.filter((entry) => entry.id !== taskId);
       if (card.selectedHistoryId === taskId) card.selectedHistoryId = null;
       this.syncCard(card);
+      this.persistHistory(card);
     }
     this.emit();
   }
@@ -400,7 +433,10 @@ class VoiceController {
     const card = this.cards.get(task.cardId);
     const entry = card?.history.find((item) => item.id === taskId);
     if (entry) entry.priority = priority;
-    if (card) this.syncCard(card);
+    if (card) {
+      this.syncCard(card);
+      this.persistHistory(card);
+    }
     this.emit();
   }
 
@@ -522,6 +558,7 @@ class VoiceController {
     entry.error = task.error;
     entry.finishedAt = task.finishedAt;
     this.syncCard(card);
+    this.persistHistory(card);
   }
 
   // -------- 应用 / 移除 --------
@@ -596,6 +633,7 @@ class VoiceController {
 
     entry.applied = true;
     entry.audioPath = `${targetDir}\\${fileName}`;
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -610,6 +648,7 @@ class VoiceController {
     for (const item of card.history) {
       if (item.line === line.line) item.applied = false;
     }
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -620,6 +659,7 @@ class VoiceController {
     card.history = card.history.filter((entry) => entry.id !== entryId);
     if (card.selectedHistoryId === entryId) card.selectedHistoryId = null;
     this.syncCard(card);
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -638,6 +678,7 @@ class VoiceController {
     card.history = card.history.filter((entry) => !removedIds.has(entry.id));
     if (card.selectedHistoryId && removedIds.has(card.selectedHistoryId)) card.selectedHistoryId = null;
     this.syncCard(card);
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -657,6 +698,7 @@ class VoiceController {
       card.selectedHistoryId = null;
     }
     this.syncCard(card);
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -676,28 +718,38 @@ class VoiceController {
   async realignCard(id: string): Promise<void> {
     const card = this.cards.get(id);
     if (!card || card.history.length === 0) return;
-    const report = await voiceRealign(
-      card.history.map((entry) => ({ id: entry.id, speaker: entry.speaker, text: entry.text })),
-      card.dialogues.map((dialogue) => ({
-        speaker: dialogue.speaker,
-        text: dialogue.text,
-        index: dialogue.line,
-      }))
-    );
+    let report;
+    try {
+      report = await voiceRealign(
+        card.history.map((entry) => ({ id: entry.id, speaker: entry.speaker, text: entry.text })),
+        card.dialogues.map((dialogue) => ({
+          speaker: dialogue.speaker,
+          text: dialogue.text,
+          index: dialogue.line,
+        }))
+      );
+    } catch {
+      // 对齐失败不该让配音卡打不开: 保留记录里的旧行号 (可能已漂移), 由用户手动重试
+      return;
+    }
     const byId = new Map(report.alignments.map((item) => [item.id, item]));
     for (const entry of card.history) {
       const alignment = byId.get(entry.id);
       entry.line = alignment?.index ?? null;
       entry.alignment = alignment?.kind;
+      /*
+       * 只同步**对话者**: 它决定下一次按内容匹配时的键。刻意不动 `text` —— 记录里的
+       * 文本是"当时合成的那一句" (用户可能在操作台里改过它), 拿场景原文覆盖会让记录
+       * 显示的内容与实际音频不符。
+       */
       if (entry.line !== null) {
         const dialogue = card.dialogues.find((item) => item.line === entry.line);
-        if (dialogue) {
-          entry.speaker = dialogue.speaker;
-          entry.text = dialogue.text;
-        }
+        if (dialogue) entry.speaker = dialogue.speaker;
       }
     }
+    this.refreshApplied(card);
     this.syncCard(card);
+    this.persistHistory(card);
     this.emit();
   }
 
@@ -764,14 +816,38 @@ class VoiceController {
     });
   }
 
+  /**
+   * 停止 GSOV 服务。
+   *
+   * 状态先进入 `stopping`: 进程收尾要等一会儿 (服务端还要落盘 `tts_infer.yaml`),
+   * 而关闭配音工作台时选项卡已经不在了 —— 不把这个中间状态显示出来, "服务正在关"
+   * 这段时间在界面上完全不可见 (看起来像卡住)。停止完成后置为 `stopped`, 状态栏随之
+   * 收起这一项。
+   */
   async stopGsv(): Promise<void> {
     if (this.probeTimer) {
       clearInterval(this.probeTimer);
       this.probeTimer = null;
     }
-    await voiceShutdown();
-    // 样本保留: 下次启动的机器与模型还是一样的 (第一个任务由 `startGsv` 标为冷启动)
-    this.store().setVoiceStatus('stopped', null);
+    this.store().setVoiceStatus('stopping', null);
+    try {
+      await voiceShutdown();
+    } finally {
+      // 样本保留: 下次启动的机器与模型还是一样的 (第一个任务由 `startGsv` 标为冷启动)
+      this.store().setVoiceStatus('stopped', null);
+    }
+  }
+
+  /** 服务在跑就停掉 (关闭工作台时用; 没在跑则什么都不做) */
+  async stopGsvIfRunning(): Promise<void> {
+    const status = this.store().voiceStatus;
+    if (status === 'stopped' || status === 'stopping') return;
+    try {
+      await this.stopGsv();
+    } catch {
+      // 停止失败不该阻塞关闭对话框: 状态已经落到"未启动"
+      this.store().setVoiceStatus('stopped', null);
+    }
   }
 
   /** 应用启动时同步一次状态 (进程可能已在运行) */
@@ -945,7 +1021,7 @@ class VoiceController {
     this.setCharacters(this.characters.filter((item) => item.id !== id));
   }
 
-  async importCharacter(): Promise<Character | null> {
+  async importCharacter(): Promise<{ character: Character; paired: number } | null> {
     const selected = await openDialog({
       multiple: false,
       filters: [{ name: '角色配置', extensions: ['zip'] }],
@@ -953,7 +1029,7 @@ class VoiceController {
     if (typeof selected !== 'string') return null;
     const imported = await voiceImportCharacter(selected);
     this.setCharacters([...this.characters, imported]);
-    return imported;
+    return { character: imported, paired: await this.autoAssignModels() };
   }
 
   /**
@@ -961,10 +1037,40 @@ class VoiceController {
    *
    * 清单文件与音频目录各自独立选择, 匹配按**文件名**进行。
    */
-  async importFromList(listPath: string, audioDir: string): Promise<ListImportReport> {
+  async importFromList(listPath: string, audioDir: string): Promise<ListImportReport & { paired: number }> {
     const report = await voiceImportCharactersFromList(listPath, audioDir);
     this.setCharacters(await voiceListCharacters());
-    return report;
+    return { ...report, paired: await this.autoAssignModels() };
+  }
+
+  /**
+   * 按角色名给"还没有模型"的角色自动配一套 GSOV 权重。
+   *
+   * 导入进来的角色与整合包里的权重通常同名 (训练产物就是拿这个角色训的), 让用户再逐个
+   * 手选一遍纯属重复劳动。规则见 `modelPair.pickModel`: 只有名称能可信对上才配 ——
+   * 配错的代价是"界面看起来已经选好了, 音色却不对", 比空着更难查。
+   *
+   * 返回这次配上的角色数。
+   */
+  async autoAssignModels(): Promise<number> {
+    const models = await this.listModels();
+    if (models.length === 0) return 0;
+    let paired = 0;
+    for (const character of [...this.characters]) {
+      // 已经有任何一项权重就不动它: 那是用户自己选的 (或上次配好的)
+      if (character.model?.gptWeights || character.model?.sovitsWeights) continue;
+      const candidate = pickModel(character.name, models);
+      if (!candidate) continue;
+      try {
+        await this.updateCharacter(character.id, {
+          model: { gptWeights: candidate.gptWeights, sovitsWeights: candidate.sovitsWeights },
+        });
+        paired += 1;
+      } catch {
+        // 单个角色配对失败不影响导入本身
+      }
+    }
+    return paired;
   }
 
   // -------- 缓存清理 --------
@@ -1077,6 +1183,68 @@ class VoiceController {
 
   private syncCardStore(): void {
     this.store().setSceneVoiceEditors(new Map(this.cards));
+  }
+
+  // -------- 历史持久化 --------
+
+  /** 写盘串行化: 保证同一份文件的多次写入按调用顺序落盘 */
+  private historyWrite: Promise<void> = Promise.resolve();
+
+  /** 读取某场景已落盘的历史 (不存在的字段一律按"没有"处理) */
+  private async loadHistory(scenePath: string): Promise<HistoryEntry[]> {
+    try {
+      const raw = await voiceReadHistory(scenePath);
+      if (!Array.isArray(raw)) return [];
+      return (raw as HistoryEntry[]).filter(
+        (entry) =>
+          entry &&
+          typeof entry.id === 'string' &&
+          // 上次会话里没跑完的任务不会自己复活: 留着只会显示成永远"生成中"
+          (entry.status === 'done' || entry.status === 'failed')
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 把历史写回磁盘。
+   *
+   * 刻意**不 await**: 历史是旁路信息, 写盘失败 (磁盘满/权限) 不该让"应用一条配音"这种
+   * 操作失败。因此这里吞掉错误 —— 但写是串行的, 后一次一定覆盖前一次, 不会交错。
+   */
+  private persistHistory(card: SceneVoiceState): void {
+    const scenePath = card.scenePath;
+    const entries = card.history;
+    this.historyWrite = this.historyWrite
+      .then(async () => {
+        if (entries.length === 0) await voiceClearHistory(scenePath);
+        else await voiceWriteHistory(scenePath, entries);
+      })
+      .catch(() => {
+        // 忽略: 历史写不进去不影响配音本身
+      });
+  }
+
+  /**
+   * 重新判断每一条记录"是否已经应用到脚本"。
+   *
+   * `applied` 是个**派生**事实 (该行的 `-vocal=` 是否正好指向这条记录的音频), 不是可以
+   * 单独存下来就算数的状态: 用户可能在普通编辑器里删掉了 `-vocal=`, 也可能回滚了文件。
+   * 每次重新解析场景 / 载入历史后按脚本重算, 界面上的"已应用"才不会说谎。
+   */
+  private refreshApplied(card: SceneVoiceState): void {
+    for (const entry of card.history) {
+      if (entry.line === null || !entry.audioHash) {
+        entry.applied = false;
+        continue;
+      }
+      const dialogue = card.dialogues.find((item) => item.line === entry.line);
+      const dir = this.characterById(entry.characterId)?.id || 'narration';
+      const expected = `${dir}/${entry.audioHash}.wav`;
+      const vocal = dialogue?.vocal?.replace(/\\/g, '/');
+      entry.applied = vocal === expected;
+    }
   }
 
   private emit(): void {

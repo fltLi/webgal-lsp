@@ -11,21 +11,40 @@
 // 工作台存在时, 当前场景卡自动进入; 关闭工作台即全部退出。
 
 import { activeSceneDocumentOf, isVoiceWorkbenchOpen, isVoiceWorkbenchActive, useAppStore } from '../state/store';
+import { voiceController } from './controller';
 
 /** 打开配音工作台选项卡 (当前场景卡会自动进入配音编辑模式) */
 export function openVoiceWorkbench(): void {
   useAppStore.getState().openVoiceWorkbench();
 }
 
-/** 关闭配音工作台选项卡 (同时退出全部配音编辑模式) */
-export function closeVoiceWorkbench(): void {
-  useAppStore.getState().closeVoiceWorkbench();
+/**
+ * 关闭配音工作台 (唯一入口, 返回是否真的关掉了)。
+ *
+ * 三件事必须一起做:
+ * 1. **先问一句**: 还有任务没跑完时关闭工作台会退出配音模式, 用户可能只是误点;
+ * 2. 关闭选项卡 (= 退出全部配音编辑模式);
+ * 3. **顺手停掉 GSOV 服务**: 工作台是配音功能的开关, 关掉它就没必要让一个几 GB 的
+ *    推理进程继续占着显存与端口 —— 以前它会一直留在后台, 直到退出编辑器。
+ *    停止是异步的, 期间状态栏显示「停止中…」(见 `stopGsv`)。
+ */
+export function closeVoiceWorkbench(): boolean {
+  const store = useAppStore.getState();
+  if (store.voiceQueuePending > 0) {
+    const ok = window.confirm(
+      `还有 ${store.voiceQueuePending} 个配音任务未完成，关闭配音工作台会退出配音模式（历史记录不会丢失）。仍要关闭吗？`
+    );
+    if (!ok) return false;
+  }
+  store.closeVoiceWorkbench();
+  void voiceController.stopGsvIfRunning();
+  return true;
 }
 
 /** 切换配音工作台 */
 export function toggleVoiceWorkbench(): void {
   const store = useAppStore.getState();
-  if (isVoiceWorkbenchOpen(store.tabs)) store.closeVoiceWorkbench();
+  if (isVoiceWorkbenchOpen(store.tabs)) closeVoiceWorkbench();
   else store.openVoiceWorkbench();
 }
 
@@ -51,7 +70,17 @@ export function activeSceneInVoiceMode(): boolean {
   return scene ? store.voiceModePaths.includes(scene.path) : false;
 }
 
-/** 切换指定场景的配音编辑模式 */
+/**
+ * 切换指定场景的配音编辑模式。
+ *
+ * **离开配音卡时先问一句**: 该场景还有没跑完的任务时, 用户点麦克风很可能是想"再看一眼"
+ * 而不是真的要离开。任务本身不会因为离开而中止 (队列是全局的, 历史也已落盘), 但看不见
+ * 进度的等待很容易被当成卡死 —— 让他确认一下比默默接受好。
+ */
 export function setSceneVoiceMode(path: string, enabled: boolean): void {
+  if (!enabled && voiceController.hasUnfinished(path)) {
+    const ok = window.confirm('该场景还有未完成的配音任务，离开配音卡后它们会继续在队列里执行。确定要离开吗？');
+    if (!ok) return;
+  }
   useAppStore.getState().setVoiceMode(path, enabled);
 }

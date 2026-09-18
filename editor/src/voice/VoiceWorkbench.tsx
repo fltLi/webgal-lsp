@@ -69,7 +69,11 @@ export function VoiceWorkbench() {
 
   const defaults = settings.defaults;
   const summary = voiceController.queueSummary();
-  const running = status === 'ready' || status === 'starting';
+  /*
+   * `stopping` 也算"运行中": 停止过程中按钮必须留在"停止服务"这一态 (并禁用),
+   * 否则它会闪回「启动服务」—— 用户很容易在服务还没停干净时又点一次启动。
+   */
+  const running = status === 'ready' || status === 'starting' || status === 'stopping';
 
   useEffect(() => {
     if (settings.launch) {
@@ -159,7 +163,15 @@ export function VoiceWorkbench() {
   };
 
   const statusLabel =
-    status === 'ready' ? '就绪' : status === 'starting' ? '启动中…' : status === 'error' ? '错误' : '未启动';
+    status === 'ready'
+      ? '就绪'
+      : status === 'starting'
+        ? '启动中…'
+        : status === 'stopping'
+          ? '停止中…'
+          : status === 'error'
+            ? '错误'
+            : '未启动';
 
   return (
     <div className="voice-workbench">
@@ -178,9 +190,10 @@ export function VoiceWorkbench() {
               appearance="secondary"
               className="danger-outline"
               icon={<RecordStopRegular />}
+              disabled={status === 'stopping'}
               onClick={() => void stop()}
             >
-              停止服务
+              {status === 'stopping' ? '停止中…' : '停止服务'}
             </Button>
           ) : (
             <Button appearance="primary" icon={<PlayRegular />} disabled={busy} onClick={() => void start()}>

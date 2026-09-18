@@ -14,6 +14,7 @@ import { isVoiceWorkbenchOpen, useAppStore } from '../state/store';
 const GSV_LABELS: Record<string, string> = {
   ready: '就绪',
   starting: '启动中…',
+  stopping: '停止中…',
   error: '错误',
   stopped: '未启动',
 };
@@ -55,7 +56,12 @@ export function StatusBar() {
               : '未连接'}
       </span>
 
-      {workbenchOpen && (
+      {/*
+        「停止中…」要在工作台已经关掉之后继续显示一会儿: 关闭工作台会顺手停掉 GSOV,
+        而进程收尾需要时间 —— 这一项立刻消失的话, 用户看到的是"点了关闭, 服务还在,
+        然后突然没了", 不知道中间发生了什么。停完 (stopped) 它自然收起。
+      */}
+      {(workbenchOpen || voiceStatus === 'stopping') && (
         <span className={`status-voice status-voice-${voiceStatus}`}>
           GSOV: {GSV_LABELS[voiceStatus] ?? voiceStatus}
         </span>

@@ -137,10 +137,8 @@ export function RoleListPanel() {
           character={editTarget}
           models={models}
           onClose={() => setEditTarget(null)}
-          onChanged={() => {
-            const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === editTarget.id);
-            setEditTarget(latest ?? null);
-          }}
+          // 对话框把落盘后的那一份交回来 (改名后 id 会变, 不能再按旧 id 去查)
+          onChanged={setEditTarget}
           onError={setError}
         />
       )}

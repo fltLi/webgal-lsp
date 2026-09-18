@@ -34,8 +34,13 @@ interface Props {
   /** 隐藏「GPT-SoVITS 模型」一项 (在「选择角色」里点开时) */
   hideModel?: boolean;
   onClose: () => void;
-  /** 内容已变化 (调用方据此刷新自己持有的角色快照) */
-  onChanged: () => void;
+  /**
+   * 内容已变化, 参数是**落盘后的这一份**。
+   *
+   * 必须是新对象而不是"让调用方拿旧 id 去查": 改角色 ID 时旧 id 已经不存在了,
+   * 调用方按旧 id 查会查不到, 于是界面表现为"输入 ID 之后对话框自己关掉了"。
+   */
+  onChanged: (character: Character) => void;
   onError: (error: string | null) => void;
 }
 
@@ -69,7 +74,7 @@ export function RoleEditDialog({ character, models, hideModel = false, onClose, 
       savedId.current = saved.id;
       setDraft(saved);
       onError(null);
-      onChanged();
+      onChanged(saved);
     } catch (caught) {
       // 失败时回滚到已落盘的状态, 避免界面显示一个并不存在的 id
       setDraft((current) => ({ ...current, id: savedId.current }));
@@ -85,8 +90,10 @@ export function RoleEditDialog({ character, models, hideModel = false, onClose, 
    */
   const syncReferences = () => {
     const latest = useAppStore.getState().voiceCharacters.find((item) => item.id === savedId.current);
-    if (latest) setDraft((current) => ({ ...current, references: latest.references }));
-    onChanged();
+    if (!latest) return;
+    const merged = { ...draft, references: latest.references };
+    setDraft(merged);
+    onChanged(merged);
   };
 
   const exportCharacter = async () => {

@@ -43,6 +43,8 @@ export function CodeEditor({
   const editorPathRef = useRef<string | null>(null);
   /** 主 effect 里的"同步预览"函数 (外部内容回灌后要触发一次) */
   const syncRef = useRef<(() => void) | null>(null);
+  /** 正在把外部内容写进 model: 这期间的内容变更不是用户编辑, 不再回写 store */
+  const pushingExternal = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -114,8 +116,13 @@ export function CodeEditor({
       }
     };
 
+    /**
+     * 自动保存。
+     *
+     * 配音卡 (只读) 也走同一条路: 那里的内容变化来自撤销/重做 (应用了一条配音又后悔),
+     * 与普通编辑没有区别 —— 是否落盘只看自动保存设置。
+     */
     const scheduleAutoSave = () => {
-      if (readOnly) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveDoc(), 600);
     };
@@ -124,6 +131,22 @@ export function CodeEditor({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveDoc();
     });
+
+    /*
+     * 撤销 / 重做。
+     *
+     * 只读模式下 Monaco 会把内置的撤销/重做命令禁用 (它们的前提是"可写"), 但配音卡里
+     * 恰恰最需要它: 「应用」一条配音就是在改这个文件, 点错了要能退回去。这里显式接管
+     * 这几个快捷键 —— 前提是外部改动以**编辑**的方式写进 model (见下方 `applyEdits`),
+     * 而不是 `setValue` (那会清空撤销栈)。
+     */
+    if (readOnly) {
+      // 用 `trigger` 而不是 `getAction().run()`: 只读下那个 action 会被判定为不可用
+      const runCommand = (id: string) => editor.trigger('voice', id, null);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => runCommand('undo'));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => runCommand('redo'));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () => runCommand('redo'));
+    }
 
     /*
      * 预览同步: 防抖合并 (光标跨行 / 内容变更共用同一计时器)。
@@ -182,18 +205,24 @@ export function CodeEditor({
     let unsubscribeDiagnostics: (() => void) | null = null;
 
     if (isScene) {
-      // 只读编辑器不做文档同步与自动保存, 只保留诊断标记与语言能力
-      if (!readOnly) {
-        unbindModel = bindModel(model, path, (text) => {
-          const store = useAppStore.getState();
-          store.updateDocument(path, { content: text, dirty: true });
-          if (store.settings.autoSave) scheduleAutoSave();
-          scheduleSync();
-        });
-      } else {
-        lspClient.openDocument(path, model.getValue());
-        unbindModel = () => lspClient.closeDocument(path);
-      }
+      /*
+       * 两种模式都绑定 model (语言服务同步 + 内容回写)。
+       *
+       * 配音卡以前刻意不绑: 它不改文档, 绑了只会在外部回灌时重复写一次 store。但
+       * "不改文档"并不成立 —— 「应用」与「加载磁盘内容」都会替换全文, 而用户在只读
+       * 编辑器里唯一的补救手段就是撤销。要能撤销, 就必须让 model 的变更 (包括撤销)
+       * 照常回写 store, 否则撤销只改画面、不改文档, 下一次保存/应用又把旧内容写回去。
+       *
+       * 外部回灌 (apply/裁决) 期间用 `pushingExternal` 静音: 那份内容本来就是从 store
+       * 来的, 再写回去会把它重新标脏 (看起来像"点了应用却还是未保存")。
+       */
+      unbindModel = bindModel(model, path, (text) => {
+        if (pushingExternal.current) return;
+        const store = useAppStore.getState();
+        store.updateDocument(path, { content: text, dirty: true });
+        if (store.settings.autoSave) scheduleAutoSave();
+        scheduleSync();
+      });
       applyDiagnostics(model, path);
       unsubscribeDiagnostics = useAppStore.subscribe((state, prev) => {
         if (state.diagnostics[path] !== prev.diagnostics[path]) applyDiagnostics(model, path);
@@ -381,13 +410,12 @@ export function CodeEditor({
    * 编辑器只在挂载时读一次 `doc.content`, 之后文档被别处改掉, 画面上仍是旧文本 ——
    * 用户看到的就是"点了应用却什么都没变"。以 store 为准回灌即可解决。
    *
-   * 光改 model 还不够, 必须**把这次变化告诉语言服务与预览**:
-   * * 只读的配音卡没有绑定 `bindModel`, 因此不会自动发 `didChange` —— 不补这一下,
-   *   Monaco 里就是"文本换了、语法高亮与诊断还停在旧文本上";
-   * * 预览按"场景 + 语句号"同步, 内容变了也该主动推一次。
+   * 用一次**编辑** (applyEdits) 而不是 `setValue` 整份替换: `setValue` 会清空撤销栈,
+   * 于是「应用」之后再也撤不回去。代价是这次替换会作为一步进撤销栈 (正是我们要的)。
+   * 语言服务的 `didChange` 由 `bindModel` 自动发出; 预览按"场景 + 语句号"同步, 这里
+   * 主动推一次。
    *
    * 编辑器自己敲的字不会走到这里 (两边内容相等, 直接返回), 因此不打断输入。
-   * `setValue` 会清空撤销栈: 外部整体替换本就无法与之合并, 这是应有的语义。
    */
   useEffect(() => {
     const editor = editorRef.current;
@@ -396,12 +424,18 @@ export function CodeEditor({
     if (model.getValue() === doc.content) return;
 
     const position = editor.getPosition();
-    model.setValue(doc.content);
+    pushingExternal.current = true;
+    try {
+      model.applyEdits([{ range: model.getFullModelRange(), text: doc.content }]);
+    } finally {
+      pushingExternal.current = false;
+    }
     if (position) editor.setPosition(position);
 
-    lspClient.changeDocument(doc.path, doc.content, model.getVersionId());
+    // 非场景文档没有绑定 model, 语言服务需要手动通知
+    if (!doc.isScene) lspClient.changeDocument(doc.path, doc.content, model.getVersionId());
     syncRef.current?.();
-  }, [doc.content, doc.path, readOnly]);
+  }, [doc.content, doc.path, doc.isScene, readOnly]);
 
   /*
    * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。

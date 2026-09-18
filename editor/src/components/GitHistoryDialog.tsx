@@ -14,6 +14,7 @@ import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
 import { useAppStore } from '../state/store';
 import { AppDialog } from './AppDialog';
+import { ContextMenu } from './ContextMenu';
 import { middleEllipsis } from './FileTree';
 
 /** 跨打开保留的历史状态 (打开场景差异 / Esc 关闭时不清空, 仅"关闭"按钮重置) */
@@ -154,12 +155,8 @@ export function GitHistoryDialog({ onClose }: Props) {
         }}
         onContextMenu={(e) => {
           e.preventDefault();
-          setMenu({
-            file,
-            commitId,
-            x: Math.min(e.clientX, window.innerWidth - 200),
-            y: Math.min(e.clientY, window.innerHeight - 120),
-          });
+          // 贴边收拢交给 `ContextMenu` (它按实测尺寸算)
+          setMenu({ file, commitId, x: e.clientX, y: e.clientY });
         }}
         title={file.path}
       >
@@ -227,38 +224,25 @@ export function GitHistoryDialog({ onClose }: Props) {
       </div>
 
       {menu ? (
-        <>
-          <div
-            className="context-menu-backdrop"
-            onClick={() => setMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu(null);
-            }}
-          />
-          <div className="context-menu" style={{ left: menu.x, top: menu.y }}>
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                setMenu(null);
-                void run(() => gitRestore(projectPath, [menu.file.path], menu.commitId));
-              }}
-            >
-              <ArrowClockwiseRegular />
-              还原
-            </button>
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                setMenu(null);
-                void run(() => gitRestoreAll(projectPath, menu.commitId));
-              }}
-            >
-              <HistoryRegular />
-              还原全部
-            </button>
-          </div>
-        </>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[
+            {
+              key: 'restore',
+              label: '还原',
+              icon: <ArrowClockwiseRegular />,
+              onClick: () => void run(() => gitRestore(projectPath, [menu.file.path], menu.commitId)),
+            },
+            {
+              key: 'restoreAll',
+              label: '还原全部',
+              icon: <HistoryRegular />,
+              onClick: () => void run(() => gitRestoreAll(projectPath, menu.commitId)),
+            },
+          ]}
+          onClose={() => setMenu(null)}
+        />
       ) : null}
 
       {error ? (

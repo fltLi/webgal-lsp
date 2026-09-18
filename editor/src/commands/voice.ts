@@ -8,7 +8,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 
 // -------- 类型 --------
 
-export type GsvStatus = 'stopped' | 'starting' | 'ready' | 'error';
+export type GsvStatus = 'stopped' | 'starting' | 'ready' | 'error' | 'stopping';
 
 export type LaunchMode =
   | { kind: 'embedded'; program: string }
@@ -49,6 +49,8 @@ export interface DetectedRuntime {
 export interface ModelCandidate {
   /** 推断的角色名 (来自权重文件名) */
   name: string;
+  /** 配对用的归一化键 (去掉训练后缀与扩展名, 全小写) */
+  key: string;
   /** GPT (T2S) 权重路径, 相对整合包根 */
   gptWeights: string;
   /** SoVITS 权重路径, 相对整合包根 */
@@ -452,4 +454,24 @@ export function voiceScanReferences(project: string): Promise<VocalReference[]> 
 
 export function voiceRealign(history: HistoryKey[], dialogues: DialogueKey[]): Promise<AlignmentReport> {
   return invoke<AlignmentReport>('voice_realign', { history, dialogues });
+}
+
+// -------- 配音历史持久化 --------
+
+/**
+ * 读取某场景的配音历史 (不存在时返回 `null`)。
+ *
+ * 历史必须跨会话存活: 它记录"这一句试过哪些参数、哪一条已经应用", 关掉配音卡或编辑器
+ * 都不该让它消失。后端只负责按场景路径存一份 JSON, 结构由界面自己解释。
+ */
+export function voiceReadHistory(scenePath: string): Promise<unknown | null> {
+  return invoke<unknown | null>('voice_read_history', { scenePath });
+}
+
+export function voiceWriteHistory(scenePath: string, entries: unknown): Promise<void> {
+  return invoke<void>('voice_write_history', { scenePath, entries });
+}
+
+export function voiceClearHistory(scenePath: string): Promise<void> {
+  return invoke<void>('voice_clear_history', { scenePath });
 }

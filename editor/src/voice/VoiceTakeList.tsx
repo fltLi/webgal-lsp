@@ -20,6 +20,7 @@ import {
   BroomRegular,
   CheckmarkCircleRegular,
   CheckmarkRegular,
+  CopyRegular,
   DeleteRegular,
   DismissRegular,
   ErrorCircleRegular,
@@ -28,8 +29,9 @@ import {
 } from '@fluentui/react-icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
+import { ContextMenu } from '../components/ContextMenu';
 import { voiceController } from './controller';
 import { AudioButton } from './AudioButton';
 import { errorSummary } from './errorText';
@@ -64,17 +66,6 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [errorEntry, setErrorEntry] = useState<HistoryEntry | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const close = () => setMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('blur', close);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('blur', close);
-    };
-  }, []);
 
   if (!card) return null;
 
@@ -91,6 +82,21 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
   const togglePriority = (entry: HistoryEntry) => {
     voiceController.setPriority(entry.id, entry.priority === 'immediate' ? 'normal' : 'immediate');
     onChanged();
+  };
+
+  /**
+   * 复制种子。
+   *
+   * 种子是"复现这一次结果"的唯一凭据: 参数面板上那一栏可以被改动, 记录里的这一份不会,
+   * 所以要从记录里取。负数 (服务端随机) 没有复制价值, 菜单项直接禁用。
+   */
+  const copySeed = async (seed: number) => {
+    try {
+      await navigator.clipboard.writeText(String(seed));
+      setMessage(`已复制种子 ${seed}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? `复制失败：${error.message}` : '复制失败');
+    }
   };
 
   const doApply = async (entry: HistoryEntry) => {
@@ -235,7 +241,7 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
   };
 
   return (
-    <div className="voice-history" ref={containerRef}>
+    <div className="voice-history">
       <div className="history-toolbar">
         <span className="history-title">历史</span>
         <span className="history-count">
@@ -308,105 +314,109 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
       )}
 
       {menu && (
-        <div
-          className="context-menu"
-          style={{ left: menu.x, top: menu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            disabled={menu.entry.status !== 'done' || menu.entry.applied || menu.entry.line === null}
-            onClick={() => {
-              void doApply(menu.entry);
-              setMenu(null);
-            }}
-          >
-            <CheckmarkRegular /> 应用
-          </button>
-          <button
-            disabled={!menu.entry.audioPath}
-            onClick={() => {
-              void reveal(menu.entry);
-              setMenu(null);
-            }}
-          >
-            <FolderOpenRegular /> 在文件夹中显示
-          </button>
-          <button
-            disabled={!menu.entry.audioPath}
-            onClick={() => {
-              void exportAudio(menu.entry);
-              setMenu(null);
-            }}
-          >
-            <ArrowDownloadRegular /> 导出音频
-          </button>
-          <button
-            disabled={menu.entry.line === null}
-            title="用这一条记录的参数重新入队（不改动原记录）"
-            onClick={() => {
-              const task = voiceController.retryFromHistory(cardId, menu.entry.id);
-              setMessage(task ? '已按该参数重新入队' : '该记录已无法对齐到语句，无法重试');
-              setMenu(null);
-              onChanged();
-            }}
-          >
-            <ArrowSyncRegular /> 以此参数重试
-          </button>
-          {/* 排队中才有的两项: 未完成时"隐藏"而不是"禁用" —— 禁用项读起来像功能坏了 */}
-          {menu.entry.status === 'pending' && (
-            <button
-              title={`当前：${menu.entry.priority === 'immediate' ? '优先' : '常规'}队列`}
-              onClick={() => {
-                togglePriority(menu.entry);
-                setMenu(null);
-              }}
-            >
-              {menu.entry.priority === 'immediate' ? <ArrowDownRegular /> : <ArrowUpRegular />}
-              {menu.entry.priority === 'immediate' ? '降为常规' : '改为优先'}
-            </button>
-          )}
-          {(menu.entry.status === 'pending' || menu.entry.status === 'running') && (
-            <button
-              onClick={() => {
-                voiceController.cancel(menu.entry.id);
-                setMenu(null);
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              key: 'apply',
+              label: '应用',
+              icon: <CheckmarkRegular />,
+              disabled: menu.entry.status !== 'done' || menu.entry.applied || menu.entry.line === null,
+              onClick: () => void doApply(menu.entry),
+            },
+            {
+              key: 'reveal',
+              label: '在文件夹中显示',
+              icon: <FolderOpenRegular />,
+              disabled: !menu.entry.audioPath,
+              onClick: () => void reveal(menu.entry),
+            },
+            {
+              key: 'export',
+              label: '导出音频',
+              icon: <ArrowDownloadRegular />,
+              disabled: !menu.entry.audioPath,
+              onClick: () => void exportAudio(menu.entry),
+            },
+            {
+              key: 'copySeed',
+              label: '复制种子',
+              icon: <CopyRegular />,
+              // 种子是这个配置的复现凭据, 复制出去就能在别处/别处工具里复现同一次结果
+              disabled: menu.entry.params.seed < 0,
+              onClick: () => void copySeed(menu.entry.params.seed),
+            },
+            {
+              key: 'retry',
+              label: '以此参数重试',
+              icon: <ArrowSyncRegular />,
+              title: '用这一条记录的参数重新入队（不改动原记录）',
+              disabled: menu.entry.line === null,
+              onClick: () => {
+                const task = voiceController.retryFromHistory(cardId, menu.entry.id);
+                setMessage(task ? '已按该参数重新入队' : '该记录已无法对齐到语句，无法重试');
                 onChanged();
-              }}
-            >
-              <DismissRegular /> 取消
-            </button>
-          )}
-          <button
-            className="danger-text"
-            onClick={() => {
-              voiceController.dropHistory(cardId, menu.entry.id);
-              setMenu(null);
-              onChanged();
-            }}
-          >
-            <DeleteRegular /> 删除
-          </button>
-          <button
-            className="danger-text"
-            onClick={() => {
-              voiceController.dropHistoryByLine(cardId, line, 'test');
-              setMenu(null);
-              onChanged();
-            }}
-          >
-            <FilterDismissRegular /> 删除本句全部测试
-          </button>
-          <button
-            className="danger-text"
-            onClick={() => {
-              voiceController.dropHistoryByLine(cardId, line);
-              setMenu(null);
-              onChanged();
-            }}
-          >
-            <BroomRegular /> 删除本句全部
-          </button>
-        </div>
+              },
+            },
+            // 排队中才有的两项: 未完成时"隐藏"而不是"禁用" —— 禁用项读起来像功能坏了
+            ...(menu.entry.status === 'pending'
+              ? [
+                  {
+                    key: 'priority',
+                    label: menu.entry.priority === 'immediate' ? '降为常规' : '改为优先',
+                    title: `当前：${menu.entry.priority === 'immediate' ? '优先' : '常规'}队列`,
+                    icon: menu.entry.priority === 'immediate' ? <ArrowDownRegular /> : <ArrowUpRegular />,
+                    onClick: () => togglePriority(menu.entry),
+                  },
+                ]
+              : []),
+            ...(menu.entry.status === 'pending' || menu.entry.status === 'running'
+              ? [
+                  {
+                    key: 'cancel',
+                    label: '取消',
+                    icon: <DismissRegular />,
+                    onClick: () => {
+                      voiceController.cancel(menu.entry.id);
+                      onChanged();
+                    },
+                  },
+                ]
+              : []),
+            {
+              key: 'drop',
+              label: '删除',
+              icon: <DeleteRegular />,
+              danger: true,
+              onClick: () => {
+                voiceController.dropHistory(cardId, menu.entry.id);
+                onChanged();
+              },
+            },
+            {
+              key: 'dropTests',
+              label: '删除本句全部测试',
+              icon: <FilterDismissRegular />,
+              danger: true,
+              onClick: () => {
+                voiceController.dropHistoryByLine(cardId, line, 'test');
+                onChanged();
+              },
+            },
+            {
+              key: 'dropAll',
+              label: '删除本句全部',
+              icon: <BroomRegular />,
+              danger: true,
+              onClick: () => {
+                voiceController.dropHistoryByLine(cardId, line);
+                onChanged();
+              },
+            },
+          ]}
+        />
       )}
     </div>
   );
