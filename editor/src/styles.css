@@ -2952,6 +2952,13 @@ input[type='number'].voice-control {
   margin-left: auto;
 }
 
+/* 「恢复默认」: 与高级设置开关同款 —— 不参与伸缩, 靠右 */
+.voice-field-reset {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .voice-advanced-body {
   display: flex;
   flex-direction: column;

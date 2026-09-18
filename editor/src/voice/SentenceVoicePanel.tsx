@@ -11,6 +11,7 @@
 
 import { Button, Textarea } from '@fluentui/react-components';
 import {
+  ArrowResetRegular,
   ArrowSyncRegular,
   CheckmarkRegular,
   ChevronDownRegular,
@@ -109,6 +110,19 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
   const canApply = Boolean(selected && selected.status === 'done' && selected.audioHash && !isNewConfiguration);
   const running = selected?.status === 'pending' || selected?.status === 'running';
   const hasVocal = Boolean(dialogue.vocal);
+
+  /** 高级设置这一行的默认值 (工作台的默认配置; 目前只可改默认语言, 其余是常量) */
+  const advancedDefaults = voiceController.getSettings().defaults;
+  const resetHint =
+    `恢复高级设置的默认值（topK ${advancedDefaults.topK} · topP ${advancedDefaults.topP}` +
+    ` · 重复惩罚 ${advancedDefaults.repetitionPenalty} · 采样步数 x${advancedDefaults.generateSampleSteps}）`;
+  const resetAdvanced = () =>
+    update({
+      topK: advancedDefaults.topK,
+      topP: advancedDefaults.topP,
+      repetitionPenalty: advancedDefaults.repetitionPenalty,
+      sampleSteps: advancedDefaults.generateSampleSteps,
+    });
 
   const enqueue = (kind: 'test' | 'generate') => {
     if (!character || character.references.length === 0) {
@@ -375,6 +389,23 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
                   onChange={(value) => update({ sampleSteps: Number.parseInt(value, 10) || GENERATE_SAMPLE_STEPS })}
                 />
               </label>
+              {/*
+                「恢复默认」跟在最后一项右边: 高级设置里的四项都是"调过之后容易忘了原值"
+                的参数, 与其让人回想默认是多少, 不如给一个按钮。作用范围就是**这一行**,
+                温度与语速不受影响 (它们在上一行, 不属于高级设置)。
+              */}
+              <div className="voice-field voice-field-reset">
+                <span className="voice-label">&nbsp;</span>
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  icon={<ArrowResetRegular />}
+                  title={resetHint}
+                  onClick={resetAdvanced}
+                >
+                  恢复默认
+                </Button>
+              </div>
             </div>
           </div>
         )}

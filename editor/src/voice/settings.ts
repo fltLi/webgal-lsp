@@ -25,18 +25,32 @@ export const defaultVoiceSettings: VoiceSettings = {
   testSampleSteps: 4,
 };
 
+/**
+ * 读取配音设置。
+ *
+ * **推理参数的默认值只认代码里的常量, 不认存储里的旧值。**
+ *
+ * 默认值写进 localStorage 之后就会一直盖住代码里的新默认值: 改了代码里的默认 topK,
+ * 只有"从没打开过配音"的人会看到新值, 老用户永远看到旧值 —— 表现就是"默认值改了却没
+ * 生效"。因此存储里只保留**界面上真正可编辑**的那一项 (默认语言); 温度 / 语速 / topK /
+ * topP / 重复惩罚 / 采样步数一律以当前代码为准。
+ */
 export function loadVoiceSettings(): VoiceSettings {
+  const fresh = (): VoiceSettings => ({ ...defaultVoiceSettings, defaults: { ...DEFAULT_VOICE_DEFAULTS } });
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...defaultVoiceSettings, defaults: { ...defaultVoiceSettings.defaults } };
+    if (!raw) return fresh();
     const parsed = JSON.parse(raw) as Partial<VoiceSettings>;
     return {
       launch: parsed.launch ?? null,
-      defaults: { ...defaultVoiceSettings.defaults, ...(parsed.defaults ?? {}) },
+      defaults: {
+        ...DEFAULT_VOICE_DEFAULTS,
+        language: parsed.defaults?.language ?? DEFAULT_VOICE_DEFAULTS.language,
+      },
       testSampleSteps: parsed.testSampleSteps ?? defaultVoiceSettings.testSampleSteps,
     };
   } catch {
-    return { ...defaultVoiceSettings, defaults: { ...defaultVoiceSettings.defaults } };
+    return fresh();
   }
 }
 
