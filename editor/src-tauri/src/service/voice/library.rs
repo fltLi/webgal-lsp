@@ -449,11 +449,7 @@ impl Library {
     ///   被静默截断, 用户只看到"跳过 61 条"却不知道那是上限。真实语料每个角色上百条
     ///   很常见, 是否需要谨慎由用户在导入前判断 (见 [`Library::preview_from_list`]),
     ///   而不是由这里替他丢数据。
-    pub fn import_from_list(
-        &self,
-        list_path: &Path,
-        audio_dir: &Path,
-    ) -> Result<ListImportReport> {
+    pub fn import_from_list(&self, list_path: &Path, audio_dir: &Path) -> Result<ListImportReport> {
         let (by_speaker, malformed) = self.read_list_by_speaker(list_path, audio_dir)?;
 
         let mut report = ListImportReport {
@@ -624,10 +620,7 @@ impl Library {
                 .filter(|record| lookup_audio(&audio_index, &record.audio).is_some())
                 .count();
             matched += hits;
-            characters.push(ListImportCharacter {
-                name,
-                count: hits,
-            });
+            characters.push(ListImportCharacter { name, count: hits });
         }
         // 条数多的排前面: 用户要判断的正是"有没有哪个角色特别多"
         characters.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
@@ -1211,7 +1204,9 @@ mod tests {
     fn write_list(dir: &Path, name: &str, rows: &[(String, &str)]) -> PathBuf {
         let mut text = String::new();
         for (audio, speaker) in rows {
-            text.push_str(&format!("output\\slicer_opt\\{speaker}\\{audio}|{speaker}|ZH|文本\n"));
+            text.push_str(&format!(
+                "output\\slicer_opt\\{speaker}\\{audio}|{speaker}|ZH|文本\n"
+            ));
         }
         // 末尾加一条无法解析的行 (没有分隔符) —— 它只应计入 skipped
         text.push_str("这不是一行合法的清单\n");

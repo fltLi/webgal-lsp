@@ -425,7 +425,10 @@ setTransform:{"position":{"x":-1800}} -target=bg-main -duration=1700 -next;
         );
         assert!(lines.iter().all(|item| item.line_count == 1));
         for (i, x) in lines.iter().enumerate() {
-            eprintln!("DBG[{i}] line={} speaker={:?} text={:?}", x.line, x.speaker, x.text);
+            eprintln!(
+                "DBG[{i}] line={} speaker={:?} text={:?}",
+                x.line, x.speaker, x.text
+            );
         }
     }
 

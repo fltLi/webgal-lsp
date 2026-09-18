@@ -57,7 +57,8 @@ impl HistoryStore {
     }
 
     pub fn file_for(&self, scene_path: &str) -> PathBuf {
-        self.root.join(format!("{}.json", hash_scene_path(scene_path)))
+        self.root
+            .join(format!("{}.json", hash_scene_path(scene_path)))
     }
 
     /// 读取某场景的历史 (不存在时返回 `None`)
@@ -82,7 +83,9 @@ impl HistoryStore {
         let text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
         // 先写临时文件再改名: 中途崩溃/断电不会留下半截 JSON, 把历史读坏
         let target = self.file_for(scene_path);
-        let temp = self.root.join(format!(".{}.tmp", hash_scene_path(scene_path)));
+        let temp = self
+            .root
+            .join(format!(".{}.tmp", hash_scene_path(scene_path)));
         std::fs::write(&temp, text).map_err(|error| error.to_string())?;
         std::fs::rename(&temp, &target).map_err(|error| error.to_string())
     }
@@ -143,7 +146,14 @@ mod tests {
 
         // 再写一次覆盖旧内容, 且不留下临时文件
         store.write(scene, serde_json::json!([])).unwrap();
-        assert!(store.read(scene).unwrap().unwrap().entries.as_array().unwrap().is_empty());
+        assert!(store
+            .read(scene)
+            .unwrap()
+            .unwrap()
+            .entries
+            .as_array()
+            .unwrap()
+            .is_empty());
         let leftovers: Vec<_> = std::fs::read_dir(store.root())
             .unwrap()
             .filter_map(std::result::Result::ok)

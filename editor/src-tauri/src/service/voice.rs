@@ -669,10 +669,7 @@ pub async fn voice_write_history(
 
 /// 删除某场景的配音历史 (历史被清空时调用)
 #[tauri::command]
-pub async fn voice_clear_history(
-    app: tauri::AppHandle,
-    scene_path: String,
-) -> Result<(), String> {
+pub async fn voice_clear_history(app: tauri::AppHandle, scene_path: String) -> Result<(), String> {
     history_of(&app)?.remove(&scene_path)
 }
 
