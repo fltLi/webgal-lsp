@@ -5,7 +5,7 @@ use lsp_types::*;
 use rayon::prelude::*;
 use webgal_language_core::{
     element::TokenSplit,
-    sentence::{PrimarySentence, Scene, Sentence, SentenceInfo},
+    sentence::{PrimarySentence, Scene, Sentence, SentenceInfo, is_implicit_vocal_argument},
     util::{span_of, split_once_escaped},
 };
 
@@ -187,10 +187,17 @@ fn highlight_argument<F>(
     f(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
     // 参数名
-    f(PrimaryToken {
-        span,
-        kind: TokenType::Parameter,
-    });
+    if matches!(sentence, Sentence::Say(_)) && value.is_none() && is_implicit_vocal_argument(name) {
+        f(PrimaryToken {
+            span,
+            kind: TokenType::Regex,
+        });
+    } else {
+        f(PrimaryToken {
+            span,
+            kind: TokenType::Parameter,
+        });
+    }
 
     // `=`
     if value.is_some() {
