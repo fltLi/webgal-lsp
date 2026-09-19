@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import type { Diagnostic, Hover, InlayHint, Range } from 'vscode-languageserver-types';
+import type { Diagnostic, Hover, InlayHint, Location, Range } from 'vscode-languageserver-types';
 import type { WasmModule } from './wasm';
 
 interface EditorProps {
@@ -145,6 +145,22 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
           return { contents, range: monacoRange };
         } catch (e) {
           console.error('Hover error:', e);
+          return null;
+        }
+      },
+    });
+
+    monaco.languages.registerReferenceProvider(languageId, {
+      provideReferences: (model, position) => {
+        if (!wasm) return null;
+        try {
+          const locations = wasm.reference(position.lineNumber - 1, position.column - 1) as Location[];
+          return locations.map((location) => ({
+            uri: model.uri,
+            range: toMonacoRange(location.range),
+          }));
+        } catch (e) {
+          console.error('Reference error:', e);
           return null;
         }
       },

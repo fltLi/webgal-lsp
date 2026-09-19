@@ -42,6 +42,19 @@ impl Scene {
         diagnostics.into_iter().map(serialize).collect()
     }
 
+    pub fn reference(&self, line: u32, character: u32) -> Vec<JsValue> {
+        let position = position_utf16_to_utf8(&self, Position { line, character });
+        let references = crate::service::reference("start.txt", position, &self.0)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(path, range)| (path, range_utf8_to_utf16(&self, range)))
+            .collect();
+        references_to_locations("file:///webgal-playground", references)
+            .into_iter()
+            .map(serialize)
+            .collect()
+    }
+
     /// 悬浮文档
     pub fn document(&self, line: u32, character: u32) -> Option<JsValue> {
         let position = position_utf16_to_utf8(&self, Position { line, character });

@@ -16,6 +16,7 @@ import {
   type LspDiagnostic,
   type LspHover,
   type LspInlayHint,
+  type LspLocation,
   type LspRange,
   type LspTextEdit,
 } from './client';
@@ -375,6 +376,25 @@ export function setupMonaco(): void {
             : new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
           contents: [{ value: text, isTrusted: false }],
         };
+      } catch {
+        return null;
+      }
+    },
+  });
+
+  monaco.languages.registerReferenceProvider(LANGUAGE_ID, {
+    provideReferences: async (model, position) => {
+      const path = pathOfModel(model);
+      if (!path) return null;
+      try {
+        const locations = await lspClient.references(path, {
+          line: position.lineNumber - 1,
+          character: position.column - 1,
+        });
+        return (locations ?? []).map((location: LspLocation) => ({
+          uri: monaco.Uri.parse(location.uri),
+          range: toMonacoRange(location.range),
+        }));
       } catch {
         return null;
       }

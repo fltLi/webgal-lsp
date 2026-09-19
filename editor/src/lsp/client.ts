@@ -55,6 +55,11 @@ export interface LspHover {
   range?: LspRange;
 }
 
+export interface LspLocation {
+  uri: string;
+  range: LspRange;
+}
+
 export interface LspCompletionItem {
   label: string;
   kind?: number;
@@ -489,6 +494,15 @@ class LspClient {
       options: { tabSize: 2, insertSpaces: true },
     });
     return (r as LspTextEdit[] | null) ?? null;
+  }
+
+  async references(path: string, position: LspPosition): Promise<LspLocation[] | null> {
+    const r = await this.sendRequest('textDocument/references', {
+      textDocument: { uri: toUri(path) },
+      position,
+      context: { includeDeclaration: false },
+    });
+    return (r as LspLocation[] | null) ?? null;
   }
 }
 
