@@ -5,6 +5,9 @@
 use std::{convert::Infallible, fmt, hash::Hash, str::FromStr};
 
 use derive_more::From;
+#[cfg(feature = "serde")]
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use strum::{Display, EnumString};
 
 /// 数值, 区分整数与浮点数
 ///
@@ -13,6 +16,7 @@ use derive_more::From;
 ///
 /// 可通过 [`From`] 从 `i64` / `f64` 构造; 需要校验有限值时请使用 [`Number::from_f64`].
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, From)]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
 pub enum Number {
     /// 整数
     Integer(i64),
@@ -68,6 +72,19 @@ impl Number {
     }
 }
 
+impl FromStr for Number {
+    type Err = &'static str;
+
+    fn from_str(source: &str) -> Result<Self, Self::Err> {
+        let trimmed = source.trim();
+        if let Ok(integer) = trimmed.parse::<i64>() {
+            return Ok(Number::Integer(integer));
+        }
+        let value = trimmed.parse::<f64>().map_err(|_| "无效数字")?;
+        Number::from_f64(value).ok_or("数字必须是有限值")
+    }
+}
+
 impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -82,13 +99,17 @@ impl fmt::Display for Number {
 /// 值类型
 ///
 /// 用于 [`Value::kind`] 与 [`Expression::infer_type`] 等类型相关操作.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
 pub enum ValueKind {
     /// 数值
+    #[strum(serialize = "number")]
     Number,
     /// 布尔值
+    #[strum(serialize = "bool")]
     Bool,
     /// 字符串
+    #[strum(serialize = "string")]
     String,
 }
 
@@ -97,6 +118,7 @@ pub enum ValueKind {
 /// 与 WebGAL 一致, 只有数值, 布尔与字符串三种类型. 没有 null / undefined,
 /// 未定义的变量与函数一律作为错误处理.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, From)]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
 pub enum Value {
     /// 数值
     Number(Number),
@@ -276,6 +298,17 @@ mod tests {
         assert_eq!(Number::from_f64(2.5), Some(Number::Float(2.5)));
         assert_eq!(Number::from_f64(f64::INFINITY), None);
         assert_eq!(Number::from_f64(f64::NAN), None);
+    }
+
+    #[test]
+    fn number_from_str() {
+        assert_eq!("5".parse::<Number>(), Ok(Number::Integer(5)));
+        assert_eq!(" 5 ".parse::<Number>(), Ok(Number::Integer(5)));
+        assert_eq!("5.0".parse::<Number>(), Ok(Number::Float(5.0)));
+        assert_eq!("1e3".parse::<Number>(), Ok(Number::Float(1000.0)));
+        assert!("abc".parse::<Number>().is_err());
+        assert!("NaN".parse::<Number>().is_err());
+        assert!("1e999".parse::<Number>().is_err());
     }
 
     // -------- 类型 --------

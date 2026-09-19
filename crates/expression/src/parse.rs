@@ -15,6 +15,9 @@
 
 use std::{fmt, str::FromStr};
 
+#[cfg(feature = "serde")]
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+
 use crate::{
     error::{EvaluationError, ParseError, ParseErrorKind},
     evaluate::{EmptyEvaluationContext, EvaluationContext, evaluate_ast},
@@ -774,6 +777,7 @@ impl TypeContext for EmptyTypeContext {
 /// 解析一次后可多次求值, 适合对同一表达式使用不同上下文.
 /// 默认值为字面量 `0` 的表达式.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
 pub struct Expression {
     pub(crate) ast: Expr,
 }

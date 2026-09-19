@@ -1480,6 +1480,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "derive_more",
+ "serde_with",
+ "strum",
  "thiserror 2.0.20",
 ]
 
