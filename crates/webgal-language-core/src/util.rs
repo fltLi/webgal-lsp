@@ -68,6 +68,35 @@ pub fn split_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
     Some((&s[..pos], &s[pos + 1..]))
 }
 
+/// 从右侧避开转义 (如 `\;`) 分割字符
+///
+/// # Examples
+/// ```
+/// # use webgal_language_core::util::rsplit_once_escaped;
+///
+/// assert_eq!(rsplit_once_escaped("a;b", ';'), Some(("a", "b")));
+/// assert_eq!(rsplit_once_escaped("a;b;c", ';'), Some(("a;b", "c")));
+/// assert_eq!(rsplit_once_escaped("a\\b;c", ';'), Some(("a\\b", "c")));
+/// assert_eq!(rsplit_once_escaped("a;b\\;c", ';'), Some(("a", "b\\;c")));
+/// assert_eq!(rsplit_once_escaped("a\\;b", ';'), None);
+/// assert_eq!(rsplit_once_escaped("no semicolon", ';'), None);
+/// assert_eq!(rsplit_once_escaped("", ';'), None);
+/// assert_eq!(rsplit_once_escaped("std\\:\\:mem : hello?", ':'), Some(("std\\:\\:mem ", " hello?")));
+/// ```
+pub fn rsplit_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
+    let mut escaped = false;
+    let mut last = None;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            ch if ch == delimiter && !escaped => last = Some(i),
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    let pos = last?;
+    Some((&s[..pos], &s[pos + 1..]))
+}
+
 /// 查找字符串中第一对匹配的开闭符区间
 ///
 /// # Panics

@@ -14,6 +14,7 @@ use webgal_language_core::{
     },
     resource::{FigureInfo, FigureKind},
     sentence::*,
+    util::{rsplit_once_escaped, split_once_escaped},
 };
 
 use crate::{
@@ -357,6 +358,38 @@ pub fn try_complete_interpolate(
     }
 }
 
+/// 提取表达式末尾的变量 token
+///
+/// # Behaviors
+/// * 表达式变量名允许包含中文等非 ASCII 字符, 也允许在首字符之后包含数字.
+/// * 以数字开头的 token 按字面量处理, 不作为变量返回.
+pub fn trailing_variable(input: &str) -> Option<&str> {
+    const RESERVED: &[char] = &[
+        '+', '-', '*', '/', '%', '<', '>', '=', '!', '&', '|', '?', ':', ',', '(', ')',
+    ];
+
+    let token = input
+        .trim_end()
+        .rsplit(|character: char| character.is_whitespace() || RESERVED.contains(&character))
+        .next()?
+        .trim();
+
+    let first = token.chars().next()?;
+    (!first.is_ascii_digit()).then_some(token)
+}
+
+fn try_complete_expression(
+    input: &str,
+    position: Position,
+    variables: &VariableTable,
+) -> Option<Vec<PrimaryCompletion>> {
+    Some(complete_variables(
+        trailing_variable(input)?,
+        position,
+        variables,
+    ))
+}
+
 fn live2d_blink_json_schema() -> &'static Schema {
     static SCHEMA: Lazy<Schema> = Lazy::new(Live2dBlink::schema);
     &SCHEMA
@@ -470,6 +503,9 @@ impl Complete for SaySentence {
             ),
             "figureId" => complete_ident_enum(&project.ident().id, "立绘 ID", input, position),
             "fontSize" => complete_font_size_enum(input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -534,6 +570,9 @@ impl Complete for ChangeBackgroundSentence {
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -679,6 +718,9 @@ impl Complete for ChangeFigureSentence {
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "enterDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "exitDuration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -726,6 +768,9 @@ impl Complete for BgmSentence {
         match name {
             "enter" => complete_duration_enum("淡入淡出时间 (ms)", input, position, project),
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -757,6 +802,21 @@ impl Complete for PlayVideoSentence {
                 !self.skip_off => ("skipOff", "skipOff", "禁止跳过"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -800,6 +860,9 @@ impl Complete for PlayEffectSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "id" => complete_ident_enum(&project.ident().id, "语音 ID", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -852,6 +915,9 @@ impl Complete for SetAnimationSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -903,6 +969,9 @@ impl Complete for SetComplexAnimationSentence {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -954,6 +1023,9 @@ impl Complete for SetTransformSentence {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
             "ease" => complete_ease_enum(input, position),
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1001,6 +1073,9 @@ impl Complete for SetTempAnimationSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1034,6 +1109,9 @@ impl Complete for SetTransitionSentence {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
             "enter" => complete_animation_enum(input, position, project),
             "exit" => complete_animation_enum(input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1073,6 +1151,21 @@ impl Complete for PixiPerformSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for PixiInitSentence {
@@ -1086,6 +1179,21 @@ impl Complete for PixiInitSentence {
             ("pixiInit", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1149,6 +1257,9 @@ impl Complete for IntroSentence {
                 position,
             ),
             "delayTime" => complete_duration_enum("延迟时间 (ms)", input, position, project),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1174,6 +1285,21 @@ impl Complete for MiniAvatarSentence {
             ("miniAvatar", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1205,6 +1331,21 @@ impl Complete for SetTextboxSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for FilmModeSentence {
@@ -1232,6 +1373,21 @@ impl Complete for FilmModeSentence {
             ("filmMode", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1272,6 +1428,9 @@ impl Complete for CallSceneSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "writeReturnTo" => complete_variables(input, position, project.variable()),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1299,6 +1458,21 @@ impl Complete for ChangeSceneSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for ChooseSentence {
@@ -1309,18 +1483,30 @@ impl Complete for ChooseSentence {
         project: &Project,
     ) -> Vec<PrimaryCompletion> {
         // 提取最近一个选项
-        let (_, choice) = input.rsplit_once('|').unwrap_or(("", input));
-        let input = match choice.split_once(':') {
-            Some((_, scene)) => scene,
-            None => return Vec::default(),
+        let choice = match rsplit_once_escaped(input, '|') {
+            Some((_, v)) => v,
+            None => input,
         };
 
-        // 补全场景
-        let mut scene = complete_scene_file(input, position, project);
-        // 补全标签
-        let mut label = complete_ident_enum(&project.ident().label, "标签", input, position);
-        scene.append(&mut label);
-        scene
+        if let Some((_, prompt)) = choice.split_once("->") {
+            // TODO: 恢复转义前的文本进行补全
+            if let Some((_, target)) = split_once_escaped(prompt, ':') {
+                // 补全场景和标签
+                let mut scene = complete_scene_file(target, position, project);
+                let mut label =
+                    complete_ident_enum(&project.ident().label, "标签", target, position);
+                scene.append(&mut label);
+                scene
+            } else {
+                // 补全文本中的变量插值
+                try_complete_interpolate(prompt, position, project.variable()).unwrap_or_default()
+            }
+        } else {
+            // 补全文本中的变量插值 / 补全选项启用和显示表达式
+            try_complete_interpolate(choice, position, project.variable())
+                .or_else(|| try_complete_expression(choice, position, project.variable()))
+                .unwrap_or_default()
+        }
     }
 
     fn complete_argument_name(
@@ -1351,6 +1537,9 @@ impl Complete for ChooseSentence {
                 input,
                 position,
             ),
+            "when" => {
+                try_complete_expression(input, position, _project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1367,6 +1556,21 @@ impl Complete for LabelSentence {
             ("label", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1393,9 +1597,33 @@ impl Complete for JumpLabelSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for ReturnSentence {
+    fn complete_content(
+        &self,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        try_complete_expression(input, position, project.variable()).unwrap_or_default()
+    }
+
     fn complete_argument_name(
         &self,
         input: &str,
@@ -1406,6 +1634,21 @@ impl Complete for ReturnSentence {
             ("return", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1451,6 +1694,9 @@ impl Complete for UnlockCgSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1495,6 +1741,9 @@ impl Complete for UnlockBgmSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "series" => complete_ident_enum(&project.ident().series, "鉴赏系列", input, position),
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
             _ => Vec::default(),
         }
     }
@@ -1531,6 +1780,21 @@ impl Complete for GetUserInputSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for SetVariableSentence {
@@ -1540,9 +1804,8 @@ impl Complete for SetVariableSentence {
         position: Position,
         project: &Project,
     ) -> Vec<PrimaryCompletion> {
-        if let Some((_, _input)) = input.split_once('=') {
-            // TODO: 表达式内变量补全
-            Vec::default()
+        if let Some((_, input)) = input.split_once('=') {
+            try_complete_expression(input, position, project.variable()).unwrap_or_default()
         } else {
             complete_variables(input, position, project.variable())
         }
@@ -1562,6 +1825,21 @@ impl Complete for SetVariableSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for ShowVariablesSentence {
@@ -1575,6 +1853,21 @@ impl Complete for ShowVariablesSentence {
             ("showVars", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1601,6 +1894,21 @@ impl Complete for WaitSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for ApplyStyleSentence {
@@ -1614,6 +1922,21 @@ impl Complete for ApplyStyleSentence {
             ("applyStyle", input, position): {
                 self.when.is_none() => ("when", "when=", "条件执行"),
             }
+        }
+    }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
         }
     }
 }
@@ -1632,6 +1955,21 @@ impl Complete for CallSteamSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for EndSentence {
@@ -1647,8 +1985,43 @@ impl Complete for EndSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "when" => {
+                try_complete_expression(input, position, project.variable()).unwrap_or_default()
+            }
+            _ => Vec::default(),
+        }
+    }
 }
 
 // -------- 空白注释 --------
 
 impl Complete for CommentSentence {}
+
+#[cfg(test)]
+mod tests {
+    // This module is generated by AI.
+
+    use super::*;
+
+    #[test]
+    fn extracts_trailing_variable() {
+        for (input, expected) in [
+            ("hp + name", Some("name")),
+            ("角色 + 主角2号   ", Some("主角2号")),
+            ("hp + 123abc", None),
+            ("random(name)", None),
+            ("", None),
+        ] {
+            assert_eq!(trailing_variable(input), expected, "input: {input:?}");
+        }
+    }
+}
