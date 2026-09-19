@@ -36,8 +36,9 @@ pub fn reference(
 
     Some(
         variable
-            .references
+            .definitions
             .iter()
+            .chain(variable.references.iter())
             .map(|location| (location.scene.clone(), variable_location_to_range(location)))
             .collect(),
     )
