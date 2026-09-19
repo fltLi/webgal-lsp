@@ -167,9 +167,9 @@ where
 ///
 /// # Examples
 /// ```
-/// # use webgal_language_core::element::variables;
+/// # use webgal_language_core::element::variables_of;
 ///
-/// let names: Vec<_> = variables("HP: {hp}/100, 上限 {max}").collect();
+/// let names: Vec<_> = variables_of("HP: {hp}/100, 上限 {max}").collect();
 /// assert_eq!(names, vec!["hp", "max"]);
 /// ```
 pub fn variables_of(input: &str) -> impl Iterator<Item = &str> {
