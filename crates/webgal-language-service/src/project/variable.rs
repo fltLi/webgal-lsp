@@ -1,9 +1,10 @@
 //! 全局变量信息
 
-use std::{collections::HashMap, mem, ops::Range};
+use std::{collections::HashMap, mem, ops::Range, str::FromStr};
 
 use derive_more::{Deref, DerefMut, From, Into, IntoIterator, TryInto};
 use expression::{Expression, TypeContext, ValueKind};
+use once_cell::sync::Lazy;
 use webgal_language_core::{
     element::{ChoiceSplit, variables_of},
     sentence::{ReturnSentence, Scene, Sentence, SentenceExt, SentenceInfo},
@@ -396,6 +397,19 @@ impl<'a> SceneVariables<'a> {
             }
 
             // 游戏控制
+            Sentence::GetUserInput(_) if let Some(content) = sentence.primary.content => {
+                static STRING_EXPRESSION: Lazy<Expression> =
+                    Lazy::new(|| Expression::from_str("\"\"").unwrap());
+
+                let span = sentence.primary.get_span(content);
+                self.definitions.push(VariableDefinition {
+                    name: content,
+                    kind: VariableDefinitionKind::Expression(&STRING_EXPRESSION),
+                    line,
+                    span,
+                });
+            }
+
             Sentence::SetVariable(set_variable)
                 if let Some(content) = sentence.primary.content
                     && let Some((name, expression)) = content.split_once('=') =>
