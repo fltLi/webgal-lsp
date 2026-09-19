@@ -145,12 +145,15 @@ where
 {
     if let Some(content) = primary.content {
         // `:`
-        let pos = primary.command.len();
-        f(PrimaryToken::from_position(pos, TokenType::Operator));
+        let span = primary.get_span(content);
+        f(PrimaryToken::from_position(
+            primary.command.len(),
+            TokenType::Operator,
+        ));
 
         let shifted_push = |mut token: PrimaryToken| {
-            token.span.start += pos + 1;
-            token.span.end += pos + 1;
+            token.span.start += span.start;
+            token.span.end += span.start;
             f(token)
         };
 
@@ -761,5 +764,28 @@ mod tests {
             // 至少有一个 token (语句本身), 且无 panic
             assert!(!tokens.is_empty(), "Test case {i}: no tokens");
         }
+    }
+
+    #[test]
+    fn highlight_main_content_after_leading_spaces() {
+        let sentence = SentenceInfo::from_str("choose:  prompt:target;");
+        let mut tokens = Vec::new();
+
+        highlight_sentence(&sentence, |token| {
+            tokens.push((token.span, token.kind.to_id()))
+        });
+
+        assert_eq!(
+            tokens,
+            vec![
+                (0..6, TokenType::Function.to_id()),
+                (6..7, TokenType::Operator.to_id()),
+                (9..15, TokenType::String.to_id()),
+                (15..16, TokenType::Operator.to_id()),
+                (16..22, TokenType::Regex.to_id()),
+                (22..23, TokenType::Comment.to_id()),
+                (23..23, TokenType::Comment.to_id()),
+            ]
+        );
     }
 }
