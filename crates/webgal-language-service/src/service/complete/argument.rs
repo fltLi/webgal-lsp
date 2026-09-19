@@ -1,6 +1,7 @@
 use std::hash::Hash;
 
 use count::HashCounter;
+use expression::ValueKind;
 use json_language_service::{Schema, ToJsonSchema};
 use lsp_types::*;
 use once_cell::sync::Lazy;
@@ -16,7 +17,7 @@ use webgal_language_core::{
 };
 
 use crate::{
-    project::Project,
+    project::{Project, VariableTable},
     service::{
         Document,
         complete::{PrimaryCompletion, make_span},
@@ -125,7 +126,7 @@ where
                         kind,
                         description: Some(description),
                         document: None,
-                        sort_key: Some(format!("c{name}")),
+                        sort_key: Some(format!("d{name}")),
                         span,
                         insert_text: None,
                     }
@@ -135,7 +136,7 @@ where
                     kind: CompletionItemKind::FOLDER,
                     description: None,
                     document: None,
-                    sort_key: Some(format!("b{name}")),
+                    sort_key: Some(format!("c{name}")),
                     span,
                     insert_text: Some(format!("{name}/")),
                 },
@@ -320,6 +321,26 @@ fn complete_ease_enum(input: &str, position: Position) -> Vec<PrimaryCompletion>
         input,
         position,
     )
+}
+
+fn complete_variables(
+    input: &str,
+    position: Position,
+    variables: &VariableTable,
+) -> Vec<PrimaryCompletion> {
+    // TODO: 支持变量文档注释
+    variables
+        .iter()
+        .map(|(name, variable)| PrimaryCompletion {
+            name: name.to_string(),
+            kind: CompletionItemKind::VARIABLE,
+            description: variable.kind.as_kind().as_ref().map(ValueKind::to_string),
+            document: None,
+            sort_key: Some(format!("b{name}")),
+            span: make_span(position, input.len()),
+            insert_text: None,
+        })
+        .collect()
 }
 
 fn live2d_blink_json_schema() -> &'static Schema {
@@ -1206,6 +1227,19 @@ impl Complete for CallSceneSentence {
             }
         }
     }
+
+    fn complete_argument_value(
+        &self,
+        name: &str,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        match name {
+            "writeReturnTo" => complete_variables(input, position, project.variable()),
+            _ => Vec::default(),
+        }
+    }
 }
 
 impl Complete for ChangeSceneSentence {
@@ -1434,6 +1468,15 @@ impl Complete for UnlockBgmSentence {
 // -------- 游戏控制 --------
 
 impl Complete for GetUserInputSentence {
+    fn complete_content(
+        &self,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        complete_variables(input, position, project.variable())
+    }
+
     fn complete_argument_name(
         &self,
         input: &str,
@@ -1456,6 +1499,20 @@ impl Complete for GetUserInputSentence {
 }
 
 impl Complete for SetVariableSentence {
+    fn complete_content(
+        &self,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        if let Some((_, _input)) = input.split_once('=') {
+            // TODO: 表达式内变量补全
+            Vec::default()
+        } else {
+            complete_variables(input, position, project.variable())
+        }
+    }
+
     fn complete_argument_name(
         &self,
         input: &str,
