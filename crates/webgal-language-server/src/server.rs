@@ -41,6 +41,8 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     highlight_capability: bool,
     #[getset(set_with = "pub")]
+    inlay_hint_capability: bool,
+    #[getset(set_with = "pub")]
     complete_capability: bool,
     #[getset(set_with = "pub")]
     format_capability: bool,
@@ -65,6 +67,7 @@ impl Default for BackendBuilder {
             diagnose_capability: true,
             hover_capability: true,
             highlight_capability: true,
+            inlay_hint_capability: true,
             complete_capability: true,
             format_capability: true,
             diagnostic_delay: Duration::from_millis(500),
@@ -334,6 +337,10 @@ impl LanguageServer for Backend {
             )),
             hover_provider: self.options.hover_capability.then(document_capability),
             semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
+            inlay_hint_provider: self
+                .options
+                .inlay_hint_capability
+                .then(inlay_hint_capability),
             completion_provider: self.options.complete_capability.then(complete_capability),
             document_formatting_provider: self.options.format_capability.then(format_capability),
             workspace: Some(WorkspaceServerCapabilities {
@@ -688,6 +695,57 @@ impl LanguageServer for Backend {
                 ..Default::default()
             })
         }))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> jsonrpc::Result<Option<Vec<InlayHint>>> {
+        if !self.options.inlay_hint_capability {
+            warn!("Inlay hinting capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Inlay hinting requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let hints = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Inlay hinting skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Inlay hinting not found for highlighting");
+                    return None;
+                }
+            };
+
+            // 生成补全
+            info!(project = %project_path, %path, "Inlay hinting scene");
+            let mut hints = inlay_hint(path, params.range, &project)?;
+            inlay_hints_utf8_to_utf16(scene, &mut hints);
+            Some(hints)
+        })
+        .await
+        .unwrap();
+
+        Ok(hints)
     }
 
     async fn completion(

@@ -31,6 +31,16 @@ export interface LspTextEdit {
   newText: string;
 }
 
+export interface LspInlayHint {
+  position: LspPosition;
+  label: string | { value: string; tooltip?: string | { kind: string; value: string } }[];
+  kind?: number;
+  textEdits?: LspTextEdit[];
+  tooltip?: string | { kind: string; value: string };
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+}
+
 export interface LspDiagnostic {
   range: LspRange;
   severity: number;
@@ -463,6 +473,14 @@ class LspClient {
     });
     if (r && typeof r === 'object' && 'data' in r) return (r as { data: number[] }).data;
     return null;
+  }
+
+  async inlayHints(path: string, range: LspRange): Promise<LspInlayHint[] | null> {
+    const r = await this.sendRequest('textDocument/inlayHint', {
+      textDocument: { uri: toUri(path) },
+      range,
+    });
+    return (r as LspInlayHint[] | null) ?? null;
   }
 
   async formatting(path: string): Promise<LspTextEdit[] | null> {

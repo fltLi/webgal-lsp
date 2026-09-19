@@ -13,6 +13,7 @@ export interface WasmModule {
 
   // 语言服务
   diagnose: () => unknown[];
+  inlayHint: () => unknown[];
   document: (line: number, character: number) => unknown | null;
   highlightTokenTypes: () => string[];
   highlight: () => Uint32Array;
@@ -45,6 +46,10 @@ export function loadWasm(): Promise<WasmModule> {
       diagnose: () => {
         if (!currentScene) return [];
         return currentScene.diagnose();
+      },
+      inlayHint: () => {
+        if (!currentScene) return [];
+        return currentScene.inlay_hint();
       },
       document: (line: number, character: number) => {
         if (!currentScene) return null;

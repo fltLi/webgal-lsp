@@ -140,6 +140,25 @@ pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
     }
 }
 
+pub fn inlay_hints_utf8_to_utf16(scene: &Scene, hints: &mut [InlayHint]) {
+    hints.par_iter_mut().for_each(|hint| {
+        *hint = inlay_hint_utf8_to_utf16(scene, hint.clone());
+    });
+}
+
+pub fn inlay_hint_utf8_to_utf16(scene: &Scene, hint: InlayHint) -> InlayHint {
+    InlayHint {
+        position: position_utf8_to_utf16(scene, hint.position),
+        text_edits: hint.text_edits.map(|edits| {
+            edits
+                .into_iter()
+                .map(|edit| text_edit_utf8_to_utf16(scene, edit))
+                .collect()
+        }),
+        ..hint
+    }
+}
+
 pub fn completions_utf8_to_utf16(scene: &Scene, completions: &mut [CompletionItem]) {
     completions.par_iter_mut().for_each(|completion| {
         *completion = completion_utf8_to_utf16(scene, mem::take(completion));

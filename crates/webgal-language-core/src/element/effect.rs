@@ -149,6 +149,7 @@ impl fmt::Display for FigureId {
 
 /// 变量类型
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub enum VariableKind {
     #[default]
     Common,

@@ -1178,6 +1178,28 @@ impl fmt::Display for SaySentence {
     }
 }
 
+pub fn is_implicit_vocal_argument(name: &str) -> bool {
+    !matches!(
+        name,
+        "speaker"
+            | "vocal"
+            | "left"
+            | "left13"
+            | "left14"
+            | "center"
+            | "right"
+            | "right13"
+            | "right14"
+            | "figureId"
+            | "fontSize"
+            | "next"
+            | "continue"
+            | "concat"
+            | "notend"
+            | "when"
+    )
+}
+
 // -------- 调用场景 --------
 
 impl SentenceExt for CallSceneSentence {
@@ -1286,10 +1308,10 @@ impl fmt::Display for CallSceneSentence {
 // -------- 序列化与反序列化 --------
 
 fn display_vocal(vocal: &str, f: &mut fmt::Formatter) -> fmt::Result {
-    match vocal {
-        "speaker" | "vocal" | "left" | "center" | "right" | "figureId" | "fontSize" | "next"
-        | "continue" | "concat" | "notend" | "when" => write!(f, " -vocal={vocal}"),
-        _ => write!(f, " -{vocal}"),
+    if is_implicit_vocal_argument(vocal) {
+        write!(f, " -{vocal}")
+    } else {
+        write!(f, " -vocal={vocal}")
     }
 }
 

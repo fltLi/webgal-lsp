@@ -15,6 +15,7 @@ import {
   type LspCompletionItem,
   type LspDiagnostic,
   type LspHover,
+  type LspInlayHint,
   type LspRange,
   type LspTextEdit,
 } from './client';
@@ -166,6 +167,21 @@ function toMonacoTextEdit(edit: LspTextEdit): monaco.languages.TextEdit {
   return { range: toMonacoRange(edit.range), text: edit.newText };
 }
 
+function toMonacoInlayHint(hint: LspInlayHint): monaco.languages.InlayHint {
+  const label = Array.isArray(hint.label)
+    ? hint.label.map((part) => ({ label: part.value, tooltip: part.tooltip }))
+    : hint.label;
+  return {
+    position: { lineNumber: hint.position.line + 1, column: hint.position.character + 1 },
+    label,
+    kind: hint.kind,
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    tooltip: hint.tooltip,
+    textEdits: hint.textEdits?.map(toMonacoTextEdit),
+  };
+}
+
 // 语义高亮需要显式启用: 内置 vs/vs-dark 主题的 `semanticHighlighting` 恒为 false,
 // 且内置主题缺少 parameter/property/enumMember/function/operator 等规则,
 // 因此自定义主题并为全部 12 种语义 token 类型定义颜色。
@@ -295,6 +311,25 @@ export function setupMonaco(): void {
       }
     },
     releaseDocumentSemanticTokens: () => {},
+  });
+
+  monaco.languages.registerInlayHintsProvider(LANGUAGE_ID, {
+    provideInlayHints: async (model, range) => {
+      const path = pathOfModel(model);
+      if (!path) return { hints: [], dispose: () => {} };
+      try {
+        const hints = await lspClient.inlayHints(path, {
+          start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+          end: { line: range.endLineNumber - 1, character: range.endColumn - 1 },
+        });
+        return {
+          hints: (hints ?? []).map(toMonacoInlayHint),
+          dispose: () => {},
+        };
+      } catch {
+        return { hints: [], dispose: () => {} };
+      }
+    },
   });
 
   monaco.languages.registerCompletionItemProvider(LANGUAGE_ID, {

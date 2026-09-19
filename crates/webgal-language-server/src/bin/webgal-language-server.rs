@@ -17,6 +17,7 @@
 //! * `--disable-diagnose` - 禁用代码诊断 (默认启用).
 //! * `--disable-hover` - 禁用悬停提示 (默认启用).
 //! * `--disable-highlight` - 禁用语义高亮 (默认启用).
+//! * `--disable-inlay-hint` - 禁用内联提示 (默认启用).
 //! * `--disable-complete` - 禁用自动补全 (默认启用).
 //! * `--disable-format` - 禁用文档格式化 (默认启用).
 //! * `--diagnostic-delay <MS>` - 诊断批处理延迟 (毫秒), 默认 500ms.
@@ -93,6 +94,8 @@ struct Args {
     #[arg(long)]
     disable_highlight: bool,
     #[arg(long)]
+    disable_inlay_hint: bool,
+    #[arg(long)]
     disable_complete: bool,
     #[arg(long)]
     disable_format: bool,
@@ -114,6 +117,7 @@ async fn main() -> Result<()> {
         .with_diagnose_capability(!args.disable_diagnose)
         .with_hover_capability(!args.disable_hover)
         .with_highlight_capability(!args.disable_highlight)
+        .with_inlay_hint_capability(!args.disable_inlay_hint)
         .with_complete_capability(!args.disable_complete)
         .with_format_capability(!args.disable_format)
         .with_diagnostic_delay(Duration::from_millis(args.diagnostic_delay))

@@ -6,8 +6,8 @@
   "scripts": {
     "lint": "eslint src --ext .ts,.tsx",
     "type-check": "tsc --noEmit",
-    "build:wasm": "cd ../../crates/webgal-language-service && wasm-pack build --target web --release",
-    "build:wasm:dev": "cd ../../crates/webgal-language-service && wasm-pack build --target web",
+    "build:wasm": "cd ../../crates/webgal-language-service && wasm-pack build --target web --release -- --features simulate-diagnose",
+    "build:wasm:dev": "cd ../../crates/webgal-language-service && wasm-pack build --target web -- --features simulate-diagnose",
     "dev": "vite",
     "build": "npm run build:wasm && tsc && vite build",
     "build:dev": "npm run build:wasm:dev && tsc && vite build",

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import type { Diagnostic, Hover, Range } from 'vscode-languageserver-types';
+import type { Diagnostic, Hover, InlayHint, Range } from 'vscode-languageserver-types';
 import type { WasmModule } from './wasm';
 
 interface EditorProps {
@@ -42,6 +42,18 @@ function toMonacoRange(range: Range): monaco.IRange {
     startColumn: range.start.character + 1,
     endLineNumber: range.end.line + 1,
     endColumn: range.end.character + 1,
+  };
+}
+
+function toMonacoInlayHint(hint: InlayHint): monaco.languages.InlayHint {
+  return {
+    position: { lineNumber: hint.position.line + 1, column: hint.position.character + 1 },
+    label: typeof hint.label === 'string' ? hint.label : hint.label.map((part) => ({ label: part.value })),
+    kind: hint.kind,
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    tooltip: typeof hint.tooltip === 'string' ? hint.tooltip : hint.tooltip?.value,
+    textEdits: hint.textEdits?.map((edit) => ({ range: toMonacoRange(edit.range), text: edit.newText })),
   };
 }
 
@@ -134,6 +146,22 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         } catch (e) {
           console.error('Hover error:', e);
           return null;
+        }
+      },
+    });
+
+    monaco.languages.registerInlayHintsProvider(languageId, {
+      provideInlayHints: (model, range) => {
+        if (!wasm) return { hints: [], dispose: () => {} };
+        try {
+          const hints = wasm.inlayHint() as InlayHint[];
+          const filtered = hints.filter(
+            (hint) => hint.position.line + 1 >= range.startLineNumber && hint.position.line + 1 <= range.endLineNumber
+          );
+          return { hints: filtered.map(toMonacoInlayHint), dispose: () => {} };
+        } catch (e) {
+          console.error('Inlay hint error:', e);
+          return { hints: [], dispose: () => {} };
         }
       },
     });
