@@ -15,7 +15,8 @@
 //! ## 服务能力配置
 //! 以下参数用于调整语言服务提供的具体功能及性能参数:
 //! * `--disable-diagnose` - 禁用代码诊断 (默认启用).
-//! * `--disable-reference` - 禁用转到定义 (默认启用).
+//! * `--disable-definition` - 禁用转到定义 (默认启用).
+//! * `--disable-reference` - 禁用查找引用 (默认启用).
 //! * `--disable-hover` - 禁用悬停提示 (默认启用).
 //! * `--disable-highlight` - 禁用语义高亮 (默认启用).
 //! * `--disable-inlay-hint` - 禁用内联提示 (默认启用).
@@ -91,6 +92,8 @@ struct Args {
     #[arg(long)]
     disable_diagnose: bool,
     #[arg(long)]
+    disable_definition: bool,
+    #[arg(long)]
     disable_reference: bool,
     #[arg(long)]
     disable_hover: bool,
@@ -118,6 +121,7 @@ async fn main() -> Result<()> {
     // 构建后端配置
     let builder = BackendBuilder::default()
         .with_diagnose_capability(!args.disable_diagnose)
+        .with_definition_capability(!args.disable_definition)
         .with_reference_capability(!args.disable_reference)
         .with_hover_capability(!args.disable_hover)
         .with_highlight_capability(!args.disable_highlight)

@@ -401,6 +401,25 @@ export function setupMonaco(): void {
     },
   });
 
+  monaco.languages.registerDefinitionProvider(LANGUAGE_ID, {
+    provideDefinition: async (model, position) => {
+      const path = pathOfModel(model);
+      if (!path) return null;
+      try {
+        const locations = await lspClient.definition(path, {
+          line: position.lineNumber - 1,
+          character: position.column - 1,
+        });
+        return (locations ?? []).map((location: LspLocation) => ({
+          uri: monaco.Uri.parse(location.uri),
+          range: toMonacoRange(location.range),
+        }));
+      } catch {
+        return null;
+      }
+    },
+  });
+
   monaco.languages.registerDocumentFormattingEditProvider(LANGUAGE_ID, {
     provideDocumentFormattingEdits: async (model) => {
       const path = pathOfModel(model);

@@ -16,6 +16,7 @@ export interface WasmModule {
   inlayHint: () => unknown[];
   document: (line: number, character: number) => unknown | null;
   reference: (line: number, character: number) => unknown[];
+  definition: (line: number, character: number) => unknown[];
   highlightTokenTypes: () => string[];
   highlight: () => Uint32Array;
   complete: (line: number, character: number) => unknown[];
@@ -59,6 +60,10 @@ export function loadWasm(): Promise<WasmModule> {
       reference: (line: number, character: number) => {
         if (!currentScene) return [];
         return currentScene.reference(line, character);
+      },
+      definition: (line: number, character: number) => {
+        if (!currentScene) return [];
+        return currentScene.definition(line, character);
       },
       highlightTokenTypes: () => Scene.highlight_token_types(),
       highlight: () => {

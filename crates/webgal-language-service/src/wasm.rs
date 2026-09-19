@@ -49,7 +49,22 @@ impl Scene {
             .into_iter()
             .map(|(path, range)| (path, range_utf8_to_utf16(&self, range)))
             .collect();
+
         references_to_locations("file:///webgal-playground", references)
+            .into_iter()
+            .map(serialize)
+            .collect()
+    }
+
+    pub fn definition(&self, line: u32, character: u32) -> Vec<JsValue> {
+        let position = position_utf16_to_utf8(&self, Position { line, character });
+        let definitions = crate::service::definition("start.txt", position, &self.0)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(path, range)| (path, range_utf8_to_utf16(&self, range)))
+            .collect();
+
+        definitions_to_locations("file:///webgal-playground", definitions)
             .into_iter()
             .map(serialize)
             .collect()
@@ -126,7 +141,7 @@ impl Scene {
 
     pub fn format(&self) -> Vec<JsValue> {
         let mut edits = format(&self);
-        formatting_utf8_to_utf16(&self, &mut edits);
+        text_edits_utf8_to_utf16(&self, &mut edits);
 
         edits.into_iter().map(serialize).collect()
     }

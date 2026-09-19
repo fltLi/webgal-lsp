@@ -166,6 +166,22 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
       },
     });
 
+    monaco.languages.registerDefinitionProvider(languageId, {
+      provideDefinition: (model, position) => {
+        if (!wasm) return null;
+        try {
+          const locations = wasm.definition(position.lineNumber - 1, position.column - 1) as Location[];
+          return locations.map((location) => ({
+            uri: model.uri,
+            range: toMonacoRange(location.range),
+          }));
+        } catch (e) {
+          console.error('Definition error:', e);
+          return null;
+        }
+      },
+    });
+
     monaco.languages.registerInlayHintsProvider(languageId, {
       provideInlayHints: (model, range) => {
         if (!wasm) return { hints: [], dispose: () => {} };

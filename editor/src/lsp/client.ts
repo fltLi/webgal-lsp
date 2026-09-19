@@ -504,6 +504,16 @@ class LspClient {
     });
     return (r as LspLocation[] | null) ?? null;
   }
+
+  async definition(path: string, position: LspPosition): Promise<LspLocation[] | null> {
+    const r = await this.sendRequest('textDocument/definition', {
+      textDocument: { uri: toUri(path) },
+      position,
+    });
+    if (Array.isArray(r)) return r as LspLocation[];
+    if (r && typeof r === 'object' && 'uri' in r) return [r as LspLocation];
+    return null;
+  }
 }
 
 export const lspClient = new LspClient();
