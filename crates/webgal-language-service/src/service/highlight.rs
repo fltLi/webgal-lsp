@@ -416,10 +416,7 @@ where
 
         if !prompt.is_empty() {
             // 显示文本
-            f(PrimaryToken {
-                span: span_of(content, prompt),
-                kind: TokenType::String,
-            });
+            highlight_interpolate(prompt, TokenType::String, |s| span_of(content, s), &mut f);
         }
 
         if let Some(target) = target {
