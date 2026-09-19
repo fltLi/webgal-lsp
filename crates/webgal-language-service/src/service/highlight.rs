@@ -4,7 +4,7 @@ use json_language_service::TokenType as JsonTokenType;
 use lsp_types::*;
 use rayon::prelude::*;
 use webgal_language_core::{
-    element::TokenSplit,
+    element::{InterpolateItem, InterpolateSplit, TokenSplit},
     sentence::{
         PrimarySentence, Scene, Sentence, SentenceInfo, is_call_scene_variable_argument,
         is_implicit_vocal_argument,
@@ -128,10 +128,12 @@ where
         });
     } else if primary.content.is_some() {
         // 对话者
-        f(PrimaryToken {
-            span: primary.get_span(primary.command),
-            kind: TokenType::Type,
-        });
+        highlight_interpolate(
+            primary.command,
+            TokenType::Type,
+            |s| primary.get_span(s),
+            &mut f,
+        );
     } else {
         // 对话内容
         highlight_say_content(primary.command, &mut f);
@@ -196,7 +198,7 @@ fn highlight_argument<F>(
     f(PrimaryToken::from_position(start - 1, TokenType::Operator));
 
     // 参数名
-    if matches!(sentence, Sentence::Say(_)) && value.is_none() && is_implicit_vocal_argument(name) {
+    if sentence.is_say() && value.is_none() && is_implicit_vocal_argument(name) {
         f(PrimaryToken {
             span,
             kind: TokenType::Regex,
@@ -226,6 +228,8 @@ fn highlight_argument<F>(
                 span,
                 kind: TokenType::Regex,
             });
+        } else if sentence.is_say() && matches!(name, "speaker") {
+            highlight_interpolate(value, TokenType::Type, |s| primary.get_span(s), f);
         } else if matches!(name, "transform" | "bounds" | "blink" | "focus") {
             highlight_json(value, |mut token| {
                 token.span.start += span.start;
@@ -329,10 +333,12 @@ where
         for token in TokenSplit::new(text) {
             // 文本
             if !token.text.is_empty() {
-                f(PrimaryToken {
-                    span: span_of(content, token.text),
-                    kind: TokenType::String,
-                });
+                highlight_interpolate(
+                    token.text,
+                    TokenType::String,
+                    |s| span_of(content, s),
+                    &mut f,
+                );
             }
 
             // 注音和样式
@@ -362,10 +368,7 @@ where
     while let Some(text) = text_split.next() {
         // 文本
         if !text.is_empty() {
-            f(PrimaryToken {
-                span: span_of(content, text),
-                kind: TokenType::String,
-            });
+            highlight_interpolate(text, TokenType::String, |s| span_of(content, s), &mut f);
         }
 
         if text_split.peek().is_some() {
@@ -513,6 +516,38 @@ where
             span: span_of(content, current),
             kind: TokenType::Regex,
         });
+    }
+}
+
+fn highlight_interpolate<F, S>(s: &str, kind: TokenType, mut span_of: S, mut f: F)
+where
+    F: FnMut(PrimaryToken),
+    S: FnMut(&str) -> ops::Range<usize>,
+{
+    for item in InterpolateSplit::new(s) {
+        match item {
+            InterpolateItem::Text(text) => {
+                // 纯文本
+                f(PrimaryToken {
+                    span: span_of(text),
+                    kind,
+                });
+            }
+
+            InterpolateItem::Variable(name) => {
+                // 变量插值
+                let span = span_of(name);
+                f(PrimaryToken::from_position(
+                    span.start - 1,
+                    TokenType::Operator,
+                ));
+                f(PrimaryToken {
+                    span: span.clone(),
+                    kind: TokenType::Variable,
+                });
+                f(PrimaryToken::from_position(span.end, TokenType::Operator));
+            }
+        }
     }
 }
 
@@ -785,6 +820,31 @@ mod tests {
                 (16..22, TokenType::Regex.to_id()),
                 (22..23, TokenType::Comment.to_id()),
                 (23..23, TokenType::Comment.to_id()),
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_variable_interpolation_in_say_content() {
+        let sentence = SentenceInfo::from_str("Alice:Hello {name}!;");
+        let mut tokens = Vec::new();
+
+        highlight_sentence(&sentence, |token| {
+            tokens.push((token.span, token.kind.to_id()))
+        });
+
+        assert_eq!(
+            tokens,
+            vec![
+                (0..5, TokenType::Type.to_id()),
+                (5..6, TokenType::Operator.to_id()),
+                (6..12, TokenType::String.to_id()),
+                (12..13, TokenType::Operator.to_id()),
+                (13..17, TokenType::Variable.to_id()),
+                (17..18, TokenType::Operator.to_id()),
+                (18..19, TokenType::String.to_id()),
+                (19..20, TokenType::Comment.to_id()),
+                (20..20, TokenType::Comment.to_id()),
             ]
         );
     }
