@@ -343,6 +343,20 @@ fn complete_variables(
         .collect()
 }
 
+pub fn try_complete_interpolate(
+    input: &str,
+    position: Position,
+    variables: &VariableTable,
+) -> Option<Vec<PrimaryCompletion>> {
+    if let Some((_, input)) = input.rsplit_once('{')
+        && !input.contains('}')
+    {
+        Some(complete_variables(input, position, variables))
+    } else {
+        None
+    }
+}
+
 fn live2d_blink_json_schema() -> &'static Schema {
     static SCHEMA: Lazy<Schema> = Lazy::new(Live2dBlink::schema);
     &SCHEMA
@@ -389,6 +403,15 @@ macro_rules! complete_argument_name_collect {
 // -------- 常规演出 --------
 
 impl Complete for SaySentence {
+    fn complete_content(
+        &self,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        try_complete_interpolate(input, position, project.variable()).unwrap_or_default()
+    }
+
     fn complete_argument_name(
         &self,
         input: &str,
@@ -435,7 +458,10 @@ impl Complete for SaySentence {
         project: &Project,
     ) -> Vec<PrimaryCompletion> {
         match name {
-            "speaker" => complete_ident_enum(&project.ident().speaker, "人物", input, position),
+            "speaker" => try_complete_interpolate(input, position, project.variable())
+                .unwrap_or_else(|| {
+                    complete_ident_enum(&project.ident().speaker, "人物", input, position)
+                }),
             "vocal" => complete_file(
                 &project.resource().vocal,
                 |_, _| (CompletionItemKind::FILE, "语音".to_string()),
@@ -1065,6 +1091,15 @@ impl Complete for PixiInitSentence {
 }
 
 impl Complete for IntroSentence {
+    fn complete_content(
+        &self,
+        input: &str,
+        position: Position,
+        project: &Project,
+    ) -> Vec<PrimaryCompletion> {
+        try_complete_interpolate(input, position, project.variable()).unwrap_or_default()
+    }
+
     fn complete_argument_name(
         &self,
         input: &str,

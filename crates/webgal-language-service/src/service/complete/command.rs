@@ -5,7 +5,7 @@ use crate::{
     project::Project,
     service::{
         Document,
-        complete::{PrimaryCompletion, make_span},
+        complete::{PrimaryCompletion, argument::try_complete_interpolate, make_span},
         document_command,
     },
 };
@@ -16,11 +16,13 @@ pub fn complete_command(
     position: Position,
     project: &Project,
 ) -> Vec<PrimaryCompletion> {
-    let mut completions = complete_speaker(&project.ident().speaker, input, position);
-    default_commands()
-        .iter()
-        .for_each(|command| command.complete(input, position, &mut completions));
-    completions
+    try_complete_interpolate(input, position, project.variable()).unwrap_or_else(|| {
+        let mut completions = complete_speaker(&project.ident().speaker, input, position);
+        default_commands()
+            .iter()
+            .for_each(|command| command.complete(input, position, &mut completions));
+        completions
+    })
 }
 
 fn complete_speaker(
