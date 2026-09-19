@@ -647,6 +647,9 @@ impl TokenType {
             "defaultValue" | "rule" | "ruleFlag" => Some(Self::Regex),
             "when" => Some(Self::Regex),
 
+            // 变量
+            "writeReturnTo" => Some(Self::Parameter),
+
             _ => None,
         }
     }
