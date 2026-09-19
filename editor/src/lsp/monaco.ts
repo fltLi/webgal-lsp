@@ -38,7 +38,7 @@ export const LANGUAGE_ID = 'webgal';
 
 // 服务端 completionProvider.triggerCharacters (见 crates/webgal-language-service/src/service/complete.rs):
 // 输入这些符号时自动触发补全 (Monaco 原生支持 provider 级 triggerCharacters)。
-export const TRIGGER_CHARACTERS = [':', '-', '=', '/', '\\', '"'];
+export const TRIGGER_CHARACTERS = [':', '-', '=', '{', '/', '\\', '"'];
 
 // Monaco model -> 原始系统路径。
 // 不能依赖 `model.uri.toString()` 往返还原路径: Monaco 的 Uri 会把

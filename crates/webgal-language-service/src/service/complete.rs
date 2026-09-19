@@ -16,6 +16,7 @@ pub fn complete_capability() -> CompletionOptions {
             ":".to_string(),  // 主参数
             "-".to_string(),  // 参数名
             "=".to_string(),  // 参数值
+            "{".to_string(),  // 变量插值
             "/".to_string(),  // 路径 / 立绘动作表情
             "\\".to_string(), // 路径 / 立绘动作表情
             "\"".to_string(), // JSON
