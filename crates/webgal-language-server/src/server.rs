@@ -37,9 +37,15 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     diagnose_capability: bool,
     #[getset(set_with = "pub")]
+    definition_capability: bool,
+    #[getset(set_with = "pub")]
+    reference_capability: bool,
+    #[getset(set_with = "pub")]
     hover_capability: bool,
     #[getset(set_with = "pub")]
     highlight_capability: bool,
+    #[getset(set_with = "pub")]
+    inlay_hint_capability: bool,
     #[getset(set_with = "pub")]
     complete_capability: bool,
     #[getset(set_with = "pub")]
@@ -63,8 +69,11 @@ impl Default for BackendBuilder {
     fn default() -> Self {
         Self {
             diagnose_capability: true,
+            definition_capability: true,
+            reference_capability: true,
             hover_capability: true,
             highlight_capability: true,
+            inlay_hint_capability: true,
             complete_capability: true,
             format_capability: true,
             diagnostic_delay: Duration::from_millis(500),
@@ -332,8 +341,17 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
+            references_provider: self.options.reference_capability.then(reference_capability),
+            definition_provider: self
+                .options
+                .definition_capability
+                .then(definition_capability),
             hover_provider: self.options.hover_capability.then(document_capability),
             semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
+            inlay_hint_provider: self
+                .options
+                .inlay_hint_capability
+                .then(inlay_hint_capability),
             completion_provider: self.options.complete_capability.then(complete_capability),
             document_formatting_provider: self.options.format_capability.then(format_capability),
             workspace: Some(WorkspaceServerCapabilities {
@@ -575,6 +593,125 @@ impl LanguageServer for Backend {
 
     // -------- service --------
 
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> jsonrpc::Result<Option<GotoDefinitionResponse>> {
+        if !self.options.definition_capability {
+            warn!("Definition capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Definition requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let definitions = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Definition skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for definition");
+                    return None;
+                }
+            };
+
+            // 转到定义
+            info!(project = %project_path, %path, "Goto definition");
+            let position = position_utf16_to_utf8(
+                scene,
+                params.text_document_position_params.position,
+            );
+            let definitions = definition(scene_path, position, &project)?;
+            let mut definitions = definitions_to_locations(&project_path, definitions);
+            locations_utf8_to_utf16(scene, &mut definitions);
+            Some(definitions)
+        })
+        .await
+        .unwrap();
+
+        Ok(definitions.map(GotoDefinitionResponse::Array))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> jsonrpc::Result<Option<Vec<Location>>> {
+        if !self.options.reference_capability {
+            warn!("References capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document_position.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "References requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let references = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "References skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, path = %scene_path, "Scene not found for references");
+                    return None;
+                }
+            };
+
+            // 查找引用
+            info!(project = %project_path, %path, "Find references");
+            let position = position_utf16_to_utf8(
+                scene,
+                params.text_document_position.position,
+            );
+            let references = reference(scene_path, position, &project)?;
+            let mut references = references_to_locations(&project_path, references);
+            locations_utf8_to_utf16(scene, &mut references);
+            Some(references)
+        })
+        .await
+        .unwrap();
+
+        Ok(references)
+    }
+
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
         if !self.options.hover_capability {
             warn!("Hover capability disabled, rejecting request");
@@ -690,6 +827,58 @@ impl LanguageServer for Backend {
         }))
     }
 
+    async fn inlay_hint(&self, params: InlayHintParams) -> jsonrpc::Result<Option<Vec<InlayHint>>> {
+        if !self.options.inlay_hint_capability {
+            warn!("Inlay hinting capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Inlay hinting requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let hints = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Inlay hinting skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Inlay hinting not found for highlighting");
+                    return None;
+                }
+            };
+
+            // 生成补全
+            info!(project = %project_path, %path, "Inlay hinting scene");
+            let range = range_utf16_to_utf8(scene, params.range);
+            let mut hints = inlay_hint(path, range, &project)?;
+            inlay_hints_utf8_to_utf16(scene, &mut hints);
+            Some(hints)
+        })
+        .await
+        .unwrap();
+
+        Ok(hints)
+    }
+
     async fn completion(
         &self,
         params: CompletionParams,
@@ -790,7 +979,7 @@ impl LanguageServer for Backend {
             // 生成补全
             info!(project = %project_path, %path, "Formatting scene");
             let mut edits = format(scene);
-            formatting_utf8_to_utf16(scene, &mut edits);
+            text_edits_utf8_to_utf16(scene, &mut edits);
             Some(edits)
         })
         .await

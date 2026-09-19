@@ -5,7 +5,6 @@ use derive_more::{Deref, Into, IntoIterator};
 use lsp_types::{Diagnostic as LspDiagnostic, *};
 use strum::Display;
 use thiserror::Error;
-#[cfg(feature = "lsp")]
 use webgal_language_core::sentence::PrimarySentence;
 
 /// 模拟执行诊断错误信息 (多场景)
@@ -149,6 +148,9 @@ pub enum StopReason {
 
     #[error("检查点移除重复状态或达到最大通过次数")]
     Checkpoint,
+
+    #[error("场景调用层数超过上限 {0}, 可能存在 callScene 无限递归")]
+    SceneStackOverflow(usize),
 
     #[error("用户输入语句缺少静态分析预设值或默认值")]
     MissingUserInputValue,

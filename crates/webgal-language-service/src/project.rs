@@ -14,10 +14,12 @@ use webgal_simulate::ProjectView;
 pub use error::*;
 pub use ident::*;
 pub use resource::*;
+pub use variable::*;
 
 mod error;
 mod ident;
 mod resource;
+mod variable;
 
 /// WebGAL 项目信息
 #[derive(Debug, Default, Getters)]
@@ -28,6 +30,8 @@ pub struct Project {
     resource: Resource,
     #[getset(get = "pub")]
     ident: IdentTable,
+    #[getset(get = "pub")]
+    variable: VariableTable,
 }
 
 impl Project {
@@ -36,6 +40,7 @@ impl Project {
             config,
             resource: Resource::new(),
             ident: IdentTable::new(),
+            variable: VariableTable::default(),
         }
     }
 
@@ -79,18 +84,30 @@ impl Project {
                 let content = f().map_err(ErrorKind::Content).map_err(make_error)?;
                 let scene = Scene::from_str(content);
 
-                // 更新符号
+                // 检查更新
+                let mut rebuild_variables = true;
                 if let Entry::Occupied(o) = &entry {
-                    self.ident.remove_scene(
-                        o.get()
-                            .as_item()
-                            .expect("场景条目已在 [`try_entry_of`] 校验"),
-                    );
-                }
-                self.ident.insert_scene(&scene);
+                    let old_scene = o
+                        .get()
+                        .as_item()
+                        .expect("场景条目已在 [`try_entry_of`] 校验");
 
+                    let (_, is_scene_variables_changed) = rayon::join(
+                        || self.ident.remove_scene(old_scene),
+                        || is_scene_variables_changed(old_scene, &scene),
+                    );
+                    rebuild_variables = is_scene_variables_changed;
+                }
+
+                // 更新符号
+                self.ident.insert_scene(&scene);
                 // 插入场景
                 entry.insert_entry(Node::Item(scene));
+
+                // 重建变量表
+                if rebuild_variables {
+                    self.rebuild_variables();
+                }
             }
 
             ResourceKind::Animation => {
@@ -152,6 +169,7 @@ impl Project {
             ResourceKind::Scene => {
                 let scene = try_remove(path, &mut self.resource.scene).map_err(make_error)?;
                 self.ident.remove_scene(&scene);
+                self.rebuild_variables();
             }
 
             ResourceKind::Animation => {
@@ -184,6 +202,15 @@ impl Project {
         }
 
         Ok(())
+    }
+
+    fn rebuild_variables(&mut self) {
+        self.variable = VariableTable::build(
+            self.resource
+                .scene
+                .iter_recursively()
+                .filter_map(|(path, node)| Some((path, node.as_item()?))),
+        );
     }
 }
 

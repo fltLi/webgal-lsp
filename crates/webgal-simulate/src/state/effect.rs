@@ -1,23 +1,18 @@
 //! 舞台状态变换
 
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    collections::{HashMap, hash_map::Entry},
-    rc::Rc,
-    result,
-};
+use std::{borrow::Cow, cell::RefCell, collections::hash_map::Entry, rc::Rc};
 
-use serde_json::Value;
+use expression::{EvaluationContext, Value};
 use webgal_language_core::{
     dispatch_sentence,
-    element::{FigureId, FigureSide, ObjectId, TokenSplit},
+    element::{FigureId, FigureSide, ObjectId, TokenSplit, interpolate},
     sentence::*,
 };
 
 use crate::{
-    DiagnosticKind, DiagnosticLocation, PrimaryDiagnostic, ProjectView, SymbolKind, scene::Project,
-    state::stage::*,
+    DiagnosticKind, DiagnosticLocation, PrimaryDiagnostic, ProjectView, SymbolKind,
+    scene::Project,
+    state::{stage::*, variable::VariableTable},
 };
 
 // TODO: 检查 Transform 合并有效性
@@ -35,7 +30,7 @@ impl EffectList {
     pub fn from_sentence<'a, P: ProjectView<'a>>(
         sentence: &Sentence,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         project: &Project<'a, P>,
         diagnostics: Rc<RefCell<Vec<PrimaryDiagnostic>>>,
     ) -> Self {
@@ -107,7 +102,7 @@ impl StageEffect {
     fn from_sentence<'a, P: ProjectView<'a>>(
         sentence: &Sentence,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         project: &Project<'a, P>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) -> Vec<(DiagnosticLocation, Self)> {
@@ -668,7 +663,7 @@ trait ToEffects {
     fn to_effects<'a, P: ProjectView<'a>>(
         &self,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         project: &Project<'a, P>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) -> Vec<(DiagnosticLocation, StageEffect)> {
@@ -682,7 +677,7 @@ trait ToEffects {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -695,7 +690,7 @@ impl ToEffects for Sentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -712,7 +707,7 @@ impl ToEffects for SaySentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -780,7 +775,7 @@ impl ToEffects for ChangeBackgroundSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        _variables: &HashMap<String, Value>,
+        _variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         _diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -813,7 +808,7 @@ impl ToEffects for ChangeFigureSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -876,7 +871,7 @@ impl ToEffects for BgmSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        _variables: &HashMap<String, Value>,
+        _variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         _diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -898,7 +893,7 @@ impl ToEffects for PlayEffectSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -936,7 +931,7 @@ impl ToEffects for SetAnimationSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -969,7 +964,7 @@ impl ToEffects for SetTransformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1000,7 +995,7 @@ impl ToEffects for SetTempAnimationSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1028,7 +1023,7 @@ impl ToEffects for SetTransitionSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1069,7 +1064,7 @@ impl ToEffects for PixiPerformSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        _variables: &HashMap<String, Value>,
+        _variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         _diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1085,7 +1080,7 @@ impl ToEffects for PixiInitSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        _variables: &HashMap<String, Value>,
+        _variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         _diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1101,7 +1096,7 @@ impl ToEffects for IntroSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        variables: &HashMap<String, Value>,
+        variables: &VariableTable,
         _project: &Project<'a, P>,
         _effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1118,7 +1113,7 @@ impl ToEffects for SetTextboxSentence {
     fn extend_effects<'a, P: ProjectView<'a>>(
         &self,
         _primary: &PrimarySentence<'a>,
-        _variables: &HashMap<String, Value>,
+        _variables: &VariableTable,
         _project: &Project<'a, P>,
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         _diagnostics: &mut Vec<PrimaryDiagnostic>,
@@ -1144,6 +1139,8 @@ impl ToEffects for LabelSentence {}
 
 impl ToEffects for JumpLabelSentence {}
 
+impl ToEffects for ReturnSentence {}
+
 // -------- 鉴赏 --------
 
 impl ToEffects for UnlockCgSentence {}
@@ -1154,9 +1151,9 @@ impl ToEffects for UnlockBgmSentence {}
 
 impl ToEffects for GetUserInputSentence {}
 
-impl ToEffects for SetVarSentence {}
+impl ToEffects for SetVariableSentence {}
 
-impl ToEffects for ShowVarsSentence {}
+impl ToEffects for ShowVariablesSentence {}
 
 impl ToEffects for WaitSentence {}
 
@@ -1174,62 +1171,29 @@ impl ToEffects for CommentSentence {}
 
 /// 字符串变量插值
 ///
-/// # Returns
-/// 插值结果字符串.
-/// 若无插值调用, 则返回原始字符串引用.
-///
-/// # Errors
-/// 变量不存在时, 返回 [`DiagnosticKind::UndefinedSymbol`] 错误.
-///
-/// # Behavior
-/// * 贪心匹配 `{` 和 `}`, 尝试替换变量.
-/// * 匹配内容直接视为变量名, 不处理转义, 空白字符移除, 表达式求值等.
-fn interpolate<'a>(
-    input: &'a str,
-    variables: &HashMap<String, Value>,
-) -> result::Result<Cow<'a, str>, DiagnosticKind> {
-    if !input.contains('{') {
-        return Ok(Cow::Borrowed(input));
-    }
-
-    let mut start = 0;
-    let mut result = String::with_capacity(input.len());
-
-    while start < input.len()
-        && let Some(idx) = input[start..].find('{')
-        && let Some(len) = input[start + idx..].find('}')
-    {
-        let variable = &input[start + idx + 1..start + idx + len];
-        let value = variables.get(variable).ok_or_else(|| {
-            DiagnosticKind::UndefinedSymbol(SymbolKind::Variable, variable.to_string())
-        })?;
-
-        result.push_str(&input[start..start + idx]);
-        match value {
-            Value::String(s) => result.push_str(s),
-            value => result.push_str(&value.to_string()),
-        }
-
-        start += idx + len + 1;
-    }
-
-    result.push_str(&input[start..]);
-    Ok(Cow::Owned(result))
-}
-
-/// 字符串变量插值
-///
 /// # Behavior
 /// * 插值策略详见 [`interpolate`].
 /// * 插值失败时, 将记录诊断并返回原始值的引用.
 fn interpolate_or_record<'a>(
     input: &'a str,
-    variables: &HashMap<String, Value>,
+    variables: &VariableTable,
     span: DiagnosticLocation,
     diagnostics: &mut Vec<PrimaryDiagnostic>,
 ) -> Cow<'a, str> {
-    interpolate(input, variables).unwrap_or_else(|error| {
-        diagnostics.push(error.into_primary_diagnostic(span));
+    interpolate(input, |name| {
+        variables
+            .get_variable(name)
+            .map(|value| match value {
+                Value::String(s) => s,
+                value => value.to_string(),
+            })
+            .map(Cow::Owned)
+    })
+    .unwrap_or_else(|name| {
+        diagnostics.push(PrimaryDiagnostic {
+            span,
+            detail: DiagnosticKind::UndefinedSymbol(SymbolKind::Variable, name.to_string()),
+        });
         Cow::Borrowed(input)
     })
 }
@@ -1237,7 +1201,7 @@ fn interpolate_or_record<'a>(
 // fn make_transform_effect(
 //     transform: Box<Transform>,
 //     id: &ObjectId,
-//     variables: &HashMap<String, Value>,
+//     variables: &VariableTable,
 //     diagnostics: &mut Vec<PrimaryDiagnostic>,
 // ) -> StageEffect {
 //     match id {
@@ -1251,7 +1215,7 @@ fn interpolate_or_record<'a>(
 // }
 fn make_transform_effect(
     id: &ObjectId,
-    variables: &HashMap<String, Value>,
+    variables: &VariableTable,
     span: DiagnosticLocation,
     diagnostics: &mut Vec<PrimaryDiagnostic>,
 ) -> Option<StageEffect> {

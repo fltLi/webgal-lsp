@@ -3,6 +3,7 @@
 use std::{borrow::Cow, fmt, result};
 
 use derive_more::{From, Into, TryInto};
+use expression::Expression;
 #[cfg(feature = "serde")]
 use serde::Serialize;
 
@@ -28,7 +29,7 @@ pub trait SentenceExt {
     fn forward(&self) -> Forward;
 
     /// 条件执行
-    fn condition(&self) -> Option<&str> {
+    fn condition(&self) -> Option<&Expression> {
         None
     }
 
@@ -55,7 +56,7 @@ pub trait FromPrimary: Sized {
 /// # Performance
 /// 为防止枚举膨胀, 部分枚举项存储在堆上.
 /// 实际使用中其它语句基本都是 `say`, 可忽略小语句的内存浪费.
-#[derive(Debug, Clone, PartialEq, PartialOrd, From, TryInto)]
+#[derive(Debug, Clone, PartialEq, From, TryInto)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize),
@@ -91,6 +92,7 @@ pub enum Sentence {
     Choose(ChooseSentence),
     Label(LabelSentence),
     JumpLabel(JumpLabelSentence),
+    Return(ReturnSentence),
 
     // 鉴赏
     UnlockCg(UnlockCgSentence),
@@ -98,8 +100,8 @@ pub enum Sentence {
 
     // 游戏控制
     GetUserInput(Box<GetUserInputSentence>),
-    SetVar(SetVarSentence),
-    ShowVars(ShowVarsSentence),
+    SetVariable(SetVariableSentence),
+    ShowVariables(ShowVariablesSentence),
     Wait(WaitSentence),
     ApplyStyle(ApplyStyleSentence),
     CallSteam(CallSteamSentence),
@@ -139,7 +141,7 @@ impl SentenceExt for Sentence {
         crate::dispatch_sentence!(self.forward())
     }
 
-    fn condition(&self) -> Option<&str> {
+    fn condition(&self) -> Option<&Expression> {
         crate::dispatch_sentence!(self.condition())
     }
 
@@ -194,6 +196,7 @@ impl FromPrimary for Sentence {
                 "choose" => ChooseSentence,
                 "label" => LabelSentence,
                 "jumpLabel" => JumpLabelSentence,
+                "return" => ReturnSentence,
 
                 // 鉴赏
                 "unlockCg" => UnlockCgSentence,
@@ -201,8 +204,8 @@ impl FromPrimary for Sentence {
 
                 // 游戏控制
                 "getUserInput" => GetUserInputSentence,
-                "setVar" => SetVarSentence,
-                "showVars" => ShowVarsSentence,
+                "setVar" => SetVariableSentence,
+                "showVars" => ShowVariablesSentence,
                 "wait" => WaitSentence,
                 "applyStyle" => ApplyStyleSentence,
                 "callSteam" => CallSteamSentence,
@@ -330,6 +333,7 @@ macro_rules! dispatch_sentence {
             $crate::sentence::Sentence::Choose(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::Label(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::JumpLabel(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::Return(s) => s.$method($($argument),*),
 
             // 鉴赏
             $crate::sentence::Sentence::UnlockCg(s) => s.$method($($argument),*),
@@ -337,8 +341,8 @@ macro_rules! dispatch_sentence {
 
             // 游戏控制
             $crate::sentence::Sentence::GetUserInput(s) => s.$method($($argument),*),
-            $crate::sentence::Sentence::SetVar(s) => s.$method($($argument),*),
-            $crate::sentence::Sentence::ShowVars(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::SetVariable(s) => s.$method($($argument),*),
+            $crate::sentence::Sentence::ShowVariables(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::Wait(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::ApplyStyle(s) => s.$method($($argument),*),
             $crate::sentence::Sentence::CallSteam(s) => s.$method($($argument),*),

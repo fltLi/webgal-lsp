@@ -7,12 +7,14 @@ WebGAL 语言基础设施。
 ## :sparkles: 功能
 
 - **语言解析**：提供 WebGAL 语法解析与数据结构支持
-- **自动补全**：语句、参数、资源路径、标识符等智能提示 -> [详细说明](./docs/complete.md)
+- **自动补全**：语句、参数、资源路径、标识符、变量等智能提示 -> [详细说明](./docs/complete.md)
 - **静态检查**：语法、资源依赖、格式规范等实时检查 -> [详细说明](./docs/diagnose.md)
 - **动态诊断**[^1]：通过后台模拟脚本执行，检测逻辑问题 -> [详细说明](./docs/diagnose.md#逻辑分析)
-- **语义高亮**：语句类型、参数、注释等色彩渲染
+- **语义高亮**：语句类型、参数、变量插值、注释等色彩渲染
 - **悬浮文档**：悬停查看语句、参数的详细说明 -> [详细说明](#documentation-license)
 - **代码编辑**：提供轻量级编辑器，集成上述语言服务 -> [详细说明](#webgal-ink-编辑器)
+- **内联提示**：变量类型、部分参数省略语法糖提示
+- **查找变量**：项目内变量转到定义、查找引用支持
 - **配音工具**[^1]：调用本地 GPT-SoVITS v4 为对话生成配音 -> [使用说明](./docs/voice-guide.md)
 - **快照打包**：生成 WebGAL 项目精简压缩包，便于归档和传播
 - **文本处理**：将小说转换为原始脚本（智能识别对话与断句、分配对话者）
@@ -60,7 +62,7 @@ cargo build -p webgal-language-server
 日志输出到 `stderr`，所有参数均为可选：
 
 - **日志**：`--log-level <LEVEL>`（`error`/`warn`/`info`/`debug`/`trace`，默认 `error`），`--log-format <FORMAT>`（`plain`/`text`/`json`，默认 `plain`）
-- **功能开关**：`--disable-{diagnose,hover,highlight,complete,format}` 可分别禁用对应能力（默认全部开启）
+- **功能开关**：`--disable-{diagnose,hover,highlight,inlay-hint,complete,format}` 可分别禁用对应能力（默认全部开启）
 - **诊断调优**：`--diagnostic-delay <MS>`（批处理延迟，默认 500ms），`--diagnostic-timeout <MS>`（生成超时，默认 10000ms）
 
 示例：

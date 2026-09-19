@@ -31,6 +31,16 @@ export interface LspTextEdit {
   newText: string;
 }
 
+export interface LspInlayHint {
+  position: LspPosition;
+  label: string | { value: string; tooltip?: string | { kind: string; value: string } }[];
+  kind?: number;
+  textEdits?: LspTextEdit[];
+  tooltip?: string | { kind: string; value: string };
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+}
+
 export interface LspDiagnostic {
   range: LspRange;
   severity: number;
@@ -43,6 +53,11 @@ export interface LspDiagnostic {
 export interface LspHover {
   contents: string | { kind: string; value: string }[] | { kind: string; value: string };
   range?: LspRange;
+}
+
+export interface LspLocation {
+  uri: string;
+  range: LspRange;
 }
 
 export interface LspCompletionItem {
@@ -465,12 +480,39 @@ class LspClient {
     return null;
   }
 
+  async inlayHints(path: string, range: LspRange): Promise<LspInlayHint[] | null> {
+    const r = await this.sendRequest('textDocument/inlayHint', {
+      textDocument: { uri: toUri(path) },
+      range,
+    });
+    return (r as LspInlayHint[] | null) ?? null;
+  }
+
   async formatting(path: string): Promise<LspTextEdit[] | null> {
     const r = await this.sendRequest('textDocument/formatting', {
       textDocument: { uri: toUri(path) },
       options: { tabSize: 2, insertSpaces: true },
     });
     return (r as LspTextEdit[] | null) ?? null;
+  }
+
+  async references(path: string, position: LspPosition): Promise<LspLocation[] | null> {
+    const r = await this.sendRequest('textDocument/references', {
+      textDocument: { uri: toUri(path) },
+      position,
+      context: { includeDeclaration: false },
+    });
+    return (r as LspLocation[] | null) ?? null;
+  }
+
+  async definition(path: string, position: LspPosition): Promise<LspLocation[] | null> {
+    const r = await this.sendRequest('textDocument/definition', {
+      textDocument: { uri: toUri(path) },
+      position,
+    });
+    if (Array.isArray(r)) return r as LspLocation[];
+    if (r && typeof r === 'object' && 'uri' in r) return [r as LspLocation];
+    return null;
   }
 }
 

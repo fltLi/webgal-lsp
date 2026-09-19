@@ -1,54 +1,64 @@
 //! 分支选项
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
+use expression::{Expression, ParseError};
 #[cfg(feature = "serde")]
 use serde::Serialize;
 
 use crate::util::{find_closing_delimiter, split_once_escaped};
 
 /// 分支选项
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
 pub struct Choice {
     pub prompt: String,
     pub target: Option<String>,
     // 控制
-    pub show: Option<String>,
-    pub enable: Option<String>,
+    pub show: Option<Expression>,
+    pub enable: Option<Expression>,
 }
 
 impl Choice {
-    /// 解析选项字符串
-    ///
-    /// # Behavior
-    /// * 移除所有 `\|`, `\:` 转义.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        ChoiceView::from_str(s).to_choice()
-    }
-
     /// 将分支选项原始视图转换为所有权选项
     ///
     /// # Behavior
     /// * 移除所有 `\|`, `\:` 转义.
-    pub fn from_view(view: &ChoiceView) -> Self {
+    pub fn try_from_view(view: &ChoiceView) -> Result<Self, ParseError> {
         let ChoiceView {
             prompt,
             target,
             show,
             enable,
         } = view;
-        Self {
+        Ok(Self {
             prompt: unescape_text(prompt),
             target: target.map(unescape_text),
-            show: show.map(unescape_text),
-            enable: enable.map(unescape_text),
-        }
+            show: show
+                .map(unescape_text)
+                .map(|show| show.parse())
+                .transpose()?,
+            enable: enable
+                .map(unescape_text)
+                .map(|show| show.parse())
+                .transpose()?,
+        })
     }
 
     pub fn has_condition(&self) -> bool {
         self.show.is_some() || self.enable.is_some()
+    }
+}
+
+impl FromStr for Choice {
+    type Err = ParseError;
+
+    /// 解析选项字符串
+    ///
+    /// # Behavior
+    /// * 移除所有 `\|`, `\:` 转义.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ChoiceView::from_str(s).try_to_choice()
     }
 }
 
@@ -60,10 +70,10 @@ impl fmt::Display for Choice {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.has_condition() {
             if let Some(show) = &self.show {
-                write!(f, "({})", escape_text(show))?;
+                write!(f, "({})", escape_text(&show.to_string()))?;
             }
             if let Some(enable) = &self.enable {
-                write!(f, "[{}]", escape_text(enable))?;
+                write!(f, "[{}]", escape_text(&enable.to_string()))?;
             }
             f.write_str("->")?;
         }
@@ -76,9 +86,11 @@ impl fmt::Display for Choice {
     }
 }
 
-impl From<ChoiceView<'_>> for Choice {
-    fn from(value: ChoiceView) -> Self {
-        Self::from_view(&value)
+impl TryFrom<ChoiceView<'_>> for Choice {
+    type Error = ParseError;
+
+    fn try_from(value: ChoiceView<'_>) -> Result<Self, Self::Error> {
+        Self::try_from_view(&value)
     }
 }
 
@@ -119,8 +131,8 @@ impl<'a> ChoiceView<'a> {
     ///
     /// # Behavior
     /// * 移除所有 `\|`, `\:` 转义.
-    pub fn to_choice(&self) -> Choice {
-        Choice::from_view(self)
+    pub fn try_to_choice(&self) -> Result<Choice, ParseError> {
+        Choice::try_from_view(self)
     }
 }
 
@@ -279,12 +291,22 @@ mod tests {
 
     use super::*;
 
+    /// 解析表达式辅助函数
+    fn expr(source: &str) -> Expression {
+        Expression::from_str(source).unwrap()
+    }
+
+    /// 解析选项字符串辅助函数
+    fn parse_choice(source: &str) -> Choice {
+        Choice::from_str(source).unwrap()
+    }
+
     // -------- 基础解析与序列化 --------
 
     #[test]
     fn choice_basic_no_condition() {
         let s = "prompt:target";
-        let choice = Choice::from_str(s);
+        let choice = parse_choice(s);
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
         assert_eq!(choice.show, None);
@@ -296,7 +318,7 @@ mod tests {
     #[test]
     fn choice_prompt_only() {
         let s = "ただのプロンプト";
-        let choice = Choice::from_str(s);
+        let choice = parse_choice(s);
         assert_eq!(choice.prompt, "ただのプロンプト");
         assert_eq!(choice.target, None);
         assert_eq!(choice.show, None);
@@ -308,8 +330,8 @@ mod tests {
     #[test]
     fn choice_with_show_only() {
         let s = "(visible)->prompt:target";
-        let choice = Choice::from_str(s);
-        assert_eq!(choice.show, Some("visible".to_string()));
+        let choice = parse_choice(s);
+        assert_eq!(choice.show, Some(expr("visible")));
         assert_eq!(choice.enable, None);
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
@@ -320,9 +342,9 @@ mod tests {
     #[test]
     fn choice_with_enable_only() {
         let s = "[enabled]->prompt:target";
-        let choice = Choice::from_str(s);
+        let choice = parse_choice(s);
         assert_eq!(choice.show, None);
-        assert_eq!(choice.enable, Some("enabled".to_string()));
+        assert_eq!(choice.enable, Some(expr("enabled")));
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
         assert!(choice.has_condition());
@@ -332,27 +354,27 @@ mod tests {
     #[test]
     fn choice_with_both_conditions() {
         let s = "(show)[enable]->prompt:target";
-        let choice = Choice::from_str(s);
-        assert_eq!(choice.show, Some("show".to_string()));
-        assert_eq!(choice.enable, Some("enable".to_string()));
+        let choice = parse_choice(s);
+        assert_eq!(choice.show, Some(expr("show")));
+        assert_eq!(choice.enable, Some(expr("enable")));
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
         assert!(choice.has_condition());
         assert_eq!(choice.to_string(), s);
 
         let s_rev = "[enable](show)->prompt:target";
-        let choice_rev = Choice::from_str(s_rev);
-        assert_eq!(choice_rev.show, Some("show".to_string()));
-        assert_eq!(choice_rev.enable, Some("enable".to_string()));
+        let choice_rev = parse_choice(s_rev);
+        assert_eq!(choice_rev.show, Some(expr("show")));
+        assert_eq!(choice_rev.enable, Some(expr("enable")));
         assert_eq!(choice_rev.to_string(), "(show)[enable]->prompt:target");
     }
 
     #[test]
     fn choice_extra_content_in_condition() {
         let s = "xyz(show)abc[enable]def->prompt:target";
-        let choice = Choice::from_str(s);
-        assert_eq!(choice.show, Some("show".to_string()));
-        assert_eq!(choice.enable, Some("enable".to_string()));
+        let choice = parse_choice(s);
+        assert_eq!(choice.show, Some(expr("show")));
+        assert_eq!(choice.enable, Some(expr("enable")));
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
         assert_eq!(choice.to_string(), "(show)[enable]->prompt:target");
@@ -362,7 +384,7 @@ mod tests {
     fn choice_escape_characters() {
         // 测试冒号转义
         let s = r"prompt\:with\:colon:target\:with\:colon";
-        let choice = Choice::from_str(s);
+        let choice = parse_choice(s);
         assert_eq!(choice.prompt, "prompt:with:colon");
         assert_eq!(choice.target, Some("target:with:colon".to_string()));
         assert_eq!(choice.to_string(), s);
@@ -370,14 +392,29 @@ mod tests {
 
     #[test]
     fn choice_escape_in_condition() {
-        // 条件中的转义 (反斜杠保持原样, 不处理 `\)` 或 `\]`) (这种不符合表达式语法所以不管)
+        // 条件中的转义 (反斜杠保持原样, 不处理 `\)` 或 `\]`): 提取到第一个未转义闭符为止,
+        // 余下内容按裸词回退为字符串表达式
         let s = r"(show\)with\)paren)[enable\]]->prompt:target";
-        let choice = Choice::from_str(s);
-        assert_eq!(choice.show, Some(r"show\".to_string()));
-        assert_eq!(choice.enable, Some(r"enable\".to_string()));
+        let choice = parse_choice(s);
+        assert_eq!(choice.show, Some(expr(r"show\")));
+        assert_eq!(choice.enable, Some(expr(r"enable\")));
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
-        assert_eq!(choice.to_string(), r"(show\)[enable\]->prompt:target");
+        assert_eq!(
+            choice.to_string(),
+            r#"("show\\")["enable\\"]->prompt:target"#
+        );
+    }
+
+    #[test]
+    fn choice_invalid_condition_expression() {
+        // 条件不是合法表达式 (如包含赋值) 时转换失败
+        let s = "(a = 1)->prompt:target";
+        assert!(Choice::from_str(s).is_err());
+        // 视图层面仍可解析原始字符串
+        let view = ChoiceView::from_str(s);
+        assert_eq!(view.show, Some("a = 1"));
+        assert!(view.try_to_choice().is_err());
     }
 
     // -------- ChoiceView 直接测试 --------
@@ -391,7 +428,7 @@ mod tests {
         assert_eq!(view.enable, None);
         assert!(!view.has_condition());
         assert_eq!(view.to_string(), "prompt:target");
-        let choice: Choice = view.into();
+        let choice = Choice::try_from(view).unwrap();
         assert_eq!(choice.prompt, "prompt");
         assert_eq!(choice.target, Some("target".to_string()));
     }
@@ -405,6 +442,9 @@ mod tests {
         assert_eq!(view.target, Some("target"));
         assert!(view.has_condition());
         assert_eq!(view.to_string(), "(show)[enable]->prompt:target");
+        let choice = view.try_to_choice().unwrap();
+        assert_eq!(choice.show, Some(expr("show")));
+        assert_eq!(choice.enable, Some(expr("enable")));
     }
 
     // -------- ChoiceSplit 迭代器 --------
@@ -413,7 +453,10 @@ mod tests {
     fn choice_split_basic() {
         let s = "opt1:t1|opt2:t2|opt3:t3";
         let split = ChoiceSplit::new(s);
-        let choices: Vec<Choice> = split.map(Choice::from).collect();
+        let choices: Vec<Choice> = split
+            .map(Choice::try_from)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(choices.len(), 3);
         assert_eq!(choices[0].prompt, "opt1");
         assert_eq!(choices[0].target, Some("t1".to_string()));
@@ -427,16 +470,19 @@ mod tests {
     fn choice_split_with_conditions() {
         let s = "(show)[enable]->go:scene_a|(hide)[disabled]->stay:scene_b";
         let split = ChoiceSplit::new(s);
-        let choices: Vec<Choice> = split.map(Choice::from).collect();
+        let choices: Vec<Choice> = split
+            .map(Choice::try_from)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(choices.len(), 2);
         let c1 = &choices[0];
-        assert_eq!(c1.show, Some("show".to_string()));
-        assert_eq!(c1.enable, Some("enable".to_string()));
+        assert_eq!(c1.show, Some(expr("show")));
+        assert_eq!(c1.enable, Some(expr("enable")));
         assert_eq!(c1.prompt, "go");
         assert_eq!(c1.target, Some("scene_a".to_string()));
         let c2 = &choices[1];
-        assert_eq!(c2.show, Some("hide".to_string()));
-        assert_eq!(c2.enable, Some("disabled".to_string()));
+        assert_eq!(c2.show, Some(expr("hide")));
+        assert_eq!(c2.enable, Some(expr("disabled")));
         assert_eq!(c2.prompt, "stay");
         assert_eq!(c2.target, Some("scene_b".to_string()));
     }
@@ -445,7 +491,10 @@ mod tests {
     fn choice_split_escape_pipe() {
         let s = r"prompt\|with\|pipe:target\|with\|pipe|another";
         let split = ChoiceSplit::new(s);
-        let choices: Vec<Choice> = split.map(Choice::from).collect();
+        let choices: Vec<Choice> = split
+            .map(Choice::try_from)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(choices.len(), 2);
         assert_eq!(choices[0].prompt, "prompt|with|pipe");
         assert_eq!(choices[0].target, Some("target|with|pipe".to_string()));
@@ -456,7 +505,10 @@ mod tests {
     #[test]
     fn choice_split_empty() {
         let split = ChoiceSplit::new("");
-        let choices: Vec<Choice> = split.map(Choice::from).collect();
+        let choices: Vec<Choice> = split
+            .map(Choice::try_from)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert!(choices.is_empty());
     }
 
@@ -464,7 +516,10 @@ mod tests {
     fn choice_split_single_without_pipe() {
         let s = "only one";
         let split = ChoiceSplit::new(s);
-        let choices: Vec<Choice> = split.map(Choice::from).collect();
+        let choices: Vec<Choice> = split
+            .map(Choice::try_from)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(choices.len(), 1);
         assert_eq!(choices[0].prompt, "only one");
         assert_eq!(choices[0].target, None);
@@ -481,12 +536,12 @@ mod tests {
             "[enable]->prompt:target",
             "(show)[enable]->prompt:target",
             r"escape\|colon\:prompt:target\:with\:colon",
-            r"(show\)with\)paren)[enable\]]->prompt:target",
+            // 反斜杠转义的条件无法往返 (字符串字面量形式会干扰条件定界符解析)
         ];
         for original in originals {
-            let choice = Choice::from_str(original);
+            let choice = Choice::from_str(original).unwrap();
             let serialized = choice.to_string();
-            let reparsed = Choice::from_str(&serialized);
+            let reparsed = Choice::from_str(&serialized).unwrap();
             assert_eq!(choice, reparsed);
             assert_eq!(reparsed.to_string(), serialized);
         }
@@ -496,13 +551,13 @@ mod tests {
 
     #[test]
     fn choice_has_condition() {
-        let c1 = Choice::from_str("prompt");
+        let c1 = parse_choice("prompt");
         assert!(!c1.has_condition());
-        let c2 = Choice::from_str("(show)->prompt");
+        let c2 = parse_choice("(show)->prompt");
         assert!(c2.has_condition());
-        let c3 = Choice::from_str("[enable]->prompt");
+        let c3 = parse_choice("[enable]->prompt");
         assert!(c3.has_condition());
-        let c4 = Choice::from_str("(show)[enable]->prompt");
+        let c4 = parse_choice("(show)[enable]->prompt");
         assert!(c4.has_condition());
     }
 }

@@ -35,7 +35,13 @@ pub fn offset_utf8_to_utf16(content: &str, offset: u32) -> u32 {
 }
 
 pub fn position_utf16_to_utf8(scene: &Scene, position: Position) -> Position {
-    let content = scene.sentences()[position.line as usize].content;
+    let Some(content) = scene
+        .sentences()
+        .get(position.line as usize)
+        .map(|sentence| sentence.content)
+    else {
+        return position;
+    };
     let character = offset_utf16_to_utf8(content, position.character);
     Position {
         character,
@@ -44,7 +50,13 @@ pub fn position_utf16_to_utf8(scene: &Scene, position: Position) -> Position {
 }
 
 pub fn position_utf8_to_utf16(scene: &Scene, position: Position) -> Position {
-    let content = scene.sentences()[position.line as usize].content;
+    let Some(content) = scene
+        .sentences()
+        .get(position.line as usize)
+        .map(|sentence| sentence.content)
+    else {
+        return position;
+    };
     let character = offset_utf8_to_utf16(content, position.character);
     Position {
         character,
@@ -66,11 +78,30 @@ pub fn range_utf8_to_utf16(scene: &Scene, range: Range) -> Range {
     }
 }
 
+pub fn location_utf8_to_utf16(scene: &Scene, location: Location) -> Location {
+    Location {
+        range: range_utf8_to_utf16(scene, location.range),
+        ..location
+    }
+}
+
+pub fn locations_utf8_to_utf16(scene: &Scene, locations: &mut [Location]) {
+    locations.par_iter_mut().for_each(|location| {
+        *location = location_utf8_to_utf16(scene, location.clone());
+    });
+}
+
 pub fn text_edit_utf8_to_utf16(scene: &Scene, edit: TextEdit) -> TextEdit {
     TextEdit {
         range: range_utf8_to_utf16(scene, edit.range),
         ..edit
     }
+}
+
+pub fn text_edits_utf8_to_utf16(scene: &Scene, edits: &mut [TextEdit]) {
+    edits.par_iter_mut().for_each(|edit| {
+        *edit = text_edit_utf8_to_utf16(scene, mem::take(edit));
+    });
 }
 
 // -------- service --------
@@ -140,6 +171,25 @@ pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
     }
 }
 
+pub fn inlay_hints_utf8_to_utf16(scene: &Scene, hints: &mut [InlayHint]) {
+    hints.par_iter_mut().for_each(|hint| {
+        *hint = inlay_hint_utf8_to_utf16(scene, hint.clone());
+    });
+}
+
+pub fn inlay_hint_utf8_to_utf16(scene: &Scene, hint: InlayHint) -> InlayHint {
+    InlayHint {
+        position: position_utf8_to_utf16(scene, hint.position),
+        text_edits: hint.text_edits.map(|edits| {
+            edits
+                .into_iter()
+                .map(|edit| text_edit_utf8_to_utf16(scene, edit))
+                .collect()
+        }),
+        ..hint
+    }
+}
+
 pub fn completions_utf8_to_utf16(scene: &Scene, completions: &mut [CompletionItem]) {
     completions.par_iter_mut().for_each(|completion| {
         *completion = completion_utf8_to_utf16(scene, mem::take(completion));
@@ -156,12 +206,6 @@ pub fn completion_utf8_to_utf16(scene: &Scene, completion: CompletionItem) -> Co
         }),
         ..completion
     }
-}
-
-pub fn formatting_utf8_to_utf16(scene: &Scene, edits: &mut [TextEdit]) {
-    edits.par_iter_mut().for_each(|edit| {
-        *edit = text_edit_utf8_to_utf16(scene, mem::take(edit));
-    });
 }
 
 #[cfg(test)]
@@ -227,5 +271,16 @@ mod tests {
         assert_eq!(offset_utf8_to_utf16(s, 5), 3); // emoji 结束 (起始位置 1 + 4 = 5)
         assert_eq!(offset_utf8_to_utf16(s, 6), 4); // 全部结束
         assert_eq!(offset_utf8_to_utf16(s, 7), 4); // 超出
+    }
+
+    #[test]
+    fn position_conversion_accepts_eof_line() {
+        let scene = Scene::from("hello\n");
+        let position = Position {
+            line: 1,
+            character: 0,
+        };
+        assert_eq!(position_utf16_to_utf8(&scene, position), position);
+        assert_eq!(position_utf8_to_utf16(&scene, position), position);
     }
 }

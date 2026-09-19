@@ -15,6 +15,8 @@ import {
   type LspCompletionItem,
   type LspDiagnostic,
   type LspHover,
+  type LspInlayHint,
+  type LspLocation,
   type LspRange,
   type LspTextEdit,
 } from './client';
@@ -36,7 +38,7 @@ export const LANGUAGE_ID = 'webgal';
 
 // 服务端 completionProvider.triggerCharacters (见 crates/webgal-language-service/src/service/complete.rs):
 // 输入这些符号时自动触发补全 (Monaco 原生支持 provider 级 triggerCharacters)。
-export const TRIGGER_CHARACTERS = [':', '-', '=', '/', '\\', '"'];
+export const TRIGGER_CHARACTERS = [':', '-', '=', '{', '/', '\\', '"'];
 
 // Monaco model -> 原始系统路径。
 // 不能依赖 `model.uri.toString()` 往返还原路径: Monaco 的 Uri 会把
@@ -164,6 +166,21 @@ function toMarker(d: LspDiagnostic): monaco.editor.IMarkerData {
 
 function toMonacoTextEdit(edit: LspTextEdit): monaco.languages.TextEdit {
   return { range: toMonacoRange(edit.range), text: edit.newText };
+}
+
+function toMonacoInlayHint(hint: LspInlayHint): monaco.languages.InlayHint {
+  const label = Array.isArray(hint.label)
+    ? hint.label.map((part) => ({ label: part.value, tooltip: part.tooltip }))
+    : hint.label;
+  return {
+    position: { lineNumber: hint.position.line + 1, column: hint.position.character + 1 },
+    label,
+    kind: hint.kind,
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    tooltip: hint.tooltip,
+    textEdits: hint.textEdits?.map(toMonacoTextEdit),
+  };
 }
 
 // 语义高亮需要显式启用: 内置 vs/vs-dark 主题的 `semanticHighlighting` 恒为 false,
@@ -297,6 +314,25 @@ export function setupMonaco(): void {
     releaseDocumentSemanticTokens: () => {},
   });
 
+  monaco.languages.registerInlayHintsProvider(LANGUAGE_ID, {
+    provideInlayHints: async (model, range) => {
+      const path = pathOfModel(model);
+      if (!path) return { hints: [], dispose: () => {} };
+      try {
+        const hints = await lspClient.inlayHints(path, {
+          start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+          end: { line: range.endLineNumber - 1, character: range.endColumn - 1 },
+        });
+        return {
+          hints: (hints ?? []).map(toMonacoInlayHint),
+          dispose: () => {},
+        };
+      } catch {
+        return { hints: [], dispose: () => {} };
+      }
+    },
+  });
+
   monaco.languages.registerCompletionItemProvider(LANGUAGE_ID, {
     triggerCharacters: TRIGGER_CHARACTERS,
     provideCompletionItems: async (model, position) => {
@@ -340,6 +376,44 @@ export function setupMonaco(): void {
             : new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
           contents: [{ value: text, isTrusted: false }],
         };
+      } catch {
+        return null;
+      }
+    },
+  });
+
+  monaco.languages.registerReferenceProvider(LANGUAGE_ID, {
+    provideReferences: async (model, position) => {
+      const path = pathOfModel(model);
+      if (!path) return null;
+      try {
+        const locations = await lspClient.references(path, {
+          line: position.lineNumber - 1,
+          character: position.column - 1,
+        });
+        return (locations ?? []).map((location: LspLocation) => ({
+          uri: monaco.Uri.parse(location.uri),
+          range: toMonacoRange(location.range),
+        }));
+      } catch {
+        return null;
+      }
+    },
+  });
+
+  monaco.languages.registerDefinitionProvider(LANGUAGE_ID, {
+    provideDefinition: async (model, position) => {
+      const path = pathOfModel(model);
+      if (!path) return null;
+      try {
+        const locations = await lspClient.definition(path, {
+          line: position.lineNumber - 1,
+          character: position.column - 1,
+        });
+        return (locations ?? []).map((location: LspLocation) => ({
+          uri: monaco.Uri.parse(location.uri),
+          range: toMonacoRange(location.range),
+        }));
       } catch {
         return null;
       }

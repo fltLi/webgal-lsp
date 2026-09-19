@@ -1,21 +1,11 @@
 use std::{fmt, ops::Range};
 
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NeverError;
-
-impl fmt::Display for NeverError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("不会触发的错误")
-    }
-}
-
-#[doc(hidden)]
 #[macro_export]
 macro_rules! impl_from_str_for_from {
     ($t:ty) => {
         impl ::std::str::FromStr for $t {
-            type Err = $crate::util::NeverError;
+            type Err = ::std::convert::Infallible;
 
             fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
                 Ok(s.into())
@@ -75,6 +65,35 @@ pub fn split_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
             None
         }
     })?;
+    Some((&s[..pos], &s[pos + 1..]))
+}
+
+/// 从右侧避开转义 (如 `\;`) 分割字符
+///
+/// # Examples
+/// ```
+/// # use webgal_language_core::util::rsplit_once_escaped;
+///
+/// assert_eq!(rsplit_once_escaped("a;b", ';'), Some(("a", "b")));
+/// assert_eq!(rsplit_once_escaped("a;b;c", ';'), Some(("a;b", "c")));
+/// assert_eq!(rsplit_once_escaped("a\\b;c", ';'), Some(("a\\b", "c")));
+/// assert_eq!(rsplit_once_escaped("a;b\\;c", ';'), Some(("a", "b\\;c")));
+/// assert_eq!(rsplit_once_escaped("a\\;b", ';'), None);
+/// assert_eq!(rsplit_once_escaped("no semicolon", ';'), None);
+/// assert_eq!(rsplit_once_escaped("", ';'), None);
+/// assert_eq!(rsplit_once_escaped("std\\:\\:mem : hello?", ':'), Some(("std\\:\\:mem ", " hello?")));
+/// ```
+pub fn rsplit_once_escaped(s: &str, delimiter: char) -> Option<(&str, &str)> {
+    let mut escaped = false;
+    let mut last = None;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            ch if ch == delimiter && !escaped => last = Some(i),
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    let pos = last?;
     Some((&s[..pos], &s[pos + 1..]))
 }
 

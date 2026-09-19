@@ -12,6 +12,7 @@ repository = "https://github.com/fltLi/webgal-lsp"
 
 [workspace.dependencies]
 count.path = "./crates/count"
+expression.path = "./crates/expression"
 path-tree.path = "./crates/path-tree"
 json-language-service.path = "./crates/json-language-service"
 
