@@ -5,7 +5,10 @@ use lsp_types::*;
 use rayon::prelude::*;
 use webgal_language_core::{
     element::TokenSplit,
-    sentence::{PrimarySentence, Scene, Sentence, SentenceInfo, is_implicit_vocal_argument},
+    sentence::{
+        PrimarySentence, Scene, Sentence, SentenceInfo, is_call_scene_variable_argument,
+        is_implicit_vocal_argument,
+    },
     util::{span_of, split_once_escaped},
 };
 
@@ -182,6 +185,9 @@ fn highlight_argument<F>(
 {
     let span = primary.get_span(name);
     let ops::Range { start, end } = span;
+    let is_variable = matches!(sentence, Sentence::CallScene(_))
+        && value.is_some()
+        && is_call_scene_variable_argument(name);
 
     // `-`
     f(PrimaryToken::from_position(start - 1, TokenType::Operator));
@@ -191,6 +197,11 @@ fn highlight_argument<F>(
         f(PrimaryToken {
             span,
             kind: TokenType::Regex,
+        });
+    } else if is_variable {
+        f(PrimaryToken {
+            span,
+            kind: TokenType::Variable,
         });
     } else {
         f(PrimaryToken {
@@ -206,18 +217,20 @@ fn highlight_argument<F>(
 
     // 参数值
     if let Some(value) = value {
-        if matches!(name, "transform" | "bounds" | "blink" | "focus") {
-            let start = primary.get_span(value).start;
+        let span = primary.get_span(value);
+        if is_variable {
+            f(PrimaryToken {
+                span,
+                kind: TokenType::Regex,
+            });
+        } else if matches!(name, "transform" | "bounds" | "blink" | "focus") {
             highlight_json(value, |mut token| {
-                token.span.start += start;
-                token.span.end += start;
+                token.span.start += span.start;
+                token.span.end += span.start;
                 f(token)
             });
         } else if let Some(kind) = TokenType::from_argument(name, sentence) {
-            f(PrimaryToken {
-                span: primary.get_span(value),
-                kind,
-            });
+            f(PrimaryToken { span, kind });
         }
     }
 }

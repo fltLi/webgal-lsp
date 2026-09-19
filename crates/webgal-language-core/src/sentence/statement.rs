@@ -1305,6 +1305,10 @@ impl fmt::Display for CallSceneSentence {
     }
 }
 
+pub fn is_call_scene_variable_argument(name: &str) -> bool {
+    !matches!(name, "writeReturnTo" | "when")
+}
+
 // -------- 序列化与反序列化 --------
 
 fn display_vocal(vocal: &str, f: &mut fmt::Formatter) -> fmt::Result {

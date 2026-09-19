@@ -353,6 +353,10 @@ impl<'a> SceneVariables<'a> {
                 for (name, expression) in &call_scene.variables {
                     let (name, value) =
                         sentence.primary.arguments[sentence.primary.get_argument(name).unwrap().0];
+                    let value = match value {
+                        Some(v) => v,
+                        None => continue,
+                    };
 
                     let name_span = sentence.primary.get_span(name);
                     self.definitions.push(VariableDefinition {
@@ -362,7 +366,7 @@ impl<'a> SceneVariables<'a> {
                         span: name_span,
                     });
 
-                    let expression_span = sentence.primary.get_span(value.unwrap());
+                    let expression_span = sentence.primary.get_span(value);
                     self.collect_expression_reference(expression, expression_span, line);
                 }
             }
