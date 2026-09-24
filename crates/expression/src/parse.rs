@@ -463,6 +463,7 @@ pub(crate) enum LogicOp {
 /// 表达式语法树
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Expr {
+    Invalid,
     Number(Number),
     Bool(bool),
     Str(String),
@@ -810,6 +811,13 @@ impl fmt::Display for Expression {
 }
 
 impl Expression {
+    /// 创建一个表示解析失败的表达式占位符.
+    ///
+    /// 该表达式不会参与类型推断, 求值时会返回错误.
+    pub fn invalid() -> Self {
+        Self { ast: Expr::Invalid }
+    }
+
     /// 在给定上下文中求值
     pub fn evaluate(&self, context: &dyn EvaluationContext) -> Result<Value, EvaluationError> {
         evaluate_ast(&self.ast, context, 0)
@@ -851,6 +859,7 @@ impl Expression {
 /// 推断表达式子树的类型
 fn infer_expr_type(expression: &Expr, context: &dyn TypeContext) -> Option<ValueKind> {
     match expression {
+        Expr::Invalid => None,
         Expr::Number(_) => Some(ValueKind::Number),
         Expr::Bool(_) => Some(ValueKind::Bool),
         Expr::Str(_) => Some(ValueKind::String),
@@ -954,7 +963,7 @@ fn collect_names_in<'a>(expression: &'a Expr, kind: NameKind, out: &mut Vec<&'a 
             collect_names_in(then_branch, kind, out);
             collect_names_in(else_branch, kind, out);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::Str(_) => {}
+        Expr::Invalid | Expr::Number(_) | Expr::Bool(_) | Expr::Str(_) => {}
     }
 }
 
@@ -1041,6 +1050,7 @@ fn literal_expr(value: Value) -> Expr {
 /// 格式化表达式为规范化字符串
 fn format_expr(expression: &Expr) -> String {
     match expression {
+        Expr::Invalid => "<invalid>".to_string(),
         Expr::Number(number) => format_number(number),
         Expr::Bool(boolean) => boolean.to_string(),
         Expr::Str(string) => format_string(string),

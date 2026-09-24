@@ -558,6 +558,15 @@ mod tests {
     }
 
     #[test]
+    fn infers_unquoted_string_literal() {
+        let table = build(&[("1.txt", "setVar:name=我是整块字符串;")]);
+        assert_eq!(
+            *kind(&table, "name"),
+            VariableKind::Known(ValueKind::String)
+        );
+    }
+
+    #[test]
     fn propagates_through_dependency() {
         let table = build(&[("1.txt", "setVar:a=5;\nsetVar:b=a+1;")]);
         assert_eq!(*kind(&table, "a"), VariableKind::Known(ValueKind::Number));
