@@ -90,34 +90,34 @@ impl Default for BackendBuilder {
 /// # Requests
 /// 此服务器依赖以下自定义协议:
 ///
-/// * `workspace/fs/readDirectory` - 读取目录.
+/// * `workspace/fs/stat` - 查询 URI 对应资源的类型和元数据.
 ///   * 请求参数
 ///     ```json
-///     { "path": "目录路径" }
+///     { "uri": "file:///C:/game/scene/start.txt" }
 ///     ```
 ///   * 成功响应
 ///     ```json
-///     [{ "": "子节点名称", "isDirectory": true / false }]
+///     { "type": "file", "size": 123, "mtime": 0, "ctime": 0 }
 ///     ```
 ///
-/// * `workspace/fs/readFile` - 读取文件.
+/// * `workspace/fs/readDirectory` - 读取 URI 对应目录的直接子项.
 ///   * 请求参数
 ///     ```json
-///     { "path": "文件路径" }
+///     { "uri": "file:///C:/game/scene" }
 ///     ```
 ///   * 成功响应
 ///     ```json
-///     "文件内容字符串"
+///     [{ "uri": "file:///C:/game/scene/start.txt", "name": "start.txt", "type": "file" }]
 ///     ```
 ///
-/// * `workspace/fs/exists` - 查询文件或目录是否存在.
+/// * `workspace/fs/readFile` - 读取文件内容.
 ///   * 请求参数
 ///     ```json
-///     { "path": "文件或目录路径" }
+///     { "uri": "file:///C:/game/config.json", "encoding": "utf-8" }
 ///     ```
 ///   * 成功响应
 ///     ```json
-///     { "exists": true / false, "isDirectory": true / false }
+///     { "content": "...", "encoding": "utf-8" }
 ///     ```
 #[derive(Debug, Clone)]
 pub struct Backend {

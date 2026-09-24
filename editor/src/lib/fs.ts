@@ -19,12 +19,31 @@ export interface FsEntry {
   isDirectory: boolean;
 }
 
+export interface FsStat {
+  type: 'file' | 'directory' | 'symbolicLink' | 'unknown';
+  size: number;
+  mtime?: number;
+  ctime?: number;
+}
+
 export interface ExistsResult {
   exists: boolean;
   isDirectory: boolean;
 }
 
 export const fs = {
+  async stat(path: string): Promise<FsStat | null> {
+    try {
+      const info = await stat(path);
+      return {
+        type: info.isDirectory ? 'directory' : 'file',
+        size: info.size ?? 0,
+      };
+    } catch {
+      return null;
+    }
+  },
+
   async exists(path: string): Promise<ExistsResult> {
     try {
       const info = await stat(path);

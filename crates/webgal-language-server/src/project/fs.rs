@@ -85,21 +85,30 @@ impl FileSystem for Client {
     /// 查询文件或目录是否存在
     ///
     /// # Requests
-    /// 该方法通过自定义请求 `workspace/fs/exists` 与客户端通信.
+    /// 该方法通过自定义请求 `workspace/fs/stat` 与客户端通信.
     /// * 请求参数
     ///   ```json
-    ///   { "path": "文件或目录路径" }
+    ///   { "uri": "file:///..." }
     ///   ```
     /// * 成功响应
     ///   ```json
-    ///   { "exists": true / false, "isDirectory": true / false }
+    ///   { "type": "file", "size": 123, "mtime": 0, "ctime": 0 }
+    ///   或 `null` 表示资源不存在.
     ///   ```
     async fn exists(&self, path: &str) -> Result<ExistsResult> {
-        let params = ExistsParams {
-            path: path.to_string(),
+        let params = StatParams {
+            uri: path.to_string(),
         };
-        let result = self.send_request::<ExistsRequest>(params).await?;
-        Ok(result)
+        let result = self.send_request::<StatRequest>(params).await?;
+        Ok(result
+            .map(|stat| ExistsResult {
+                exists: true,
+                is_directory: stat.file_type == FileType::Directory,
+            })
+            .unwrap_or(ExistsResult {
+                exists: false,
+                is_directory: false,
+            }))
     }
 
     /// 读取目录
@@ -108,18 +117,24 @@ impl FileSystem for Client {
     /// 该方法通过自定义请求 `workspace/fs/readDirectory` 与客户端通信.
     /// * 请求参数
     ///   ```json
-    ///   { "path": "目录路径" }
+    ///   { "uri": "file:///..." }
     ///   ```
     /// * 成功响应
     ///   ```json
-    ///   [{ "": "子节点名称", "isDirectory": true / false }]
+    ///   [{ "uri": "file:///...", "name": "start.txt", "type": "file" }]
     ///   ```
     async fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         let params = ReadDirectoryParams {
-            path: path.to_string(),
+            uri: path.to_string(),
         };
         let entries = self.send_request::<ReadDirectoryRequest>(params).await?;
-        Ok(entries)
+        Ok(entries
+            .into_iter()
+            .map(|entry| DirEntry {
+                name: entry.name,
+                is_directory: entry.file_type == FileType::Directory,
+            })
+            .collect())
     }
 
     /// 读取文件
@@ -128,59 +143,109 @@ impl FileSystem for Client {
     /// 该方法通过自定义请求 `workspace/fs/readFile` 与客户端通信.
     /// * 请求参数
     ///   ```json
-    ///   { "path": "文件路径" }
+    ///   { "uri": "file:///...", "encoding": "utf-8" }
     ///   ```
     /// * 成功响应
     ///   ```json
-    ///   "文件内容字符串"
+    ///   { "content": "文件内容字符串", "encoding": "utf-8" }
     ///   ```
     async fn read_to_string(&self, path: &str) -> Result<String> {
         let params = ReadFileParams {
-            path: path.to_string(),
+            uri: path.to_string(),
+            encoding: FileEncoding::Utf8,
         };
-        let content = self.send_request::<ReadFileRequest>(params).await?;
-        Ok(content)
+        let result = self.send_request::<ReadFileRequest>(params).await?;
+        Ok(result.content)
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExistsParams {
-    path: String,
-}
+struct StatRequest;
 
-struct ExistsRequest;
-
-impl Request for ExistsRequest {
-    type Params = ExistsParams;
-    type Result = ExistsResult;
-    const METHOD: &'static str = "workspace/fs/exists";
+impl Request for StatRequest {
+    type Params = StatParams;
+    type Result = Option<FileStat>;
+    const METHOD: &'static str = "workspace/fs/stat";
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReadDirectoryParams {
-    path: String,
+struct StatParams {
+    uri: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum FileType {
+    File,
+    Directory,
+    SymbolicLink,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileStat {
+    #[serde(rename = "type")]
+    file_type: FileType,
+    size: u64,
+    mtime: Option<u64>,
+    ctime: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum FileEncoding {
+    #[serde(rename = "utf-8")]
+    Utf8,
+    #[serde(rename = "base64")]
+    Base64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProtocolDirEntry {
+    uri: String,
+    name: String,
+    #[serde(rename = "type")]
+    file_type: FileType,
+    size: Option<u64>,
+    mtime: Option<u64>,
 }
 
 struct ReadDirectoryRequest;
 
 impl Request for ReadDirectoryRequest {
     type Params = ReadDirectoryParams;
-    type Result = Vec<DirEntry>;
+    type Result = Vec<ProtocolDirEntry>;
     const METHOD: &'static str = "workspace/fs/readDirectory";
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReadFileParams {
-    path: String,
+struct ReadDirectoryParams {
+    uri: String,
 }
 
 struct ReadFileRequest;
 
 impl Request for ReadFileRequest {
     type Params = ReadFileParams;
-    type Result = String;
+    type Result = ReadFileResult;
     const METHOD: &'static str = "workspace/fs/readFile";
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadFileParams {
+    uri: String,
+    encoding: FileEncoding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadFileResult {
+    content: String,
+    encoding: FileEncoding,
+    size: Option<u64>,
+    mtime: Option<u64>,
+    etag: Option<String>,
 }

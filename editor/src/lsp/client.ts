@@ -5,7 +5,8 @@
 // 关键点:
 // * 服务端 -> 客户端使用二进制帧 (ArrayBuffer/Blob), 需解码为文本。
 // * 文本同步为 FULL 模式: 每次 didChange 发送完整文档。
-// * 必须实现 `workspace/fs/*` 三个反向请求 (服务端依赖它们扫描项目)。
+// * 必须实现 `workspace/fs/stat`, `workspace/fs/readDirectory` 和
+//   `workspace/fs/readFile` 三个反向请求 (服务端依赖它们扫描项目)。
 // * 接受 `client/registerCapability` (服务端在 initialized 时注册文件监控)。
 
 import { invoke } from '@tauri-apps/api/core';
@@ -277,18 +278,29 @@ class LspClient {
     const store = useAppStore.getState();
     store.setLspStatus('connecting');
 
-    // 反向 FS 请求: 服务端依赖这些扫描/读取项目
-    this.onRequest('workspace/fs/exists', async (params) => {
-      const { path } = params as { path: string };
-      return fs.exists(fromUri(path));
+    // 反向 FS 请求: 协议资源统一使用规范 URI, 本地 FS 调用前才转换为路径。
+    this.onRequest('workspace/fs/stat', async (params) => {
+      const { uri } = params as { uri: string };
+      return fs.stat(fromUri(uri));
     });
     this.onRequest('workspace/fs/readDirectory', async (params) => {
-      const { path } = params as { path: string };
-      return fs.readDir(fromUri(path));
+      const { uri } = params as { uri: string };
+      const entries = await fs.readDir(fromUri(uri));
+      return entries.map((entry) => ({
+        uri: `${uri.replace(/\/$/, '')}/${encodeURIComponent(entry.name)}`,
+        name: entry.name,
+        type: entry.isDirectory ? 'directory' : 'file',
+      }));
     });
     this.onRequest('workspace/fs/readFile', async (params) => {
-      const { path } = params as { path: string };
-      return fs.readText(fromUri(path));
+      const { uri, encoding } = params as { uri: string; encoding?: 'utf-8' | 'base64' };
+      if (encoding === 'base64') {
+        const bytes = await fs.readBytes(fromUri(uri));
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return { content: btoa(binary), encoding: 'base64' };
+      }
+      return { content: await fs.readText(fromUri(uri)), encoding: 'utf-8' };
     });
     this.onRequest('client/registerCapability', (params) => {
       this.handleRegisterCapability(params);

@@ -3,14 +3,31 @@
 import * as vscode from 'vscode';
 import { Executable, LanguageClient, LanguageClientOptions, RequestType } from 'vscode-languageclient/node';
 
-type ExistsParams = { path: string };
-type ExistsResult = { exists: boolean; isDirectory: boolean };
-type ReadDirectoryParams = { path: string };
-type ReadDirectoryResult = { name: string; isDirectory: boolean }[];
-type ReadFileParams = { path: string };
-type ReadFileResult = string;
+type StatParams = { uri: string };
+type StatResult = {
+  type: 'file' | 'directory' | 'symbolicLink' | 'unknown';
+  size: number;
+  mtime?: number;
+  ctime?: number;
+} | null;
+type ReadDirectoryParams = { uri: string };
+type ReadDirectoryResult = {
+  uri: string;
+  name: string;
+  type: 'file' | 'directory' | 'symbolicLink' | 'unknown';
+  size?: number;
+  mtime?: number;
+}[];
+type ReadFileParams = { uri: string; encoding: 'utf-8' | 'base64' };
+type ReadFileResult = {
+  content: string;
+  encoding: 'utf-8' | 'base64';
+  size?: number;
+  mtime?: number;
+  etag?: string;
+};
 
-const ExistsRequest = new RequestType<ExistsParams, ExistsResult, void>('workspace/fs/exists');
+const StatRequest = new RequestType<StatParams, StatResult, void>('workspace/fs/stat');
 const ReadDirectoryRequest = new RequestType<ReadDirectoryParams, ReadDirectoryResult, void>(
   'workspace/fs/readDirectory'
 );
@@ -35,31 +52,36 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 注册文件系统扩展请求
   context.subscriptions.push(
-    client.onRequest(ReadDirectoryRequest, async (params) => {
-      const uri = vscode.Uri.parse(params.path, true);
-      const entries = await vscode.workspace.fs.readDirectory(uri);
-      return entries.map(([name, type]) => ({ name, isDirectory: type === vscode.FileType.Directory }));
-    }),
-    client.onRequest(ReadFileRequest, async (params) => {
-      const uri = vscode.Uri.parse(params.path, true);
-      const data = await vscode.workspace.fs.readFile(uri);
-      return Buffer.from(data).toString('utf8');
-    }),
-    client.onRequest(ExistsRequest, async (params) => {
-      const uri = vscode.Uri.parse(params.path, true);
+    client.onRequest(StatRequest, async (params) => {
+      const uri = vscode.Uri.parse(params.uri, true);
       try {
         const stat = await vscode.workspace.fs.stat(uri);
         return {
-          exists: true,
-          isDirectory: stat.type === vscode.FileType.Directory,
+          type: stat.type === vscode.FileType.Directory ? 'directory' : 'file',
+          size: stat.size,
+          mtime: stat.mtime,
+          ctime: stat.ctime,
         };
       } catch {
-        // 文件不存在或其他错误视为不存在
-        return {
-          exists: false,
-          isDirectory: false,
-        };
+        return null;
       }
+    }),
+    client.onRequest(ReadDirectoryRequest, async (params) => {
+      const uri = vscode.Uri.parse(params.uri, true);
+      const entries = await vscode.workspace.fs.readDirectory(uri);
+      return entries.map(([name, type]) => ({
+        uri: vscode.Uri.joinPath(uri, name).toString(true),
+        name,
+        type: type === vscode.FileType.Directory ? 'directory' : 'file',
+      }));
+    }),
+    client.onRequest(ReadFileRequest, async (params) => {
+      const uri = vscode.Uri.parse(params.uri, true);
+      const data = await vscode.workspace.fs.readFile(uri);
+      if (params.encoding === 'base64') {
+        return { content: Buffer.from(data).toString('base64'), encoding: 'base64' };
+      }
+      return { content: Buffer.from(data).toString('utf8'), encoding: 'utf-8' };
     })
   );
 
