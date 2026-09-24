@@ -142,10 +142,15 @@ export function gitRestoreAll(path: string, commitId: string): Promise<void> {
   return invoke<void>('git_restore_all', { path, commitId });
 }
 
-export function gitFileChanges(path: string, file: string): Promise<GitInlineChange[]> {
-  return invoke<GitInlineChange[]>('git_file_changes', { path, file });
+export function gitFileChanges(path: string, file: string, content?: string): Promise<GitInlineChange[]> {
+  return invoke<GitInlineChange[]>('git_file_changes', { path, file, content });
 }
 
-export function gitFileRegion(path: string, file: string, line: number): Promise<GitInlineRegion | null> {
-  return invoke<GitInlineRegion | null>('git_file_region', { path, file, line });
+export function gitFileRegion(
+  path: string,
+  file: string,
+  line: number,
+  content?: string
+): Promise<GitInlineRegion | null> {
+  return invoke<GitInlineRegion | null>('git_file_region', { path, file, line, content });
 }

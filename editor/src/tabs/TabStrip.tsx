@@ -12,6 +12,7 @@ import { useRef, useState } from 'react';
 
 import { useAppStore, type WorkbenchTabItem } from '../state/store';
 import { dropIndicator, dropSlot, slotToIndex, type TabBox } from './dnd';
+import { FileBadges } from '../components/FileBadges';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
 const DRAG_THRESHOLD = 6;
@@ -124,6 +125,7 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
               {tab.title}
               {tab.kind === 'voice-workbench' && <QueueBadge />}
             </span>
+            {tab.kind === 'scene' ? <FileBadges path={tab.path} /> : null}
 
             <button
               type="button"

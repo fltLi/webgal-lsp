@@ -319,6 +319,14 @@ export function RepositoryTab() {
           >
             提交
           </Button>
+          <Button
+            appearance="secondary"
+            icon={<SelectAllOnRegular />}
+            disabled={busy || unstaged.length === 0}
+            onClick={() => void run(() => gitStageAll(projectPath))}
+          >
+            暂存全部
+          </Button>
           <Button appearance="secondary" icon={<HistoryRegular />} disabled={busy} onClick={() => setHistoryOpen(true)}>
             查看历史
           </Button>

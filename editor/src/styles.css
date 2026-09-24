@@ -1893,47 +1893,47 @@ body.resizing {
 
 /* 更改类型着色 */
 .git-M {
-  color: #0a66c2;
-  background: rgba(10, 102, 194, 0.14);
+  color: #e2c08d;
+  background: transparent;
 }
 .git-A,
 .git-U {
-  color: #1a7f37;
-  background: rgba(26, 127, 55, 0.14);
+  color: #73c991;
+  background: transparent;
 }
 .git-R {
-  color: #8250df;
-  background: rgba(130, 80, 223, 0.14);
+  color: #c586c0;
+  background: transparent;
 }
 .git-D {
-  color: #d1242f;
-  background: rgba(209, 36, 47, 0.14);
+  color: #f14c4c;
+  background: transparent;
 }
 .git-T {
-  color: #bc4c00;
-  background: rgba(188, 76, 0, 0.14);
+  color: #4ec9b0;
+  background: transparent;
 }
 
 [data-theme='dark'] .git-M {
-  color: #4a9eff;
-  background: rgba(74, 158, 255, 0.18);
+  color: #e2c08d;
+  background: transparent;
 }
 [data-theme='dark'] .git-A,
 [data-theme='dark'] .git-U {
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.18);
+  color: #73c991;
+  background: transparent;
 }
 [data-theme='dark'] .git-R {
-  color: #a371f7;
-  background: rgba(163, 113, 247, 0.18);
+  color: #c586c0;
+  background: transparent;
 }
 [data-theme='dark'] .git-D {
-  color: #f85149;
-  background: rgba(248, 81, 73, 0.18);
+  color: #f14c4c;
+  background: transparent;
 }
 [data-theme='dark'] .git-T {
-  color: #d29922;
-  background: rgba(210, 153, 34, 0.18);
+  color: #4ec9b0;
+  background: transparent;
 }
 
 /* 仓库页 */
@@ -2122,6 +2122,8 @@ body.resizing {
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
+  position: relative;
+  top: 1px;
 }
 
 .diag-error {

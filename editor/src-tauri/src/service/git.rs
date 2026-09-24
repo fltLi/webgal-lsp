@@ -12,6 +12,7 @@ use git2::{
     Repository, Signature, Status, StatusOptions, Tree,
 };
 use serde::Serialize;
+use similar::{ChangeTag, TextDiff};
 
 /// 在后台线程执行阻塞的 git 操作
 async fn blocking<T, F>(f: F) -> Result<T, String>
@@ -162,7 +163,7 @@ fn tree_blob(repo: &Repository, tree: &Tree<'_>, path: &str) -> Option<Vec<u8>> 
     Some(object.peel_to_blob().ok()?.content().to_vec())
 }
 
-/// 从索引读取某路径的 blob 内容
+/// 从索引读取某路径的暂存内容。
 fn index_blob(repo: &Repository, index: &Index, path: &str) -> Option<Vec<u8>> {
     let entry = index.get_path(Path::new(path), 0)?;
     let object = repo.find_object(entry.id, None).ok()?;
@@ -171,6 +172,49 @@ fn index_blob(repo: &Repository, index: &Index, path: &str) -> Option<Vec<u8>> {
 
 fn is_binary(bytes: &[u8]) -> bool {
     bytes.contains(&0)
+}
+
+/// 生成编辑器行差异: 始终比较文件当前内容与 HEAD 历史内容。
+/// 使用 `similar` 的行级差异, 因此编辑器尚未落盘的内容也能参与比较。
+fn editor_diff_lines(
+    repo: &Repository,
+    file: &str,
+    content: Option<String>,
+) -> Result<Vec<(char, Option<u32>, String)>, String> {
+    let head = head_tree(repo)
+        .as_ref()
+        .and_then(|tree| tree_blob(repo, tree, file))
+        .unwrap_or_default();
+    let disk = repo
+        .workdir()
+        .map(|dir| std::fs::read(dir.join(file)).unwrap_or_default())
+        .unwrap_or_default();
+    let modified = content.map(String::into_bytes).unwrap_or(disk);
+    let old_text = String::from_utf8_lossy(&head)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let new_text = String::from_utf8_lossy(&modified)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let diff = TextDiff::from_lines(&old_text, &new_text);
+    let mut result = Vec::new();
+    let mut new_line = 1u32;
+    for change in diff.iter_all_changes() {
+        let (kind, line) = match change.tag() {
+            ChangeTag::Equal => (' ', new_line),
+            ChangeTag::Delete => ('-', new_line.saturating_sub(1).max(1)),
+            ChangeTag::Insert => ('+', new_line),
+        };
+        result.push((
+            kind,
+            Some(line),
+            change.value().trim_end_matches(['\n', '\r']).to_string(),
+        ));
+        if !matches!(change.tag(), ChangeTag::Delete) {
+            new_line += 1;
+        }
+    }
+    Ok(result)
 }
 
 /// 统计每个文件的新增 / 删除行数
@@ -671,29 +715,28 @@ pub async fn git_commit_files(path: String, commit_id: String) -> Result<Vec<Com
     .await
 }
 
-/// 读取工作区文件差异 (stage = staged 已暂存 / unstaged 未暂存)
+/// 读取文件差异: 暂存项比较索引与 HEAD, 更改项比较工作区与 HEAD。
 #[tauri::command]
 pub async fn git_diff(path: String, file: String, stage: String) -> Result<FileDiff, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
-        let index = repo.index().map_err(|e| e.to_string())?;
-        let head_tree = head_tree(&repo);
-        let workdir = repo.workdir().ok_or("仓库无工作目录")?;
-
-        let (original, modified, original_label, modified_label) = match stage.as_str() {
-            "staged" => {
-                let old = head_tree
-                    .as_ref()
-                    .and_then(|t| tree_blob(&repo, t, &file))
-                    .unwrap_or_default();
-                let new = index_blob(&repo, &index, &file).unwrap_or_default();
-                (old, new, "HEAD（已提交）".to_string(), "已暂存".to_string())
-            }
-            _ => {
-                let old = index_blob(&repo, &index, &file).unwrap_or_default();
-                let new = std::fs::read(workdir.join(&file)).unwrap_or_default();
-                (old, new, "已暂存 / HEAD".to_string(), "工作区".to_string())
-            }
+        let original = head_tree(&repo)
+            .as_ref()
+            .and_then(|tree| tree_blob(&repo, tree, &file))
+            .unwrap_or_default();
+        let original_label = "HEAD（已提交）".to_string();
+        let (modified, modified_label) = if stage == "staged" {
+            let index = repo.index().map_err(|e| e.to_string())?;
+            (
+                index_blob(&repo, &index, &file).unwrap_or_default(),
+                "已暂存".to_string(),
+            )
+        } else {
+            let workdir = repo.workdir().ok_or("仓库无工作目录")?;
+            (
+                std::fs::read(workdir.join(&file)).unwrap_or_default(),
+                "工作区文件".to_string(),
+            )
         };
 
         let binary = is_binary(&original) || is_binary(&modified);
@@ -796,89 +839,66 @@ pub async fn git_restore_all(path: String, commit_id: String) -> Result<(), Stri
 /// * 纯插入 (无相邻删除) -> 'A' 新增;
 /// * 纯删除块 -> 'D' (标记在其上方最后一行, 即删除发生处).
 #[tauri::command]
-pub async fn git_file_changes(path: String, file: String) -> Result<Vec<InlineChange>, String> {
+pub async fn git_file_changes(
+    path: String,
+    file: String,
+    content: Option<String>,
+) -> Result<Vec<InlineChange>, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
-        let index = repo.index().map_err(|e| e.to_string())?;
-        let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(file.clone());
-
-        let diff = repo
-            .diff_index_to_workdir(Some(&index), Some(&mut diff_opts))
-            .map_err(|e| e.to_string())?;
+        let lines = editor_diff_lines(&repo, &file, content)?;
 
         let mut changes = Vec::new();
-        for delta_idx in 0..diff.deltas().len() {
-            let Some(patch) =
-                git2::Patch::from_diff(&diff, delta_idx).map_err(|e| e.to_string())?
-            else {
-                continue;
-            };
-            for hunk_idx in 0..patch.num_hunks() {
-                let (_hunk, line_count) = patch.hunk(hunk_idx).map_err(|e| e.to_string())?;
-                // 收集本 hunk 的真实行: (origin, new_lineno).
-                // 过滤文件末尾无换行的 EOF 伪行 (origin '=' / '<' / '>'), 它们常夹在
-                // 删除行与新增行之间, 干扰"修改/新增"配对与删除边界判定.
-                let mut lines: Vec<(char, Option<u32>)> = Vec::with_capacity(line_count);
-                for li in 0..line_count {
-                    let line = patch
-                        .line_in_hunk(hunk_idx, li)
-                        .map_err(|e| e.to_string())?;
-                    let origin = line.origin();
-                    if matches!(origin, ' ' | '+' | '-') {
-                        lines.push((origin, line.new_lineno()));
+        let n = lines.len();
+        let mut i = 0;
+        while i < n {
+            match lines[i].0 {
+                // 上下文: 跳过
+                ' ' => i += 1,
+                // 新增 / 修改
+                '+' => {
+                    // 紧邻本 '+' 运行之前是否有 '-' 运行 (即替换), 及删除个数
+                    let mut minus = 0;
+                    let mut k = i;
+                    while k > 0 && lines[k - 1].0 == '-' {
+                        minus += 1;
+                        k -= 1;
                     }
-                }
-
-                let n = lines.len();
-                let mut i = 0;
-                while i < n {
-                    match lines[i].0 {
-                        // 上下文: 跳过
-                        ' ' => i += 1,
-                        // 新增 / 修改
-                        '+' => {
-                            // 紧邻本 '+' 运行之前是否有 '-' 运行 (即替换), 及删除个数
-                            let mut minus = 0;
-                            let mut k = i;
-                            while k > 0 && lines[k - 1].0 == '-' {
-                                minus += 1;
-                                k -= 1;
-                            }
-                            let mut j = i;
-                            let mut idx = 0usize;
-                            while j < n && lines[j].0 == '+' {
-                                let kind = if idx < minus { 'M' } else { 'A' };
-                                if let Some(line) = lines[j].1 {
-                                    changes.push(InlineChange { line, kind });
-                                }
-                                idx += 1;
-                                j += 1;
-                            }
-                            i = j;
+                    let mut j = i;
+                    let mut idx = 0usize;
+                    while j < n && lines[j].0 == '+' {
+                        let kind = if idx < minus { 'M' } else { 'A' };
+                        if let Some(line) = lines[j].1 {
+                            changes.push(InlineChange { line, kind });
                         }
-                        // 删除
-                        '-' => {
-                            let mut j = i;
-                            while j < n && lines[j].0 == '-' {
-                                j += 1;
-                            }
-                            // 若其后紧跟新增 (替换), 则不单独标记删除; 否则为纯删除块
-                            let replaced = j < n && lines[j].0 == '+';
-                            if !replaced {
-                                // 标记在删除块上方最后一行; 文件开头无前行则取 1
-                                let boundary =
-                                    lines[..i].iter().rev().find_map(|(_, nl)| *nl).unwrap_or(1);
-                                changes.push(InlineChange {
-                                    line: boundary,
-                                    kind: 'D',
-                                });
-                            }
-                            i = j;
-                        }
-                        _ => i += 1,
+                        idx += 1;
+                        j += 1;
                     }
+                    i = j;
                 }
+                // 删除
+                '-' => {
+                    let mut j = i;
+                    while j < n && lines[j].0 == '-' {
+                        j += 1;
+                    }
+                    // 若其后紧跟新增 (替换), 则不单独标记删除; 否则为纯删除块
+                    let replaced = j < n && lines[j].0 == '+';
+                    if !replaced {
+                        // 标记在删除块上方最后一行; 文件开头无前行则取 1
+                        let boundary = lines[..i]
+                            .iter()
+                            .rev()
+                            .find_map(|(_, nl, _)| *nl)
+                            .unwrap_or(1);
+                        changes.push(InlineChange {
+                            line: boundary,
+                            kind: 'D',
+                        });
+                    }
+                    i = j;
+                }
+                _ => i += 1,
             }
         }
         Ok(changes)
@@ -895,42 +915,11 @@ pub async fn git_file_region(
     path: String,
     file: String,
     line: u32,
+    content: Option<String>,
 ) -> Result<Option<InlineRegion>, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
-        let index = repo.index().map_err(|e| e.to_string())?;
-        let mut diff_opts = DiffOptions::new();
-        diff_opts.pathspec(file.clone());
-
-        let diff = repo
-            .diff_index_to_workdir(Some(&index), Some(&mut diff_opts))
-            .map_err(|e| e.to_string())?;
-
-        // 收集本文件全部差异行 (去掉 EOF 伪行), 按文件顺序
-        let mut flat: Vec<(char, Option<u32>, String)> = Vec::new();
-        for delta_idx in 0..diff.deltas().len() {
-            let Some(patch) =
-                git2::Patch::from_diff(&diff, delta_idx).map_err(|e| e.to_string())?
-            else {
-                continue;
-            };
-            for hunk_idx in 0..patch.num_hunks() {
-                let (_hunk, line_count) = patch.hunk(hunk_idx).map_err(|e| e.to_string())?;
-                for li in 0..line_count {
-                    let dl = patch
-                        .line_in_hunk(hunk_idx, li)
-                        .map_err(|e| e.to_string())?;
-                    let origin = dl.origin();
-                    if !matches!(origin, ' ' | '+' | '-') {
-                        continue;
-                    }
-                    let text = String::from_utf8_lossy(dl.content())
-                        .trim_end_matches(['\n', '\r'])
-                        .to_string();
-                    flat.push((origin, dl.new_lineno(), text));
-                }
-            }
-        }
+        let flat = editor_diff_lines(&repo, &file, content)?;
 
         // 按连续 "-/+" 运行切分为差异块 (上下文行分隔)
         struct Block {

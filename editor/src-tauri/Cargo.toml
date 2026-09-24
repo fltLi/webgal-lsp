@@ -27,6 +27,7 @@ serde_json.workspace = true
 percent-encoding.workspace = true
 zip.workspace = true
 walkdir.workspace = true
+similar = "3.2"
 sha2 = "0.10"
 hound = "3.5"
 trash = "5.2"

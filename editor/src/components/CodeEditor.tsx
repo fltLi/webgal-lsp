@@ -246,7 +246,8 @@ export function CodeEditor({
     const openInline = (line: number, rel: string, project: string) => {
       closeInline();
       const mySeq = ++openSeq;
-      void gitFileRegion(project, rel, line).then((region) => {
+      const current = useAppStore.getState().documents.find((doc) => doc.path === path);
+      void gitFileRegion(project, rel, line, current?.dirty ? editor.getValue() : undefined).then((region) => {
         if (disposed || mySeq !== openSeq || !region || region.rows.length === 0) return;
         const domNode = document.createElement('div');
         domNode.className = 'inline-diff-zone';
@@ -279,7 +280,8 @@ export function CodeEditor({
       const rel = project ? absToRel(project, path) : '';
       if (!project || !rel) return;
       try {
-        const changes = await gitFileChanges(project, rel);
+        const current = store.documents.find((doc) => doc.path === path);
+        const changes = await gitFileChanges(project, rel, current?.dirty ? model.getValue() : undefined);
         if (disposed) return;
         const lineCount = model.getLineCount();
         const cls: Record<string, string> = {
@@ -340,6 +342,7 @@ export function CodeEditor({
     const suggestTriggerSub = editor.onDidChangeModelContent((e) => {
       // 内容变动后差异已过时, 收起内联差异
       closeInline();
+      void applyGitGutter();
       let triggered = false;
       for (const change of e.changes) {
         if (change.text && TRIGGER_SET.has(change.text[change.text.length - 1])) {

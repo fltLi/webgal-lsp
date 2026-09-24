@@ -10,6 +10,7 @@ import {
   FolderAddRegular,
   OpenFolderRegular,
   RenameRegular,
+  AddRegular,
 } from '@fluentui/react-icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -26,6 +27,9 @@ import {
   validateName,
 } from '../fileops';
 import { fs } from '../lib/fs';
+import { absToRel } from '../git/util';
+import { gitStage } from '../commands/git';
+import { refreshGitStatus } from '../git/status';
 import { openFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
@@ -37,6 +41,7 @@ type PromptState = { mode: 'newFile' | 'newFolder'; dir: string } | { mode: 'ren
 
 export function SceneBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);
+  const gitStatus = useAppStore((s) => s.gitStatus);
   // 场景浏览器高亮"当前正在编辑的场景": 即活动选项卡为场景类时对应的路径
   const activePath = useAppStore((s) => {
     const tab = s.tabs.find((item) => item.id === s.activeTabId);
@@ -180,6 +185,11 @@ export function SceneBrowser() {
     }
   };
 
+  const stageTarget = menu && !menu.node.isDirectory ? absToRel(projectPath, menu.node.path) : '';
+  const canStage = Boolean(
+    gitStatus?.initialized && stageTarget && gitStatus.unstaged.some((file) => file.path === stageTarget)
+  );
+
   /** 删除确认文案: 提示将被关闭的已打开选项卡 (含未保存警告) */
   const deleteMessage = (() => {
     if (!deleting) return '';
@@ -275,6 +285,19 @@ export function SceneBrowser() {
                   },
                 ]
               : [
+                  ...(gitStatus?.initialized && !menu.node.isDirectory
+                    ? [
+                        {
+                          key: 'stage',
+                          label: '暂存',
+                          icon: <AddRegular />,
+                          disabled: !canStage,
+                          title: canStage ? undefined : '此场景已暂存',
+                          onClick: () =>
+                            void gitStage(projectPath, [stageTarget]).then(() => refreshGitStatus(projectPath)),
+                        },
+                      ]
+                    : []),
                   {
                     key: 'copyRelativePath',
                     label: '复制相对路径',

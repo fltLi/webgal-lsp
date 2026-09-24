@@ -13,7 +13,7 @@ export function FileBadges({ path }: { path: string }) {
   const rel = projectPath ? absToRel(projectPath, path) : '';
   const staged = gitStatus?.staged ?? [];
   const unstaged = gitStatus?.unstaged ?? [];
-  const change = unstaged.find((f) => f.path === rel) ?? staged.find((f) => f.path === rel);
+  const change = staged.find((f) => f.path === rel) ?? unstaged.find((f) => f.path === rel);
 
   const diags = diagnostics[path] ?? [];
   const errors = diags.filter((d) => d.severity === 1).length;
