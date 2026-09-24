@@ -4,32 +4,55 @@
 
 import { Button } from '@fluentui/react-components';
 import { SettingsRegular } from '@fluentui/react-icons';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { resolveTemplate } from '../lib/engineTemplate';
+import { Select, type SelectOption } from './Select';
+import { resolveProjectTemplate, type ProjectTemplateResolution } from '../lib/engineTemplate';
 import { switchTemplate } from '../project';
 import { useAppStore } from '../state/store';
 
 export function ProjectTab() {
   const projectPath = useAppStore((s) => s.projectPath);
   const settings = useAppStore((s) => s.settings);
-  const projectBindings = useAppStore((s) => s.projectBindings);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setSettingsCategory = useAppStore((s) => s.setSettingsCategory);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<ProjectTemplateResolution | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResolution(null);
+    if (!projectPath) return;
+    void resolveProjectTemplate(settings, projectPath).then((next) => {
+      if (!cancelled) setResolution(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPath, settings, reloadToken]);
 
   if (!projectPath) return <div className="project-tab empty">未打开项目</div>;
 
-  const template = resolveTemplate(settings, projectBindings, projectPath);
+  const template = resolution?.template ?? null;
+  const unknownValue = '__project-template-unknown__';
+  const templateValue = resolution?.unknownName ? unknownValue : (template?.id ?? '');
+  const templateOptions: SelectOption[] = [
+    { value: '', label: '跟随引擎默认' },
+    ...(resolution?.unknownName ? [{ value: unknownValue, label: resolution.unknownName }] : []),
+    ...settings.templates.map((item) => ({ value: item.id, label: item.name })),
+  ];
 
   const onSwitchTemplate = async (templateId: string) => {
     setBusy(true);
     setError(null);
     try {
+      if (templateId === unknownValue) return;
       const t = templateId ? (settings.templates.find((x) => x.id === templateId) ?? null) : null;
       await switchTemplate(t ? t.id : null, t ? t.path : null);
+      setReloadToken((token) => token + 1);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -41,37 +64,30 @@ export function ProjectTab() {
     <div className="project-tab">
       <div className="project-tab-section">
         <span className="settings-label">模板</span>
-        <select
-          className="native-select"
-          value={template?.id ?? ''}
-          disabled={busy}
-          onChange={(e) => void onSwitchTemplate(e.target.value)}
-        >
-          <option value="">跟随引擎默认</option>
-          {settings.templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        <div className="project-tab-template-row">
+          <Select
+            value={templateValue}
+            options={templateOptions}
+            disabled={busy}
+            onChange={(value) => void onSwitchTemplate(value)}
+          />
+          <Button
+            icon={<SettingsRegular />}
+            appearance="secondary"
+            disabled={busy}
+            onClick={() => {
+              setSettingsCategory('template');
+              setSettingsOpen(true);
+            }}
+          >
+            管理模板
+          </Button>
+        </div>
         {template ? (
           <span className="project-tab-path" title={template.path}>
             {template.path}
           </span>
         ) : null}
-      </div>
-
-      <div className="project-tab-section">
-        <Button
-          icon={<SettingsRegular />}
-          appearance="secondary"
-          onClick={() => {
-            setSettingsCategory('template');
-            setSettingsOpen(true);
-          }}
-        >
-          管理模板…
-        </Button>
       </div>
 
       {error ? <p className="prompt-error">{error}</p> : null}

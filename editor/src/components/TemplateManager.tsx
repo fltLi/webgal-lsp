@@ -32,7 +32,7 @@ export function TemplateManager() {
       return;
     }
     updateSettings({
-      templates: [...settings.templates, { id: createId(), name: v.name, path: dir }],
+      templates: [...settings.templates, { id: createId(), name: v.name, manifestId: v.manifestId, path: dir }],
     });
   };
 
@@ -54,8 +54,13 @@ export function TemplateManager() {
           {settings.templates.map((t) => (
             <li key={t.id} className="manager-item" title={t.path}>
               <FolderOpenRegular />
-              <span className="manager-item-name">{t.name}</span>
-              <span className="manager-item-path">{t.path}</span>
+              <div className="manager-item-content">
+                <div className="manager-item-heading">
+                  <span className="manager-item-name">{t.name}</span>
+                  <span className="manager-item-version">ID: {t.manifestId ?? '未知'}</span>
+                </div>
+                <span className="manager-item-path">{t.path}</span>
+              </div>
               <button className="manager-item-remove" title="移除" onClick={() => removeTemplate(t.id)}>
                 <DeleteRegular />
               </button>

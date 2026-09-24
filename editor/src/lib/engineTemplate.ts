@@ -9,13 +9,24 @@ import { bindingKey, type ProjectBinding } from './bindings';
 export interface TemplateValidation {
   valid: boolean;
   name: string;
+  manifestId?: string;
   error?: string;
 }
 
 interface TemplateManifest {
   name?: string;
+  id?: string;
   'webgal-version'?: string;
   webgalVersion?: string;
+}
+
+export interface ProjectTemplateResolution {
+  /** 无 template.json 时为内置模板。 */
+  builtin: boolean;
+  /** 与项目清单的 name/id 都匹配的本地模板。 */
+  template: TemplateEntry | null;
+  /** 项目清单存在但无法与本地模板确认时显示的名称。 */
+  unknownName: string | null;
 }
 
 function baseName(path: string): string {
@@ -41,7 +52,7 @@ export async function validateTemplate(path: string): Promise<TemplateValidation
       try {
         const manifest = JSON.parse(await fs.readText(manifestPath)) as TemplateManifest;
         if (manifest.name) {
-          return { valid: true, name: manifest.name };
+          return { valid: true, name: manifest.name, manifestId: manifest.id };
         }
       } catch {
         // manifest 解析失败, 回退
@@ -51,6 +62,29 @@ export async function validateTemplate(path: string): Promise<TemplateValidation
     return { valid: true, name: baseName(path) };
   } catch (e) {
     return { valid: false, name: baseName(path), error: String(e) };
+  }
+}
+
+/** 根据项目 game/template/template.json 识别当前模板。 */
+export async function resolveProjectTemplate(
+  settings: Settings,
+  projectPath: string
+): Promise<ProjectTemplateResolution> {
+  const manifestPath = `${projectPath.replace(/[\\/]+$/, '')}\\game\\template\\template.json`;
+  const manifestExists = (await fs.exists(manifestPath)).exists;
+  if (!manifestExists) return { builtin: true, template: null, unknownName: null };
+
+  try {
+    const manifest = JSON.parse(await fs.readText(manifestPath)) as TemplateManifest;
+    const name = manifest.name?.trim();
+    if (!name) return { builtin: false, template: null, unknownName: '模板（未知）' };
+
+    const candidates = settings.templates.filter((template) => template.name === name);
+    const template = candidates.find((candidate) => Boolean(manifest.id) && candidate.manifestId === manifest.id);
+    if (template) return { builtin: false, template, unknownName: null };
+    return { builtin: false, template: null, unknownName: `${name}（未知）` };
+  } catch {
+    return { builtin: false, template: null, unknownName: '模板（未知）' };
   }
 }
 

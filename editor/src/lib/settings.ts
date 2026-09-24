@@ -8,6 +8,8 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 export interface TemplateEntry {
   id: string;
   name: string;
+  /** template.json 中的模板编号, 用于识别项目当前模板。 */
+  manifestId?: string;
   path: string;
 }
 
