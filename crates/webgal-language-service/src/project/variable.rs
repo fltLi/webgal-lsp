@@ -23,7 +23,7 @@ pub struct VariableTable(HashMap<String, VariableInfo>);
 #[derive(Debug, Clone, Default, Hash)]
 pub struct VariableInfo {
     pub kind: VariableKind,
-    pub definitions: Vec<VariableLocation>,
+    pub definitions: Vec<VariableDefinition>,
     pub references: Vec<VariableLocation>,
 }
 
@@ -37,6 +37,12 @@ pub enum VariableKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VariableDefinition {
+    pub kind: Option<ValueKind>,
+    pub location: VariableLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariableLocation {
     pub scene: String,
     pub line: usize,
@@ -44,6 +50,10 @@ pub struct VariableLocation {
 }
 
 impl VariableKind {
+    pub fn is_kind(&self) -> bool {
+        matches!(self, Self::Known(_))
+    }
+
     pub fn as_kind(&self) -> Option<ValueKind> {
         match *self {
             Self::Known(kind) => Some(kind),
@@ -94,17 +104,20 @@ impl VariableTable {
         // 添加定义
         for (path, scene_variables) in &scenes {
             for definition in &scene_variables.definitions {
-                if matches!(definition.kind, VariableDefinitionKind::ReturnDefinition(_)) {
+                if matches!(definition.kind, DefinitionKind::ReturnDefinition(_)) {
                     continue;
                 }
                 variables
                     .entry(definition.name.to_string())
                     .or_default()
                     .definitions
-                    .push(VariableLocation {
-                        scene: path.to_string(),
-                        line: definition.line,
-                        span: definition.span.clone(),
+                    .push(VariableDefinition {
+                        kind: None,
+                        location: VariableLocation {
+                            scene: path.to_string(),
+                            line: definition.line,
+                            span: definition.span.clone(),
+                        },
                     });
             }
         }
@@ -130,7 +143,7 @@ impl VariableTable {
         for (path, scene_variables) in &scenes {
             for definition in &scene_variables.definitions {
                 match definition.kind {
-                    VariableDefinitionKind::Expression(expression) => {
+                    DefinitionKind::Expression(expression) => {
                         let variables = expression.variables();
                         if variables.is_empty() {
                             anonymous_destinations
@@ -146,7 +159,7 @@ impl VariableTable {
                         }
                     }
 
-                    VariableDefinitionKind::ReturnDefinition(expression) => {
+                    DefinitionKind::ReturnDefinition(expression) => {
                         let variables = expression.variables();
                         if variables.is_empty() {
                             anonymous_destinations
@@ -162,7 +175,7 @@ impl VariableTable {
                         }
                     }
 
-                    VariableDefinitionKind::ReturnDestination(target) => {
+                    DefinitionKind::ReturnDestination(target) => {
                         scene_return_destinations
                             .entry(target)
                             .or_default()
@@ -249,6 +262,34 @@ impl VariableTable {
             }
         }
 
+        // 5. 尝试局部推断
+        let local_kinds: HashMap<_, _> = scenes
+            .iter()
+            .flat_map(|(path, scene_variables)| {
+                scene_variables.definitions.iter().filter_map(|definition| {
+                    let expression = definition.kind.as_expression()?;
+                    let kind = expression.infer_type(&variables)?;
+                    Some((
+                        VariableLocation {
+                            scene: path.clone(),
+                            line: definition.line,
+                            span: definition.span.clone(),
+                        },
+                        kind,
+                    ))
+                })
+            })
+            .collect();
+
+        for variable in variables.values_mut() {
+            for definition in &mut variable.definitions {
+                definition.kind = variable
+                    .kind
+                    .as_kind()
+                    .or_else(|| local_kinds.get(&definition.location).cloned());
+            }
+        }
+
         variables
     }
 }
@@ -276,30 +317,39 @@ pub fn is_scene_variables_changed(prev: &Scene, next: &Scene) -> bool {
 /// 场景变量信息
 #[derive(Debug, Clone, Default, PartialEq)]
 struct SceneVariables<'a> {
-    definitions: Vec<VariableDefinition<'a>>,
-    references: Vec<VariableReference<'a>>,
+    definitions: Vec<Definition<'a>>,
+    references: Vec<Reference<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct VariableDefinition<'a> {
+struct Definition<'a> {
     name: &'a str,
-    kind: VariableDefinitionKind<'a>,
+    kind: DefinitionKind<'a>,
     line: usize,
     span: Range<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum VariableDefinitionKind<'a> {
+enum DefinitionKind<'a> {
     Expression(&'a Expression),
     ReturnDestination(&'a str),
     ReturnDefinition(&'a Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct VariableReference<'a> {
+struct Reference<'a> {
     name: &'a str,
     line: usize,
     span: Range<usize>,
+}
+
+impl<'a> DefinitionKind<'a> {
+    fn as_expression(&self) -> Option<&'a Expression> {
+        match self {
+            Self::Expression(expression) => Some(expression),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> SceneVariables<'a> {
@@ -343,9 +393,9 @@ impl<'a> SceneVariables<'a> {
                     && let Some((_, Some(name))) = sentence.primary.get_argument("writeReturnTo")
                 {
                     let span = sentence.primary.get_span(name);
-                    self.definitions.push(VariableDefinition {
+                    self.definitions.push(Definition {
                         name,
-                        kind: VariableDefinitionKind::ReturnDestination(&call_scene.scene),
+                        kind: DefinitionKind::ReturnDestination(&call_scene.scene),
                         line,
                         span,
                     });
@@ -360,9 +410,9 @@ impl<'a> SceneVariables<'a> {
                     };
 
                     let name_span = sentence.primary.get_span(name);
-                    self.definitions.push(VariableDefinition {
+                    self.definitions.push(Definition {
                         name,
-                        kind: VariableDefinitionKind::Expression(expression),
+                        kind: DefinitionKind::Expression(expression),
                         line,
                         span: name_span,
                     });
@@ -387,9 +437,9 @@ impl<'a> SceneVariables<'a> {
                 if let Some(content) = sentence.primary.content =>
             {
                 let span = sentence.primary.get_span(content);
-                self.definitions.push(VariableDefinition {
+                self.definitions.push(Definition {
                     name: "",
-                    kind: VariableDefinitionKind::ReturnDefinition(value),
+                    kind: DefinitionKind::ReturnDefinition(value),
                     line,
                     span: span.clone(),
                 });
@@ -402,9 +452,9 @@ impl<'a> SceneVariables<'a> {
                     Lazy::new(|| Expression::from_str("\"\"").unwrap());
 
                 let span = sentence.primary.get_span(content);
-                self.definitions.push(VariableDefinition {
+                self.definitions.push(Definition {
                     name: content,
-                    kind: VariableDefinitionKind::Expression(&STRING_EXPRESSION),
+                    kind: DefinitionKind::Expression(&STRING_EXPRESSION),
                     line,
                     span,
                 });
@@ -415,9 +465,9 @@ impl<'a> SceneVariables<'a> {
                     && let Some((name, expression)) = content.split_once('=') =>
             {
                 let name_span = sentence.primary.get_span(name);
-                self.definitions.push(VariableDefinition {
+                self.definitions.push(Definition {
                     name,
-                    kind: VariableDefinitionKind::Expression(&set_variable.expression.1),
+                    kind: DefinitionKind::Expression(&set_variable.expression.1),
                     line,
                     span: name_span,
                 });
@@ -440,16 +490,15 @@ impl<'a> SceneVariables<'a> {
         content: &str,
         line: usize,
     ) {
-        self.references
-            .extend(
-                iter.into_iter()
-                    .flat_map(variables_of)
-                    .map(|name| VariableReference {
-                        name,
-                        line,
-                        span: span_of(content, name),
-                    }),
-            );
+        self.references.extend(
+            iter.into_iter()
+                .flat_map(variables_of)
+                .map(|name| Reference {
+                    name,
+                    line,
+                    span: span_of(content, name),
+                }),
+        );
     }
 
     fn collect_expression_reference(
@@ -458,16 +507,12 @@ impl<'a> SceneVariables<'a> {
         span: Range<usize>,
         line: usize,
     ) {
-        self.references.extend(
-            expression
-                .variables()
-                .into_iter()
-                .map(|name| VariableReference {
-                    name,
-                    line,
-                    span: span.clone(), // TODO: 精细化变量勾画
-                }),
-        );
+        self.references
+            .extend(expression.variables().into_iter().map(|name| Reference {
+                name,
+                line,
+                span: span.clone(), // TODO: 精细化变量勾画
+            }));
     }
 }
 
@@ -575,5 +620,58 @@ mod tests {
             *kind(&table, "result"),
             VariableKind::Known(ValueKind::Number)
         );
+    }
+
+    // -------- 局部推断 --------
+
+    fn local(t: &VariableTable, name: &str, scene: &str, line: usize) -> Option<ValueKind> {
+        t.get(name)
+            .unwrap()
+            .definitions
+            .iter()
+            .find(|d| d.location.scene == scene && d.location.line == line)
+            .unwrap()
+            .kind
+    }
+
+    #[test]
+    fn local_kind_kept_under_global_conflict() {
+        let t = build(&[("a.txt", "setVar:x=1;"), ("b.txt", "setVar:x=\"s\";")]);
+        assert_eq!(*kind(&t, "x"), VariableKind::Conflict);
+        assert_eq!(local(&t, "x", "a.txt", 0), Some(ValueKind::Number));
+        assert_eq!(local(&t, "x", "b.txt", 0), Some(ValueKind::String));
+    }
+
+    #[test]
+    fn local_kind_uses_known_dep() {
+        let t = build(&[
+            ("1.txt", "setVar:base=5;"),
+            ("2.txt", "setVar:x=base;"),
+            ("3.txt", "setVar:x=\"s\";"),
+        ]);
+        assert_eq!(local(&t, "x", "2.txt", 0), Some(ValueKind::Number));
+        assert_eq!(local(&t, "x", "3.txt", 0), Some(ValueKind::String));
+    }
+
+    #[test]
+    fn local_kind_none_when_dep_unresolved() {
+        let t = build(&[
+            ("1.txt", "setVar:x=1;"),
+            ("2.txt", "setVar:x=\"s\";"),
+            ("3.txt", "setVar:y=x;"),
+        ]);
+        assert_eq!(local(&t, "y", "3.txt", 0), None);
+
+        let t = build(&[("1.txt", "setVar:b=a+1;")]);
+        assert_eq!(local(&t, "b", "1.txt", 0), None);
+    }
+
+    #[test]
+    fn local_kind_of_write_return_to() {
+        let t = build(&[
+            ("a.txt", "return:100;"),
+            ("1.txt", "callScene:a.txt -writeReturnTo=r;"),
+        ]);
+        assert_eq!(local(&t, "r", "1.txt", 0), Some(ValueKind::Number));
     }
 }

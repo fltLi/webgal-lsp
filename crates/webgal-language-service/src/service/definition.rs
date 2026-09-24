@@ -23,7 +23,12 @@ pub fn definition(
         variable
             .references
             .iter()
-            .chain(variable.definitions.iter())
+            .chain(
+                variable
+                    .definitions
+                    .iter()
+                    .map(|definition| &definition.location),
+            )
             .any(|location| {
                 location.scene == scene_path
                     && position_in_range(position, variable_location_to_range(location))
@@ -34,6 +39,7 @@ pub fn definition(
         variable
             .definitions
             .iter()
+            .map(|definition| &definition.location)
             .map(|location| (location.scene.clone(), variable_location_to_range(location)))
             .collect(),
     )
