@@ -13,7 +13,7 @@
 //! 刻意不支持 (作为规范): 赋值, 成员访问, `$` 内置变量域, 数组 / 对象字面量,
 //! `===` / `!==`, 位运算, 过滤器.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, ops::Range, str::FromStr};
 
 #[cfg(feature = "serde")]
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -810,6 +810,34 @@ impl fmt::Display for Expression {
     }
 }
 
+/// 从原始表达式字符串中按出现顺序收集变量引用, 并附带其字节区间.
+///
+/// 仅返回真实变量引用, 不包含函数名. 例如 `random(x, y)` 中只返回 `x` 与 `y`,
+/// 而不返回 `random`.
+pub fn variables_of<'a>(source: &'a str) -> impl Iterator<Item = (Range<usize>, &'a str)> + 'a {
+    let tokens = Lexer::new(source).lex_all().unwrap_or_default();
+    let mut variables = Vec::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let TokenKind::Var(name) = &token.kind else {
+            continue;
+        };
+
+        if matches!(
+            tokens.get(index + 1).map(|next| &next.kind),
+            Some(TokenKind::LParen)
+        ) {
+            continue;
+        }
+
+        let start = token.offset;
+        let end = start + name.len();
+        variables.push((start..end, &source[start..end]));
+    }
+
+    variables.into_iter()
+}
+
 impl Expression {
     /// 创建一个表示解析失败的表达式占位符.
     ///
@@ -1237,6 +1265,21 @@ mod tests {
         assert_eq!(parse_ok("True"), Expr::Var("True".into()));
         assert_eq!(parse_ok("人物名称"), Expr::Str("人物名称".into()));
         assert_eq!(parse_ok("你好"), Expr::Str("你好".into()));
+    }
+
+    #[test]
+    fn variables_of_collects_ranges_in_order() {
+        let actual: Vec<_> = variables_of("a + b + a + random(x, y)").collect();
+        assert_eq!(
+            actual,
+            vec![
+                (0..1, "a"),
+                (4..5, "b"),
+                (8..9, "a"),
+                (19..20, "x"),
+                (22..23, "y"),
+            ]
+        );
     }
 
     // -------- 优先级 --------
