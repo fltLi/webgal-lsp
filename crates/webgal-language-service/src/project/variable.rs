@@ -6,7 +6,7 @@ use derive_more::{Deref, DerefMut, From, Into, IntoIterator, TryInto};
 use expression::{Expression, TypeContext, ValueKind};
 use once_cell::sync::Lazy;
 use webgal_language_core::{
-    element::{ChoiceSplit, variables_of},
+    element::{self, ChoiceSplit},
     sentence::{ReturnSentence, Scene, Sentence, SentenceExt, SentenceInfo},
     util::span_of,
 };
@@ -363,11 +363,11 @@ impl<'a> SceneVariables<'a> {
     }
 
     fn collect_sentence(&mut self, sentence: &'a SentenceInfo<'a>, line: usize) {
-        if let Some(expression) = sentence.condition()
-            && let Some((_, Some(when))) = sentence.primary.get_argument("when")
+        if sentence.condition().is_some()
+            && let Some((_, Some(expression))) = sentence.primary.get_argument("when")
         {
-            let span = sentence.primary.get_span(when);
-            self.collect_expression_reference(expression, span, line);
+            let span = sentence.primary.get_span(expression);
+            self.collect_expression_reference(expression, span.start, line);
         }
 
         match &sentence.sentence {
@@ -404,7 +404,7 @@ impl<'a> SceneVariables<'a> {
                 for (name, expression) in &call_scene.variables {
                     let (name, value) =
                         sentence.primary.arguments[sentence.primary.get_argument(name).unwrap().0];
-                    let value = match value {
+                    let expression_literal = match value {
                         Some(v) => v,
                         None => continue,
                     };
@@ -417,19 +417,23 @@ impl<'a> SceneVariables<'a> {
                         span: name_span,
                     });
 
-                    let expression_span = sentence.primary.get_span(value);
-                    self.collect_expression_reference(expression, expression_span, line);
+                    let expression_span = sentence.primary.get_span(expression_literal);
+                    self.collect_expression_reference(
+                        expression_literal,
+                        expression_span.start,
+                        line,
+                    );
                 }
             }
             Sentence::Choose(choose) if let Some(content) = sentence.primary.content => {
-                for (choice, choice_view) in choose.choices.iter().zip(ChoiceSplit::new(content)) {
+                for choice in ChoiceSplit::new(content) {
                     if let Some(expression) = &choice.show {
-                        let span = sentence.primary.get_span(choice_view.show.unwrap());
-                        self.collect_expression_reference(expression, span, line);
+                        let span = sentence.primary.get_span(expression);
+                        self.collect_expression_reference(expression, span.start, line);
                     }
                     if let Some(expression) = &choice.enable {
-                        let span = sentence.primary.get_span(choice_view.enable.unwrap());
-                        self.collect_expression_reference(expression, span, line);
+                        let span = sentence.primary.get_span(expression);
+                        self.collect_expression_reference(expression, span.start, line);
                     }
                 }
             }
@@ -443,7 +447,7 @@ impl<'a> SceneVariables<'a> {
                     line,
                     span: span.clone(),
                 });
-                self.collect_expression_reference(value, span, line);
+                self.collect_expression_reference(content, span.start, line);
             }
 
             // 游戏控制
@@ -473,11 +477,7 @@ impl<'a> SceneVariables<'a> {
                 });
 
                 let expression_span = sentence.primary.get_span(expression);
-                self.collect_expression_reference(
-                    &set_variable.expression.1,
-                    expression_span,
-                    line,
-                );
+                self.collect_expression_reference(expression, expression_span.start, line);
             }
 
             _ => {}
@@ -492,7 +492,7 @@ impl<'a> SceneVariables<'a> {
     ) {
         self.references.extend(
             iter.into_iter()
-                .flat_map(variables_of)
+                .flat_map(element::variables_of)
                 .map(|name| Reference {
                     name,
                     line,
@@ -501,18 +501,15 @@ impl<'a> SceneVariables<'a> {
         );
     }
 
-    fn collect_expression_reference(
-        &mut self,
-        expression: &'a Expression,
-        span: Range<usize>,
-        line: usize,
-    ) {
+    fn collect_expression_reference(&mut self, expression: &'a str, start: usize, line: usize) {
         self.references
-            .extend(expression.variables().into_iter().map(|name| Reference {
-                name,
-                line,
-                span: span.clone(), // TODO: 精细化变量勾画
-            }));
+            .extend(
+                expression::variables_of(expression).map(|(span, name)| Reference {
+                    name,
+                    line,
+                    span: span.start + start..span.end + start,
+                }),
+            );
     }
 }
 
