@@ -14,7 +14,9 @@ import { ArrowSwapRegular, BookQuestionMarkRegular, DocumentTextRegular, MicRegu
 import type { ReactNode } from 'react';
 
 /** 选项卡种类 */
-export type TabKind = 'scene' | 'novel' | 'diff' | 'voice-workbench' | 'guidance';
+export type TabKind = 'scene' | 'resource' | 'novel' | 'diff' | 'voice-workbench' | 'guidance';
+
+export type ResourceKind = 'image' | 'audio' | 'video' | 'text';
 
 /** 差异来源 */
 export type DiffKind = 'staged' | 'unstaged' | 'commit';
@@ -36,6 +38,13 @@ export interface SceneTab extends TabBase {
   kind: 'scene';
   /** 绝对路径 (与 `documents[].path` 一致) */
   path: string;
+}
+
+/** 资源选项卡: 文本资源复用 CodeEditor, 媒体资源显示专用控件。 */
+export interface ResourceTab extends TabBase {
+  kind: 'resource';
+  path: string;
+  resourceKind: ResourceKind;
 }
 
 /** 文本预处理选项卡 */
@@ -63,7 +72,7 @@ export interface GuidanceTab extends TabBase {
   kind: 'guidance';
 }
 
-export type WorkbenchTabItem = SceneTab | NovelTab | DiffTab | WorkbenchTab | GuidanceTab;
+export type WorkbenchTabItem = SceneTab | ResourceTab | NovelTab | DiffTab | WorkbenchTab | GuidanceTab;
 
 export const WORKBENCH_TAB_ID = 'voice-workbench';
 export const VOICE_GUIDE_TAB_ID = 'voice-guide';
@@ -71,6 +80,11 @@ export const VOICE_GUIDE_TAB_ID = 'voice-guide';
 /** 场景/文件选项卡的稳定 id */
 export function sceneTabId(path: string): string {
   return `scene:${path}`;
+}
+
+/** 资源选项卡的稳定 id。 */
+export function resourceTabId(path: string): string {
+  return `resource:${path}`;
 }
 
 /** 构造场景选项卡 */
@@ -81,6 +95,19 @@ export function makeSceneTab(path: string, name: string): SceneTab {
     title: name,
     tooltip: path,
     path,
+  };
+}
+
+/** 构造资源选项卡。 */
+export function makeResourceTab(path: string, name: string, resourceKind: ResourceKind): ResourceTab {
+  return {
+    id: resourceTabId(path),
+    kind: 'resource',
+    title: name,
+    tooltip: path,
+    icon: <DocumentTextRegular />,
+    path,
+    resourceKind,
   };
 }
 

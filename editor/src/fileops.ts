@@ -3,7 +3,7 @@
 // 场景文件/文件夹操作: 新建、重命名、删除。
 // 磁盘操作成功后, 同步迁移/关闭已打开的场景选项卡、Monaco model 与 LSP 状态。
 
-import { moveToTrash } from './commands/server';
+import { copyDirectory, moveToTrash } from './commands/server';
 import { fs } from './lib/fs';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
@@ -37,6 +37,78 @@ export async function createFolder(dirPath: string, name: string): Promise<strin
   const full = `${dirPath.replace(/[\\/]+$/, '')}\\${name.trim()}`;
   await fs.mkdir(full);
   return full;
+}
+
+export function projectRelativePath(projectPath: string, filePath: string): string {
+  const base = projectPath.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  const abs = filePath.replace(/\\/g, '/');
+  if (abs === base) return '.';
+  return abs.startsWith(`${base}/`)
+    ? abs.slice(base.length + 1)
+    : abs.replace(new RegExp(`^.*?${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '').replace(/^\//, '');
+}
+
+/** 浏览器菜单中的复制路径: 场景去掉 game/scene/, 资源去掉 game/ 与可省略的第一级目录。 */
+export function browserRelativePath(projectPath: string, filePath: string): string {
+  const relative = projectRelativePath(projectPath, filePath).replace(/^\/+/, '');
+  const scenePrefix = 'game/scene/';
+  if (relative.toLowerCase().startsWith(scenePrefix)) return relative.slice(scenePrefix.length);
+
+  const gamePrefix = 'game/';
+  if (!relative.toLowerCase().startsWith(gamePrefix)) return relative;
+  const resourcePath = relative.slice(gamePrefix.length);
+  const segments = resourcePath.split('/');
+  return segments.length > 1 ? segments.slice(1).join('/') : resourcePath;
+}
+
+export function uniqueTargetPath(dirPath: string, name: string): string {
+  const base = `${dirPath.replace(/[\\/]+$/, '')}\\${name}`;
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
+  const stem = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
+  let candidate = base;
+  let index = 1;
+  while (true) {
+    if (!candidate) break;
+    // 这里不直接用 fs.exists, 仅做本地命名去重; 真实存在性由调用方校验。
+    const raw = candidate;
+    const parts = raw.split(/[\\/]/);
+    const last = parts[parts.length - 1];
+    if (!/\(\d+\)$/.test(last)) {
+      const exists = candidate;
+      if (exists) return candidate;
+    }
+    candidate = `${dirPath.replace(/[\\/]+$/, '')}\\${stem} (${index})${ext}`;
+    index += 1;
+  }
+  return base;
+}
+
+export async function copyEntryToDirectory(sourcePath: string, targetDir: string): Promise<string> {
+  const name = sourcePath.split(/[\\/]/).pop() ?? 'item';
+  const info = await fs.exists(sourcePath);
+
+  const dest = await (async () => {
+    const base = `${targetDir.replace(/[\\/]+$/, '')}\\${name}`;
+    if (!info.exists) return base;
+    let index = 1;
+    let candidate = base;
+    while (true) {
+      const stat = await fs.exists(candidate);
+      if (!stat.exists) return candidate;
+      const dot = name.lastIndexOf('.');
+      const stem = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : '';
+      candidate = `${targetDir.replace(/[\\/]+$/, '')}\\${stem} (${index})${ext}`;
+      index += 1;
+    }
+  })();
+
+  if (info.isDirectory) {
+    await copyDirectory(sourcePath, dest);
+  } else {
+    await fs.copyFile(sourcePath, dest);
+  }
+  return dest;
 }
 
 /** 重命名文件/文件夹, 并把受影响的开场景文档迁移到新路径 (含 LSP / Monaco model)。 */

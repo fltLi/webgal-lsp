@@ -6,6 +6,15 @@
 
 import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
+import HtmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
+import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import TsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+import 'monaco-editor/esm/vs/language/css/monaco.contribution';
+import 'monaco-editor/esm/vs/language/html/monaco.contribution';
+import 'monaco-editor/esm/vs/language/json/monaco.contribution';
+import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
+import 'monaco-editor/esm/vs/basic-languages/monaco.contribution';
 import { invoke } from '@tauri-apps/api/core';
 
 import { toUri } from '../lib/uri';
@@ -31,7 +40,13 @@ import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/brows
 
 // 配置 Monaco worker (Vite 打包); webgal 为自定义语言, 仅需基础 editor worker
 self.MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
+  getWorker: (_moduleId, label) => {
+    if (label === 'json') return new JsonWorker();
+    if (label === 'css' || label === 'scss' || label === 'less') return new CssWorker();
+    if (label === 'html' || label === 'handlebars' || label === 'razor') return new HtmlWorker();
+    if (label === 'typescript' || label === 'javascript') return new TsWorker();
+    return new EditorWorker();
+  },
 };
 
 export const LANGUAGE_ID = 'webgal';
@@ -439,12 +454,36 @@ export function setMonacoTheme(dark: boolean): void {
   monaco.editor.setTheme(dark ? 'webgal-dark' : 'webgal-light');
 }
 
+function languageForPath(path: string): string {
+  if (path.replace(/\\/g, '/').includes('/game/scene/')) return LANGUAGE_ID;
+  const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  if (
+    extension === 'json' ||
+    extension === 'jsonl' ||
+    extension === 'jsonc' ||
+    extension === 'json5' ||
+    extension === 'geojson' ||
+    extension === 'webmanifest' ||
+    extension === 'har' ||
+    extension === 'map' ||
+    extension === 'wmdl'
+  )
+    return 'json';
+  if (extension === 'js' || extension === 'jsx' || extension === 'mjs' || extension === 'cjs') return 'javascript';
+  if (extension === 'ts' || extension === 'tsx') return 'typescript';
+  if (extension === 'css' || extension === 'scss' || extension === 'less') return extension;
+  if (extension === 'html' || extension === 'htm') return 'html';
+  if (extension === 'csv') return 'csv';
+  if (extension === 'md' || extension === 'markdown') return 'markdown';
+  return 'plaintext';
+}
+
 /** 打开文档对应的 model (已存在则重置内容, 保证重新打开读到最新磁盘内容)。 */
 export function openModel(path: string, content: string): monaco.editor.ITextModel {
   const uri = monaco.Uri.parse(toUri(path));
   let model = monaco.editor.getModel(uri);
   if (!model) {
-    model = monaco.editor.createModel(content, LANGUAGE_ID, uri);
+    model = monaco.editor.createModel(content, languageForPath(path), uri);
   } else if (model.getValue() !== content) {
     model.setValue(content);
   }

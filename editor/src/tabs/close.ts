@@ -50,6 +50,15 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
     return;
   }
 
+  if (tab.kind === 'resource') {
+    if (tab.resourceKind === 'text') {
+      disposeModel(tab.path);
+      store.closeDocument(tab.path);
+    }
+    store.closeTab(tab.id);
+    return;
+  }
+
   if (tab.id === WORKBENCH_TAB_ID) {
     // 工作台是配音功能的开关: 关闭时确认未完成任务、撤下它们, 并顺手停掉 GSOV 服务
     // (确认与收尾都在 `closeVoiceWorkbench` 里, 顶部按钮走的是同一个入口)

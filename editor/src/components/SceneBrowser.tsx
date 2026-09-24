@@ -4,17 +4,27 @@
 // 支持新建场景/文件夹、重命名、删除 (联动已打开选项卡) 与"在文件管理器中打开"。
 
 import {
-  ArrowClockwiseRegular,
+  CopyRegular,
   DeleteRegular,
   DocumentAddRegular,
   FolderAddRegular,
   OpenFolderRegular,
   RenameRegular,
 } from '@fluentui/react-icons';
+import { open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useState } from 'react';
 
-import { createFile, createFolder, deletePath, ensureSceneExtension, renamePath, validateName } from '../fileops';
+import {
+  copyEntryToDirectory,
+  browserRelativePath,
+  createFile,
+  createFolder,
+  deletePath,
+  ensureSceneExtension,
+  renamePath,
+  validateName,
+} from '../fileops';
 import { fs } from '../lib/fs';
 import { openFile } from '../project';
 import { useAppStore } from '../state/store';
@@ -44,8 +54,72 @@ export function SceneBrowser() {
 
   const openMenu = (node: FileNode, e: React.MouseEvent) => {
     e.preventDefault();
-    // 贴边收拢交给 `ContextMenu` (它按实测尺寸算), 这里只给出指针位置
     setMenu({ node, x: e.clientX, y: e.clientY });
+  };
+
+  const buildBlankMenu = (currentDir: string) => [
+    {
+      key: 'newScene',
+      label: '新建场景',
+      icon: <DocumentAddRegular />,
+      onClick: () => setPrompt({ mode: 'newFile', dir: currentDir }),
+    },
+    {
+      key: 'importResource',
+      label: '添加资源',
+      icon: <DocumentAddRegular />,
+      onClick: () => void importFilesToDir(currentDir),
+    },
+    {
+      key: 'newFolder',
+      label: '新建文件夹',
+      icon: <FolderAddRegular />,
+      onClick: () => setPrompt({ mode: 'newFolder', dir: currentDir }),
+    },
+    {
+      key: 'reveal',
+      label: '在文件管理器中打开',
+      icon: <OpenFolderRegular />,
+      onClick: () => void revealItemInDir(currentDir),
+    },
+  ];
+
+  const handleBlankMenu = (currentDir: string, e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setMenu({
+      node: { name: '', path: currentDir, rel: '', isDirectory: true, kind: 'other' },
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const importFilesToDir = async (dir: string) => {
+    const picked = await open({ multiple: true });
+    if (!picked) return;
+    const list = Array.isArray(picked) ? picked : [picked];
+    for (const path of list) {
+      const target = await copyEntryToDirectory(path, dir);
+      if (target) void revealItemInDir(target);
+    }
+    setRefreshKey((k) => k + 1);
+  };
+
+  const handleDropFiles = async (currentDir: string, event: React.DragEvent<HTMLDivElement>) => {
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter(Boolean) as string[];
+    const fallback = event.dataTransfer.getData('text/uri-list');
+    if (paths.length === 0 && fallback) {
+      for (const uri of fallback.split(/\r?\n/)) {
+        if (uri.startsWith('file://')) {
+          paths.push(decodeURIComponent(uri.replace(/^file:\/\//, '').replace(/^\\\?\\/, '')));
+        }
+      }
+    }
+    for (const source of paths) {
+      await copyEntryToDirectory(source, currentDir);
+    }
+    if (paths.length > 0) setRefreshKey((k) => k + 1);
   };
 
   /** 新建/重命名的目标路径与重名校验 */
@@ -160,32 +234,9 @@ export function SceneBrowser() {
         refreshKey={refreshKey}
         onItemContextMenu={openMenu}
         badge={(node) => <FileBadges path={node.path} />}
-        menu={(currentDir) => [
-          {
-            key: 'newScene',
-            label: '新建场景',
-            icon: <DocumentAddRegular />,
-            onClick: () => setPrompt({ mode: 'newFile', dir: currentDir }),
-          },
-          {
-            key: 'newFolder',
-            label: '新建文件夹',
-            icon: <FolderAddRegular />,
-            onClick: () => setPrompt({ mode: 'newFolder', dir: currentDir }),
-          },
-          {
-            key: 'reveal',
-            label: '在文件管理器中打开',
-            icon: <OpenFolderRegular />,
-            onClick: () => void revealItemInDir(currentDir),
-          },
-          {
-            key: 'refresh',
-            label: '刷新当前目录',
-            icon: <ArrowClockwiseRegular />,
-            onClick: () => setRefreshKey((k) => k + 1),
-          },
-        ]}
+        menu={buildBlankMenu}
+        onBlankContextMenu={handleBlankMenu}
+        onDropFiles={handleDropFiles}
         onOpen={(file) => {
           void openFile(file.path);
         }}
@@ -195,21 +246,65 @@ export function SceneBrowser() {
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          items={[
-            {
-              key: 'rename',
-              label: '重命名',
-              icon: <RenameRegular />,
-              onClick: () => setPrompt({ mode: 'rename', node: menu.node }),
-            },
-            {
-              key: 'delete',
-              label: '删除',
-              icon: <DeleteRegular />,
-              danger: true,
-              onClick: () => setDeleting(menu.node),
-            },
-          ]}
+          items={
+            menu.node.path === '' || menu.node.name === ''
+              ? [
+                  {
+                    key: 'newScene',
+                    label: '新建场景',
+                    icon: <DocumentAddRegular />,
+                    onClick: () => setPrompt({ mode: 'newFile', dir: menu.node.path }),
+                  },
+                  {
+                    key: 'importResource',
+                    label: '添加资源',
+                    icon: <DocumentAddRegular />,
+                    onClick: () => void importFilesToDir(menu.node.path),
+                  },
+                  {
+                    key: 'newFolder',
+                    label: '新建文件夹',
+                    icon: <FolderAddRegular />,
+                    onClick: () => setPrompt({ mode: 'newFolder', dir: menu.node.path }),
+                  },
+                  {
+                    key: 'reveal',
+                    label: '在资源管理器中打开',
+                    icon: <OpenFolderRegular />,
+                    onClick: () => void revealItemInDir(menu.node.path),
+                  },
+                ]
+              : [
+                  {
+                    key: 'copyRelativePath',
+                    label: '复制相对路径',
+                    icon: <CopyRegular />,
+                    onClick: async () => {
+                      const rel = browserRelativePath(projectPath, menu.node.path);
+                      await navigator.clipboard.writeText(rel);
+                    },
+                  },
+                  {
+                    key: 'reveal',
+                    label: '在文件管理器中打开',
+                    icon: <OpenFolderRegular />,
+                    onClick: () => void revealItemInDir(menu.node.path),
+                  },
+                  {
+                    key: 'rename',
+                    label: '重命名',
+                    icon: <RenameRegular />,
+                    onClick: () => setPrompt({ mode: 'rename', node: menu.node }),
+                  },
+                  {
+                    key: 'delete',
+                    label: '删除',
+                    icon: <DeleteRegular />,
+                    danger: true,
+                    onClick: () => setDeleting(menu.node),
+                  },
+                ]
+          }
           onClose={() => setMenu(null)}
         />
       ) : null}

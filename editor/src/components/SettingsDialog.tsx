@@ -150,7 +150,7 @@ export function SettingsDialog() {
                 <Switch
                   checked={settings.editorMinimap}
                   onChange={(_, data) => updateSettings({ editorMinimap: data.checked })}
-                  label="迷你地图"
+                  label="代码缩略图"
                 />
               </div>
             </div>

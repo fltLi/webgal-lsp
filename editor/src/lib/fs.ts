@@ -3,6 +3,7 @@
 // 文件系统服务: 统一封装 Tauri FS 插件, 供 UI 文件树/资源浏览与 LSP 反向请求共用。
 
 import {
+  copyFile,
   mkdir,
   open,
   readDir,
@@ -98,5 +99,9 @@ export const fs = {
 
   async rename(from: string, to: string): Promise<void> {
     await rename(from, to);
+  },
+
+  async copyFile(from: string, to: string): Promise<void> {
+    await copyFile(from, to);
   },
 };

@@ -26,6 +26,8 @@ import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
 import {
   activeSceneDocumentOf,
+  activeResourceDocumentOf,
+  activeResourceTabOf,
   activeTabOf,
   isVoiceWorkbenchOpen,
   shouldShowVoiceToggle,
@@ -45,6 +47,7 @@ import { PreviewPanel } from './PreviewPanel';
 import { ProjectTab } from './ProjectTab';
 import { RepositoryTab } from './RepositoryTab';
 import { ResourceBrowser } from './ResourceBrowser';
+import { ResourceTab } from './ResourceTab';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
 import { StatusBar } from './StatusBar';
@@ -54,6 +57,8 @@ export function EditorPage() {
   const projectName = useAppStore((s) => s.projectName);
   const activeTab = useAppStore(activeTabOf);
   const activeDoc = useAppStore(activeSceneDocumentOf);
+  const activeResourceTab = useAppStore(activeResourceTabOf);
+  const activeResourceDoc = useAppStore(activeResourceDocumentOf);
   // 工作台是否打开由选项卡序列推导 (它就是一个普通选项卡, 没有独立开关)
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
   const activeTabId = useAppStore((s) => s.activeTabId);
@@ -184,6 +189,8 @@ export function EditorPage() {
         ) : (
           <CodeEditor doc={activeDoc} />
         );
+      case 'resource':
+        return activeResourceTab ? <ResourceTab tab={activeResourceTab} document={activeResourceDoc} /> : null;
       default:
         return null;
     }

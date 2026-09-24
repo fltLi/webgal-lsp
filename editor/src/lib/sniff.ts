@@ -35,6 +35,10 @@ export function sniffKind(head: Uint8Array): FileKind | null {
     const brand = ascii(head, 8, 4);
     return brand.startsWith('M4') ? 'audio' : 'video'; // M4A / MP4
   }
+  if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && [0x03, 0x05, 0x07].includes(head[2])) return 'other'; // ZIP / JAR / EPUB
+  if (head.length >= 2 && head[0] === 0x1f && head[1] === 0x8b) return 'other'; // GZIP
+  if (head.length >= 6 && ascii(head, 0, 6) === '7z\xbc\xaf\x27\x1c') return 'other'; // 7z
+  if (head.length >= 7 && ascii(head, 0, 7).startsWith('Rar!\x1a\x07')) return 'other'; // RAR
   // SVG 为文本, 但可作图片预览
   if (head.length >= 4 && /<svg[\s>]/i.test(ascii(head, 0, head.length))) return 'image';
   if (looksLikeText(head)) return 'text';

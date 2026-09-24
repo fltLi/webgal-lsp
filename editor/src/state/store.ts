@@ -14,6 +14,7 @@ import {
   makeWorkbenchTab,
   VOICE_GUIDE_TAB_ID,
   WORKBENCH_TAB_ID,
+  type ResourceTab,
   type SceneTab,
   type WorkbenchTabItem,
 } from '../tabs/model';
@@ -538,6 +539,19 @@ export function activeSceneTabOf(state: AppStore): SceneTab | null {
 export function activeSceneDocumentOf(state: AppStore): OpenDocument | null {
   const tab = activeSceneTabOf(state);
   if (!tab) return null;
+  return state.documents.find((doc) => doc.path === tab.path) ?? null;
+}
+
+/** 当前活动的资源选项卡。 */
+export function activeResourceTabOf(state: AppStore): ResourceTab | null {
+  const tab = activeTabOf(state);
+  return tab?.kind === 'resource' ? tab : null;
+}
+
+/** 当前活动的文本资源文档。 */
+export function activeResourceDocumentOf(state: AppStore): OpenDocument | null {
+  const tab = activeResourceTabOf(state);
+  if (!tab || tab.resourceKind !== 'text') return null;
   return state.documents.find((doc) => doc.path === tab.path) ?? null;
 }
 

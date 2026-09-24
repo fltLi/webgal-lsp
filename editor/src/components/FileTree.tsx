@@ -22,7 +22,32 @@ export interface FileNode {
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
 const AUDIO_EXT = ['mp3', 'ogg', 'wav', 'flac', 'm4a', 'aac'];
 const VIDEO_EXT = ['mp4', 'webm', 'ogv', 'mov'];
-const TEXT_EXT = ['txt', 'json', 'js', 'css', 'html', 'csv', 'md', 'ts'];
+const JSON_EXT = ['json', 'jsonl', 'jsonc', 'json5', 'geojson', 'webmanifest', 'har', 'map', 'wmdl'];
+const TEXT_EXT = [
+  ...JSON_EXT,
+  'txt',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'css',
+  'scss',
+  'less',
+  'html',
+  'htm',
+  'csv',
+  'md',
+  'markdown',
+  'ts',
+  'tsx',
+  'xml',
+  'yaml',
+  'yml',
+  'ini',
+  'conf',
+  'toml',
+  'sql',
+];
 
 export function kindFor(name: string): FileKind {
   const i = name.lastIndexOf('.');
@@ -57,6 +82,13 @@ export const KIND_BADGE: Record<FileKind, string> = {
   other: '?',
 };
 
+export function badgeFor(name: string, kind: FileKind): string {
+  const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+  if (JSON_EXT.includes(extension)) return 'JSON';
+  if (kind === 'text' && extension) return extension.toUpperCase();
+  return KIND_BADGE[kind];
+}
+
 async function recursiveFiles(dir: string, baseRel: string): Promise<FileNode[]> {
   const result: FileNode[] = [];
   async function walk(d: string, rel: string): Promise<void> {
@@ -84,6 +116,8 @@ async function recursiveFiles(dir: string, baseRel: string): Promise<FileNode[]>
 interface FileTreeProps {
   rootPath: string;
   onOpen: (file: FileNode) => void;
+  onDoubleClick?: (file: FileNode) => void;
+  onDirectoryChange?: (path: string) => void;
   selectedPath?: string | null;
   excludeTop?: (name: string) => boolean;
   assetUrl?: (rel: string) => string | undefined;
@@ -97,11 +131,17 @@ interface FileTreeProps {
   badge?: (node: FileNode) => ReactNode;
   /** 自定义工具栏与列表的摆放方式; 缺省时工具栏在列表上方 (上下堆叠) */
   header?: (toolbar: ReactNode, list: ReactNode) => ReactNode;
+  /** 列表空白区域右键菜单 */
+  onBlankContextMenu?: (currentDir: string, event: React.MouseEvent<HTMLDivElement>) => void;
+  /** 列表空白区域释放拖拽文件/目录 */
+  onDropFiles?: (currentDir: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function FileTree({
   rootPath,
   onOpen,
+  onDoubleClick,
+  onDirectoryChange,
   selectedPath,
   excludeTop,
   assetUrl,
@@ -110,6 +150,8 @@ export function FileTree({
   onItemContextMenu,
   badge,
   header,
+  onBlankContextMenu,
+  onDropFiles,
 }: FileTreeProps) {
   const [currentRel, setCurrentRel] = useState('');
   const [dirEntries, setDirEntries] = useState<FileNode[]>([]);
@@ -117,8 +159,67 @@ export function FileTree({
   const [flat, setFlat] = useState(false);
   const [flatEntries, setFlatEntries] = useState<FileNode[] | null>(null);
   const [searchResults, setSearchResults] = useState<FileNode[] | null>(null);
+  const [localRefreshKey, setLocalRefreshKey] = useState(0);
 
   const currentAbs = currentRel ? `${rootPath}\\${currentRel.replace(/\//g, '\\')}` : rootPath;
+  const refreshVersion = refreshKey + localRefreshKey;
+
+  useEffect(() => {
+    onDirectoryChange?.(currentAbs);
+  }, [currentAbs, onDirectoryChange]);
+
+  // 自动刷新: 监听当前目录变化并在新事件后重建列表；若当前目录被移动/删除则回退到最近存在的祖先目录。
+  useEffect(() => {
+    let cancelled = false;
+    let unwatch: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = () => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!cancelled) setLocalRefreshKey((value) => value + 1);
+      }, 160);
+    };
+
+    void (async () => {
+      try {
+        unwatch = await import('@tauri-apps/plugin-fs').then(({ watch }) =>
+          watch([currentAbs], () => schedule(), { recursive: true, delayMs: 150 })
+        );
+      } catch {
+        // 监听失败时直接忽略，交给外部手动刷新兜底。
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (unwatch) unwatch();
+    };
+  }, [currentAbs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const exists = await fs.exists(currentAbs);
+      if (cancelled || exists.exists) return;
+      const segments = currentRel ? currentRel.split('/') : [];
+      for (let i = segments.length; i >= 0; i -= 1) {
+        const rel = segments.slice(0, i).join('/');
+        const probe = rel ? `${rootPath}\\${rel.replace(/\//g, '\\')}` : rootPath;
+        const probeExists = await fs.exists(probe);
+        if (!cancelled && probeExists.exists) {
+          setCurrentRel(rel);
+          return;
+        }
+      }
+      if (!cancelled) setCurrentRel('');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAbs, currentRel, rootPath, refreshVersion]);
 
   // 加载当前单层目录
   useEffect(() => {
@@ -147,7 +248,7 @@ export function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [currentAbs, excludeTop, refreshKey]);
+  }, [currentAbs, excludeTop, refreshVersion]);
 
   // 展平: 递归列出当前目录下所有文件
   useEffect(() => {
@@ -162,7 +263,7 @@ export function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [flat, currentAbs, currentRel, refreshKey]);
+  }, [flat, currentAbs, currentRel, refreshVersion]);
 
   // 搜索: 在当前目录内递归过滤文件
   useEffect(() => {
@@ -180,7 +281,7 @@ export function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [query, currentAbs, currentRel, refreshKey]);
+  }, [query, currentAbs, currentRel, refreshVersion]);
 
   const resetView = () => {
     setQuery('');
@@ -223,13 +324,17 @@ export function FileTree({
         key={node.path}
         className={`file-tree-file${node.path === selectedPath ? ' active' : ''}`}
         onClick={() => onOpen(node)}
-        onContextMenu={(e) => onItemContextMenu?.(node, e)}
+        onDoubleClick={() => onDoubleClick?.(node)}
+        onContextMenu={(e) => {
+          e.stopPropagation();
+          onItemContextMenu?.(node, e);
+        }}
         title={node.rel}
       >
         {node.kind === 'image' && assetUrl ? (
           <img className="resource-thumb" src={assetUrl(node.rel)} alt="" loading="lazy" />
         ) : (
-          <span className="resource-badge">{KIND_BADGE[node.kind]}</span>
+          <span className="resource-badge">{badgeFor(node.name, node.kind)}</span>
         )}
         <span className="resource-name" title={displayText}>
           {middleEllipsis(displayText, 30)}
@@ -315,7 +420,25 @@ export function FileTree({
   );
 
   const listNode = (
-    <div className="file-tree-list">
+    <div
+      className="file-tree-list"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        if (onBlankContextMenu) onBlankContextMenu(currentAbs, event);
+      }}
+      onDragOver={(event) => {
+        if (onDropFiles) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={(event) => {
+        if (onDropFiles) {
+          event.preventDefault();
+          onDropFiles(currentAbs, event);
+        }
+      }}
+    >
       {list.length === 0 ? (
         <span className="muted">{searchResults || flatEntries ? '无匹配项' : '空目录'}</span>
       ) : searchResults || flatEntries ? (
@@ -327,7 +450,10 @@ export function FileTree({
               key={node.path}
               className="file-tree-dir"
               onClick={() => enterDir(node.name)}
-              onContextMenu={(e) => onItemContextMenu?.(node, e)}
+              onContextMenu={(e) => {
+                e.stopPropagation();
+                onItemContextMenu?.(node, e);
+              }}
               title={node.rel}
             >
               <span className="file-tree-arrow">▸</span>

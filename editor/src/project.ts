@@ -11,6 +11,7 @@ import { disposeModel } from './lsp/monaco';
 import { disposeAllNovelTabs } from './novel/registry';
 import { previewClient } from './preview/client';
 import { useAppStore } from './state/store';
+import { makeResourceTab, type ResourceKind } from './tabs/model';
 import { voiceController } from './voice/controller';
 
 /** 读取并打开一个文件: 登记文档并打开 (或聚焦) 对应选项卡。 */
@@ -30,6 +31,24 @@ export async function openFile(path: string): Promise<void> {
   });
   // 文档与选项卡是两件事: 只登记文档的话界面上不会出现任何选项卡
   store.openSceneTab(path, name);
+}
+
+/** 打开资源选项卡: 文本资源进入 Monaco, 媒体资源在工作区显示对应控件。 */
+export async function openResourceFile(path: string, resourceKind: ResourceKind): Promise<void> {
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? path;
+  const store = useAppStore.getState();
+  if (resourceKind === 'text') {
+    const content = await fs.readText(path);
+    store.openDocument({
+      path,
+      name,
+      uri: toUri(path),
+      content,
+      dirty: false,
+      isScene: false,
+    });
+  }
+  store.openTab(makeResourceTab(path, name, resourceKind));
 }
 
 /** 销毁当前所有文档对应的 Monaco model。 */

@@ -4,25 +4,60 @@
 // 布局: 顶部全宽工具栏 (返回上级/搜索/展平/文件管理器) + 左侧资源列表 + 右侧预览。
 // 缩略图与媒体均通过预览服务器的 overlay 站点 URL 加载。
 
-import { ArrowClockwiseRegular, OpenFolderRegular } from '@fluentui/react-icons';
+import {
+  DeleteRegular,
+  CopyRegular,
+  DocumentAddRegular,
+  FolderAddRegular,
+  OpenFolderRegular,
+  RenameRegular,
+} from '@fluentui/react-icons';
+import { open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  copyEntryToDirectory,
+  browserRelativePath,
+  createFolder,
+  deletePath,
+  renamePath,
+  validateName,
+} from '../fileops';
 import { fs } from '../lib/fs';
 import { sniffKind } from '../lib/sniff';
 import { previewClient } from '../preview/client';
+import { openResourceFile } from '../project';
 import { useAppStore } from '../state/store';
+import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
 import { FileTree, type FileKind, type FileNode } from './FileTree';
+import { ConfirmDialog, NameInputDialog } from './SceneFileDialogs';
 
 export function ResourceBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);
   const settings = useAppStore((s) => s.settings);
+  const activeResourcePath = useAppStore((s) => {
+    const tab = s.tabs.find((item) => item.id === s.activeTabId);
+    return tab?.kind === 'resource' ? tab.path : null;
+  });
   const [assetBase, setAssetBase] = useState<string | null>(null);
   const [selected, setSelected] = useState<FileNode | null>(null);
   const [textPreview, setTextPreview] = useState<string | null>(null);
   const [detectedKind, setDetectedKind] = useState<FileKind | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [menu, setMenu] = useState<{ node: FileNode; x: number; y: number } | null>(null);
+  const [prompt, setPrompt] = useState<{ mode: 'newFolder' | 'rename'; dir?: string; node?: FileNode } | null>(null);
+  const [deleting, setDeleting] = useState<FileNode | null>(null);
+  const [openingResourcePath, setOpeningResourcePath] = useState<string | null>(null);
+  const selectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearPreview = useCallback(() => setSelected(null), []);
+
+  useEffect(() => {
+    return () => {
+      if (selectTimer.current) clearTimeout(selectTimer.current);
+    };
+  }, []);
 
   // 确保预览服务器与 overlay 站点可用, 以构建资源 URL
   useEffect(() => {
@@ -40,20 +75,20 @@ export function ResourceBrowser() {
     setSelected(null);
   }, [projectPath]);
 
-  // 类型探测: 不只看扩展名, 对无法确定 (other) 或疑似误标 (text) 的文件读取文件头判断;
-  // 仍无法识别时按文本文件处理 (用户要求: 未知文件当成文本)。
+  // 类型探测: 文件头优先, 这样扩展名异常的媒体仍能正确预览;
+  // 无法识别时只把已知文本扩展名当成文本, 避免压缩包显示乱码。
   useEffect(() => {
     setDetectedKind(null);
-    if (!selected || (selected.kind !== 'other' && selected.kind !== 'text')) return;
+    if (!selected) return;
     let cancelled = false;
     void fs
       .readHead(selected.path, 64)
       .then((head) => {
         if (cancelled) return;
-        setDetectedKind(sniffKind(head) ?? 'text');
+        setDetectedKind(sniffKind(head) ?? (selected.kind === 'text' ? 'text' : selected.kind));
       })
       .catch(() => {
-        if (!cancelled) setDetectedKind('text');
+        if (!cancelled) setDetectedKind(selected.kind === 'text' ? 'text' : selected.kind);
       });
     return () => {
       cancelled = true;
@@ -84,6 +119,165 @@ export function ResourceBrowser() {
     return `${assetBase}game/${rel.split('/').map(encodeURIComponent).join('/')}`;
   };
 
+  const openResource = async (file: FileNode): Promise<void> => {
+    if (selectTimer.current) clearTimeout(selectTimer.current);
+    setOpeningResourcePath(file.path);
+    if (file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' || file.kind === 'text') {
+      setSelected(file);
+      try {
+        await openResourceFile(file.path, file.kind);
+      } finally {
+        setOpeningResourcePath(null);
+      }
+      return;
+    }
+
+    try {
+      const head = await fs.readHead(file.path, 64);
+      const detected = sniffKind(head);
+      if (!detected) {
+        setOpeningResourcePath(null);
+        return;
+      }
+      if (detected === 'text' || detected === 'image' || detected === 'audio' || detected === 'video') {
+        setSelected(file);
+        try {
+          await openResourceFile(file.path, detected);
+        } finally {
+          setOpeningResourcePath(null);
+        }
+      }
+    } catch {
+      setOpeningResourcePath(null);
+      return;
+    }
+    setOpeningResourcePath(null);
+  };
+
+  const selectResource = (file: FileNode) => {
+    if (selectTimer.current) clearTimeout(selectTimer.current);
+    selectTimer.current = setTimeout(() => {
+      setSelected(file);
+      selectTimer.current = null;
+    }, 220);
+  };
+
+  const buildBlankMenu = (currentDir: string) => [
+    {
+      key: 'addResource',
+      label: '添加资源',
+      icon: <DocumentAddRegular />,
+      onClick: () => void importFilesToDir(currentDir),
+    },
+    {
+      key: 'newFolder',
+      label: '新建文件夹',
+      icon: <FolderAddRegular />,
+      onClick: () => setPrompt({ mode: 'newFolder', dir: currentDir }),
+    },
+    {
+      key: 'reveal',
+      label: '在文件管理器中打开',
+      icon: <OpenFolderRegular />,
+      onClick: () => void revealItemInDir(currentDir),
+    },
+  ];
+
+  const importFilesToDir = async (dir: string) => {
+    const picked = await open({ multiple: true });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    for (const source of paths) {
+      await copyEntryToDirectory(source, dir);
+    }
+    setRefreshKey((k) => k + 1);
+  };
+
+  const validateTarget = async (raw: string): Promise<string | null> => {
+    const err = validateName(raw);
+    if (err) return err;
+    if (!prompt || (!prompt.dir && !prompt.node)) return null;
+    const targetDir =
+      prompt.mode === 'rename' && prompt.node
+        ? prompt.node.path
+            .replace(/[\\/]+$/, '')
+            .split(/[\\/]/)
+            .slice(0, -1)
+            .join('\\')
+        : (prompt.dir ?? '');
+    const target = `${targetDir.replace(/[\\/]+$/, '')}\\${raw.trim()}`;
+    if (
+      prompt.mode === 'rename' &&
+      prompt.node &&
+      target.replace(/\\/g, '/').toLowerCase() === prompt.node.path.replace(/\\/g, '/').toLowerCase()
+    ) {
+      return null;
+    }
+    const exists = await fs.exists(target);
+    return exists.exists ? '同名文件或文件夹已存在' : null;
+  };
+
+  const submitPrompt = async (raw: string): Promise<string | null> => {
+    if (!prompt) return null;
+    try {
+      if (prompt.mode === 'rename' && prompt.node) {
+        const targetDir = prompt.node.path
+          .replace(/[\\/]+$/, '')
+          .split(/[\\/]/)
+          .slice(0, -1)
+          .join('\\');
+        const target = `${targetDir.replace(/[\\/]+$/, '')}\\${raw.trim()}`;
+        await renamePath(prompt.node.path, target);
+      } else if (prompt.mode === 'newFolder' && prompt.dir) {
+        await createFolder(prompt.dir, raw.trim());
+      }
+      setRefreshKey((k) => k + 1);
+      setPrompt(null);
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  const submitDelete = async (): Promise<string | null> => {
+    if (!deleting) return null;
+    try {
+      await deletePath(deleting.path);
+      setRefreshKey((k) => k + 1);
+      setDeleting(null);
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  const handleBlankMenu = (currentDir: string, e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setMenu({
+      node: { name: '', path: currentDir, rel: '', isDirectory: true, kind: 'other' },
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const handleDropFiles = async (currentDir: string, event: React.DragEvent<HTMLDivElement>) => {
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter((value): value is string => !!value);
+    const fallback = event.dataTransfer.getData('text/uri-list');
+    if (paths.length === 0 && fallback) {
+      for (const uri of fallback.split(/\r?\n/)) {
+        if (uri.startsWith('file://')) {
+          paths.push(decodeURIComponent(uri.replace(/^file:\/\//, '').replace(/^\\\?\\/, '')));
+        }
+      }
+    }
+    for (const source of paths) {
+      await copyEntryToDirectory(source, currentDir);
+    }
+    if (paths.length > 0) setRefreshKey((k) => k + 1);
+  };
+
   if (!projectPath) return <div className="resource-browser empty">未打开项目</div>;
 
   return (
@@ -94,30 +288,31 @@ export function ResourceBrowser() {
         selectedPath={selected?.path ?? null}
         assetUrl={assetUrl}
         refreshKey={refreshKey}
-        onOpen={(file) => setSelected(file)}
+        onOpen={selectResource}
+        onDoubleClick={(file) => void openResource(file)}
+        onDirectoryChange={clearPreview}
         badge={(node) => <FileBadges path={node.path} />}
-        menu={(currentDir) => [
-          {
-            key: 'reveal',
-            label: '在文件管理器中打开',
-            icon: <OpenFolderRegular />,
-            onClick: () => void revealItemInDir(currentDir),
-          },
-          {
-            key: 'refresh',
-            label: '刷新当前目录',
-            icon: <ArrowClockwiseRegular />,
-            onClick: () => setRefreshKey((k) => k + 1),
-          },
-        ]}
+        onItemContextMenu={(node, e) => {
+          e.preventDefault();
+          setMenu({ node, x: e.clientX, y: e.clientY });
+        }}
+        onBlankContextMenu={handleBlankMenu}
+        onDropFiles={handleDropFiles}
+        menu={buildBlankMenu}
         header={(toolbar, list) => (
           <>
             {toolbar}
-            <div className="resource-body">
+            <div
+              className={`resource-body${
+                selected && selected.path !== activeResourcePath && selected.path !== openingResourcePath
+                  ? ''
+                  : ' no-preview'
+              }`}
+            >
               <div className="resource-files">{list}</div>
-              <div className="resource-preview">
-                {selected ? (
-                  effectiveKind === 'image' && assetUrl(selected.rel) ? (
+              {selected && selected.path !== activeResourcePath && selected.path !== openingResourcePath ? (
+                <div className="resource-preview">
+                  {effectiveKind === 'image' && assetUrl(selected.rel) ? (
                     <img src={assetUrl(selected.rel) ?? undefined} alt={selected.name} />
                   ) : effectiveKind === 'audio' && assetUrl(selected.rel) ? (
                     <audio src={assetUrl(selected.rel) ?? undefined} controls />
@@ -127,15 +322,74 @@ export function ResourceBrowser() {
                     <pre>{textPreview}</pre>
                   ) : (
                     <span className="muted">该类型暂无预览</span>
-                  )
-                ) : (
-                  <span className="muted">选择文件以预览</span>
-                )}
-              </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           </>
         )}
       />
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={
+            menu.node.path === '' || menu.node.name === ''
+              ? buildBlankMenu(menu.node.path)
+              : [
+                  {
+                    key: 'copyRelativePath',
+                    label: '复制相对路径',
+                    icon: <CopyRegular />,
+                    onClick: async () => {
+                      const rel = browserRelativePath(projectPath, menu.node.path);
+                      await navigator.clipboard.writeText(rel);
+                    },
+                  },
+                  {
+                    key: 'reveal',
+                    label: '在文件管理器中打开',
+                    icon: <OpenFolderRegular />,
+                    onClick: () => void revealItemInDir(menu.node.path),
+                  },
+                  {
+                    key: 'rename',
+                    label: '重命名',
+                    icon: <RenameRegular />,
+                    onClick: () => setPrompt({ mode: 'rename', node: menu.node }),
+                  },
+                  {
+                    key: 'delete',
+                    label: '删除',
+                    icon: <DeleteRegular />,
+                    danger: true,
+                    onClick: () => setDeleting(menu.node),
+                  },
+                ]
+          }
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
+      {prompt ? (
+        <NameInputDialog
+          title={prompt.mode === 'rename' ? '重命名' : '新建文件夹'}
+          label={prompt.mode === 'rename' ? '新名称' : '文件夹名称'}
+          initialValue={prompt.mode === 'rename' && prompt.node ? prompt.node.name : '新建文件夹'}
+          validate={validateTarget}
+          onSubmit={submitPrompt}
+          onClose={() => setPrompt(null)}
+        />
+      ) : null}
+      {deleting ? (
+        <ConfirmDialog
+          title="删除文件"
+          message={`确定要删除“${deleting.name}”吗？将移入回收站，可稍后恢复。`}
+          confirmLabel="删除"
+          danger
+          onConfirm={submitDelete}
+          onClose={() => setDeleting(null)}
+        />
+      ) : null}
     </div>
   );
 }
