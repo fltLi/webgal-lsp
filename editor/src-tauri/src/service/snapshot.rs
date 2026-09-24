@@ -20,25 +20,39 @@ pub enum SnapshotEvent {
     ScanFile {
         path: String,
         index: usize,
+        #[serde(rename = "cumulativeSize")]
         cumulative_size: u64,
     },
     /// 扫描中遇到错误 (message 为错误描述)
     ScanError { message: String },
     /// 扫描完成
-    ScanComplete { count: usize, total_size: u64 },
+    ScanComplete {
+        count: usize,
+        #[serde(rename = "totalSize")]
+        total_size: u64,
+    },
     /// 开始打包
-    PackStart { count: usize, total_size: u64 },
+    PackStart {
+        count: usize,
+        #[serde(rename = "totalSize")]
+        total_size: u64,
+    },
     /// 打包完一个文件
     PackFile {
         path: String,
         index: usize,
+        #[serde(rename = "cumulativeSize")]
         cumulative_size: u64,
+        #[serde(rename = "cumulativeCompressedSize")]
         cumulative_compressed_size: u64,
     },
     /// 打包中遇到错误
     PackError { message: String },
     /// 打包完成
-    PackComplete { final_size: u64 },
+    PackComplete {
+        #[serde(rename = "finalSize")]
+        final_size: u64,
+    },
 }
 
 /// 打包结果
@@ -159,4 +173,25 @@ pub async fn pack_snapshot(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_progress_fields_use_camel_case() {
+        let event = serde_json::to_value(SnapshotEvent::PackFile {
+            path: String::from("scene.txt"),
+            index: 2,
+            cumulative_size: 1024,
+            cumulative_compressed_size: 512,
+        })
+        .unwrap();
+
+        assert_eq!(event["type"], "packFile");
+        assert_eq!(event["cumulativeSize"], 1024);
+        assert_eq!(event["cumulativeCompressedSize"], 512);
+        assert!(event.get("cumulative_size").is_none());
+    }
 }

@@ -1578,13 +1578,15 @@ body.resizing {
 .snapshot-errors {
   margin: 8px 0 0;
   padding: 8px 10px;
-  max-height: 160px;
-  overflow-y: auto;
   list-style: none;
   background: var(--app-hover);
   border-radius: 4px;
   font-size: 12px;
   color: #d13438;
+}
+
+.snapshot-surface .dialog-body {
+  overflow: hidden;
 }
 
 [data-theme='dark'] .snapshot-errors {

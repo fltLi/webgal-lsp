@@ -141,6 +141,8 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
       title="生成快照"
       size="medium"
       height={340}
+      compact
+      className="snapshot-surface"
       closeOnBackdrop={phase === 'done'}
       onClose={onClose}
       footer={
@@ -171,7 +173,7 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
             </>
           )}
           {errors.length > 0 && (
-            <ul className="snapshot-errors">
+            <ul className="snapshot-errors dialog-scroll">
               {errors.map((message, i) => (
                 <li key={i}>{message}</li>
               ))}
@@ -187,7 +189,7 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
           ) : result.errors.length > 0 ? (
             <>
               <p className="snapshot-error-text">打包完成, 共 {result.errors.length} 个错误</p>
-              <ul className="snapshot-errors">
+              <ul className="snapshot-errors dialog-scroll">
                 {result.errors.map((message, i) => (
                   <li key={i}>{message}</li>
                 ))}
