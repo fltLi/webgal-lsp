@@ -18,6 +18,13 @@ export interface Settings {
   autoSave: boolean;
   /** 预览工具栏"预览"开关 (光标移动自动同步预览; 不在设置面板中展示) */
   autoSyncPreview: boolean;
+  /**
+   * 预览静音开关 (工具栏).
+   *
+   * 持久化是必要的: 预览 iframe 每次重挂都重新加载引擎, 引擎会从本地存储恢复主音量 ——
+   * 若这里不留一份, 用户上一步刚静音、下一步刷新预览就又开始响了。
+   */
+  previewMuted: boolean;
   /** 全局默认 WebGAL 引擎目录 (项目自带 index.html 时无需设置) */
   enginePath: string | null;
   recentProjects: string[];
@@ -36,6 +43,7 @@ export const defaultSettings: Settings = {
   theme: 'system',
   autoSave: true,
   autoSyncPreview: true,
+  previewMuted: false,
   enginePath: null,
   recentProjects: [],
   templates: [],

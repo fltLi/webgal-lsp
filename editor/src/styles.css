@@ -4162,3 +4162,126 @@ input[type='number'].voice-control {
   background: color-mix(in srgb, var(--app-accent) 16%, transparent);
   box-shadow: inset 2px 0 0 var(--app-accent);
 }
+
+/*
+ * 编辑器字形栏图标 (Monaco glyph margin, 位于行号右侧) 的共用形状。
+ *
+ * 只有一个形状 —— VS Code 调试器的实心三角箭头。两处用它: 实时预览的行指示器、
+ * 文本预处理第 3 步"正在配说话者的对话段"。颜色由下面各状态类给。
+ */
+.monaco-editor .glyph-margin-widgets .cgmr.editor-block-glyph {
+  width: 16px;
+  height: 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+}
+
+/*
+ * 实时预览指示器。
+ *
+ * 风格对齐 VS Code 的调试模式: 实心箭头踩在所在行上, 并且整行带淡色高亮 —— 一眼就能
+ * 看出"预览现在停在哪一行", 与调试器停在断点上是一样的读法。
+ * 图标是内联 SVG (数据 URI): 形状与颜色一起钉在样式表里, 因此深浅色各有一套规则。
+ *
+ * 四种状态: 等待中 (中性) / 已执行 (绿) / 已越过 (黄) / 未能执行 (红, 带斜杠, 可点重跑)。
+ */
+.monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-executing {
+  cursor: default;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%235a5a5a' stroke='%235a5a5a' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-done {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%231a7f37' stroke='%231a7f37' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-passed {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%23b8860b' stroke='%23b8860b' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-failed {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%23d1242f' stroke='%23d1242f' stroke-width='1.2' stroke-linejoin='round'/%3E%3Cpath d='M2.4 2.4 L13.6 13.6' stroke='%23d1242f' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+/* 箭头所在那一行: 淡色底 + 行首的短竖条 —— 与 VS Code 栈帧行 / 配音卡整行高亮同一种表达 */
+.monaco-editor .view-overlays .live-preview-line-executing {
+  background: color-mix(in srgb, #5a5a5a 9%, transparent);
+  box-shadow: inset 2px 0 0 #5a5a5a;
+}
+
+.monaco-editor .view-overlays .live-preview-line-done {
+  background: color-mix(in srgb, #1a7f37 10%, transparent);
+  box-shadow: inset 2px 0 0 #1a7f37;
+}
+
+.monaco-editor .view-overlays .live-preview-line-passed {
+  background: color-mix(in srgb, #b8860b 10%, transparent);
+  box-shadow: inset 2px 0 0 #b8860b;
+}
+
+.monaco-editor .view-overlays .live-preview-line-failed {
+  background: color-mix(in srgb, #d1242f 10%, transparent);
+  box-shadow: inset 2px 0 0 #d1242f;
+}
+
+[data-theme='dark'] .monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-executing {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%23a0a0a0' stroke='%23a0a0a0' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme='dark'] .monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-done {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%233fb950' stroke='%233fb950' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme='dark'] .monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-passed {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%23d7a521' stroke='%23d7a521' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme='dark'] .monaco-editor .glyph-margin-widgets .cgmr.live-preview-glyph-failed {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%23f85149' stroke='%23f85149' stroke-width='1.2' stroke-linejoin='round'/%3E%3Cpath d='M2.4 2.4 L13.6 13.6' stroke='%23f85149' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+[data-theme='dark'] .monaco-editor .view-overlays .live-preview-line-executing {
+  background: color-mix(in srgb, #a0a0a0 12%, transparent);
+  box-shadow: inset 2px 0 0 #a0a0a0;
+}
+
+[data-theme='dark'] .monaco-editor .view-overlays .live-preview-line-done {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+  box-shadow: inset 2px 0 0 #3fb950;
+}
+
+[data-theme='dark'] .monaco-editor .view-overlays .live-preview-line-passed {
+  background: color-mix(in srgb, #d7a521 14%, transparent);
+  box-shadow: inset 2px 0 0 #d7a521;
+}
+
+[data-theme='dark'] .monaco-editor .view-overlays .live-preview-line-failed {
+  background: color-mix(in srgb, #f85149 14%, transparent);
+  box-shadow: inset 2px 0 0 #f85149;
+}
+
+/*
+ * 文本预处理第 3 步: 当前正在配说话者的对话段。
+ * 与实时预览同一枚箭头, 但用强调色 (蓝) —— 那个界面里没有实时预览, 两者不会同时出现,
+ * 但颜色不同才能一眼看出"这是光标选中的那一段"。
+ */
+.monaco-editor .glyph-margin-widgets .cgmr.preprocess-block-glyph {
+  cursor: default;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%230a66c2' stroke='%230a66c2' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.monaco-editor .view-overlays .preprocess-block-line {
+  background: color-mix(in srgb, #0a66c2 10%, transparent);
+  box-shadow: inset 2px 0 0 #0a66c2;
+}
+
+[data-theme='dark'] .monaco-editor .glyph-margin-widgets .cgmr.preprocess-block-glyph {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 2.3 L13.2 8 L4.5 13.7 Z' fill='%234a9eff' stroke='%234a9eff' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme='dark'] .monaco-editor .view-overlays .preprocess-block-line {
+  background: color-mix(in srgb, #4a9eff 14%, transparent);
+  box-shadow: inset 2px 0 0 #4a9eff;
+}

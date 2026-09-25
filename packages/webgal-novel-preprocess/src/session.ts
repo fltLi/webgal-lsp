@@ -40,6 +40,8 @@ export interface SessionState {
   canGoNext: boolean;
   /** 当前选中对话段的段首行 (0 基, -1 表示无)。 */
   selectedHeadLine: number;
+  /** 当前选中对话段的末行 (0 基, 闭区间; `selectedHeadLine` 为 -1 时无意义)。 */
+  selectedEndLine: number;
 }
 
 const MAX_SPEAKERS = 35;
@@ -136,6 +138,7 @@ export class NovelSession {
       canGoBack: this.step > 1,
       canGoNext: this.canNext(),
       selectedHeadLine: seg?.head ?? -1,
+      selectedEndLine: seg ? seg.lines[seg.lines.length - 1] : -1,
     };
   }
 

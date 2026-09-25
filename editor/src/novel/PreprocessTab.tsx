@@ -10,6 +10,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { AppDialog } from '../components/AppDialog';
 import { LANGUAGE_ID as WEBGAL_LANGUAGE_ID } from '../lsp/monaco';
 import { useAppStore } from '../state/store';
+import { createEditorBlockEmphasisController } from './block-emphasis';
 import { NOVEL_LANGUAGE_ID, createEditorHost, createNovelModel } from './monaco';
 import { getOrCreateSession, novelModelUri, releaseSession } from './registry';
 import { NovelSession, type SessionState, type Speaker, type Step } from 'webgal-novel-preprocess';
@@ -25,6 +26,7 @@ const EMPTY_STATE: SessionState = {
   canGoBack: false,
   canGoNext: false,
   selectedHeadLine: -1,
+  selectedEndLine: -1,
 };
 
 const STEP_INFO: Record<Step, { label: string; desc: string; tips: string[] }> = {
@@ -83,6 +85,8 @@ export function PreprocessTab({ id }: { id: string }) {
       fontSize: settings.editorFontSize,
       wordWrap: 'on',
       minimap: { enabled: false },
+      // 第 3 步的"当前对话段"箭头画在字形栏
+      glyphMargin: true,
       // 生成脚本 (第 4 步) 切换为 webgal 语言后需要语义高亮。
       'semanticHighlighting.enabled': true,
     });
@@ -91,6 +95,24 @@ export function PreprocessTab({ id }: { id: string }) {
     const sess = getOrCreateSession(id, host);
     sessionRef.current = sess;
     setSession(sess);
+
+    /*
+     * 第 3 步的"当前对话段"箭头 (字形栏)。
+     *
+     * 行范围从会话快照读, 而不是自己按光标算: 会话里那份才是权威的 (它还要负责
+     * "光标不在对话段上时锁定到向下最近的一段"), 两边各算一次必然对不上。
+     * 快照里的行号是 0 基, 控制器内部再转 1 基。
+     */
+    const emphasis = createEditorBlockEmphasisController({
+      editor,
+      getRange: () => {
+        const st = sess.getState();
+        if (st.step !== 3 || st.selectedHeadLine < 0) return null;
+        return { start: st.selectedHeadLine, end: st.selectedEndLine };
+      },
+    });
+    const unsubscribeSession = sess.subscribe(() => emphasis.sync());
+    emphasis.sync();
 
     // 状态栏光标位置同步 (带文档标识, 避免被别的卡继承)。
     // 预处理卡是"非文档"编辑器, 因此不进 `cursors` 留档表。
@@ -101,6 +123,8 @@ export function PreprocessTab({ id }: { id: string }) {
     return () => {
       // 仅解绑宿主并销毁编辑器; 会话与 model 保留在注册表。
       cursorSub.dispose();
+      unsubscribeSession();
+      emphasis.dispose();
       releaseSession(id);
       editor.dispose();
       sessionRef.current = null;

@@ -21,6 +21,11 @@ export function addStaticSite(projectPath: string, enginePath?: string): Promise
   return invoke<string>('add_static_site', { projectPath, enginePath });
 }
 
+/** 记录预览静音状态 (决定下次页面加载时注入脚本里的初始静音值)。 */
+export function setPreviewMuted(muted: boolean): Promise<void> {
+  return invoke<void>('set_preview_muted', { muted });
+}
+
 export function setActivePreviewSession(gameId?: string): Promise<void> {
   return invoke<void>('set_active_preview_session', { gameId });
 }

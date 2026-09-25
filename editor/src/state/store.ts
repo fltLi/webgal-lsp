@@ -8,6 +8,7 @@ import type { CacheEntry, Character, GsvStatus } from '../commands/voice';
 import type { GitStatus } from '../commands/git';
 import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
+import type { LivePreviewMarker } from '../preview/live-preview';
 import {
   makeSceneTab,
   makeVoiceGuideTab,
@@ -47,11 +48,6 @@ export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
 
-export interface StageSnapshot {
-  sceneName: string;
-  sentenceId: number;
-}
-
 interface AppStore {
   settings: Settings;
   theme: Exclude<ThemePreference, 'system'>;
@@ -85,7 +81,20 @@ interface AppStore {
   previewServerUrl: string | null;
   previewSiteId: string | null;
   previewReady: boolean;
-  previewStage: StageSnapshot | null;
+  /**
+   * 实时预览的行号指示器状态 (行号旁那个图标)。
+   *
+   * 放在 store 而不是编辑器组件里: 场景卡与配音卡**共用**这份状态, 编辑器又会随着
+   * 切卡整体重建, 状态跟着组件走就会在切卡的瞬间丢掉指示器。
+   */
+  livePreviewMarker: LivePreviewMarker | null;
+  /**
+   * 一次"重跑这一行"的请求 (由指示器点击发起)。
+   *
+   * 只递一个请求而不是让点击处直接发协议: 重跑走的是与光标移动完全相同的那条同步路径
+   * (含防抖与"脏文档先保存"), 由持有编辑器的 `CodeEditor` 统一发出。
+   */
+  previewReplay: { token: number; line: number } | null;
 
   /**
    * 当前光标位置 (状态栏显示 / 配音卡定位用)。
@@ -189,9 +198,18 @@ interface AppStore {
   setGitStatus: (status: GitStatus | null) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
-  setPreview: (
-    patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady' | 'previewStage'>>
-  ) => void;
+  setPreview: (patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady'>>) => void;
+  /**
+   * 预览把光标行同步给引擎时记下这一行 (指示器立即进入"执行中")。
+   *
+   * `autoSyncPreview` 关闭时无条件清空 —— 「预览」开关就是这个功能的开关,
+   * 关掉之后编辑器里不该再留下任何实时预览的痕迹。
+   */
+  beginLivePreview: (marker: LivePreviewMarker) => void;
+  /** 按引擎回灌推进指示器 (成功 / 失败 / 与本次无关则原样保留) */
+  applyLivePreviewEvent: (fold: (marker: LivePreviewMarker) => LivePreviewMarker) => void;
+  /** 请求重跑某一行 (指示器点击) */
+  requestPreviewReplay: (line: number) => void;
   setCursor: (cursor: { path: string; line: number; column: number } | null) => void;
   /** 记下某个文档的光标位置 (切走再切回来时恢复) */
   rememberCursor: (path: string, cursor: { line: number; column: number }) => void;
@@ -225,7 +243,8 @@ export const useAppStore = create<AppStore>((set) => ({
   previewServerUrl: null,
   previewSiteId: null,
   previewReady: false,
-  previewStage: null,
+  livePreviewMarker: null,
+  previewReplay: null,
 
   cursor: null,
   cursors: {},
@@ -250,9 +269,14 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setTheme: (t) => set({ theme: t }),
   updateSettings: (patch) => {
-    const next = { ...useAppStore.getState().settings, ...patch };
+    const store = useAppStore.getState();
+    const next = { ...store.settings, ...patch };
     saveSettings(next);
     set({ settings: next });
+    // 关掉「预览」开关就是关掉整套实时预览: 指示器一并撤下, 不留残影
+    if (store.settings.autoSyncPreview && !next.autoSyncPreview) {
+      set({ livePreviewMarker: null });
+    }
   },
   setProject: (path) => {
     if (path) {
@@ -274,7 +298,8 @@ export const useAppStore = create<AppStore>((set) => ({
         diagnostics: {},
         previewSiteId: null,
         previewReady: false,
-        previewStage: null,
+        livePreviewMarker: null,
+        previewReplay: null,
         voiceModePaths: [],
         currentSceneTabId: null,
       });
@@ -429,6 +454,14 @@ export const useAppStore = create<AppStore>((set) => ({
   setLspStatus: (status, error) => set({ lspStatus: status, lspError: error ?? null }),
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
+  beginLivePreview: (marker) =>
+    set((s) => ({
+      // 「预览」开关关掉之后不该再留下任何实时预览的痕迹
+      livePreviewMarker: s.settings.autoSyncPreview ? marker : null,
+    })),
+  applyLivePreviewEvent: (fold) =>
+    set((s) => ({ livePreviewMarker: s.livePreviewMarker ? fold(s.livePreviewMarker) : null })),
+  requestPreviewReplay: (line) => set((s) => ({ previewReplay: { token: (s.previewReplay?.token ?? 0) + 1, line } })),
   setCursor: (cursor) => set({ cursor }),
   rememberCursor: (path, cursor) =>
     set((s) => {

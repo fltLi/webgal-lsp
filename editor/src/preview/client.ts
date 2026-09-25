@@ -2,9 +2,23 @@
 
 // 预览客户端单例: 管理预览服务器生命周期、站点注册、sync-scene 命令与宿主事件。
 
-import { addStaticSite, sendPreviewCommand, setEmbeddedPreviewLaunchId, startPreviewServer } from '../commands/server';
+import {
+  addStaticSite,
+  sendPreviewCommand,
+  setEmbeddedPreviewLaunchId,
+  setPreviewMuted,
+  startPreviewServer,
+} from '../commands/server';
 import { sceneNameFromPath } from '../lib/uri';
 import { useAppStore } from '../state/store';
+import {
+  applyFastPreviewTimeoutToLivePreviewMarker,
+  applyStageSnapshotToLivePreviewMarker,
+  isFastPreviewTimeoutForLivePreviewMarker,
+  isStageSnapshotForLivePreviewMarker,
+  type LivePreviewMarker,
+  type LivePreviewPhase,
+} from './live-preview';
 import { createId, createRequestEnvelope, type HostEventType } from './protocol';
 
 class PreviewClient {
@@ -38,6 +52,13 @@ class PreviewClient {
     return this.pendingServer;
   }
 
+  /**
+   * 注册 (并缓存) 预览静态站点。
+   *
+   * 静音状态不从这里传: 站点只在首次注册时写一次, 之后的开关切换到不了这里; 统一走
+   * [`setMuted`] —— 它在挂载时就会把当前状态告诉服务器, 早于 iframe 加载, 因此注入脚本
+   * 拿到的初始值是准的。
+   */
   async ensureSite(projectPath: string, enginePath?: string): Promise<string | null> {
     if (this.siteUrl) return this.siteUrl;
     const server = await this.ensureServer();
@@ -57,12 +78,33 @@ class PreviewClient {
     await setEmbeddedPreviewLaunchId(id ?? undefined);
   }
 
-  async syncScene(scenePath: string, lineNumber: number): Promise<void> {
+  /**
+   * 把编辑器的某一行同步给引擎 ("执行到此行")。
+   *
+   * 行号旁那个指示器由此点亮: 同步发出即标成"执行中"; 引擎回灌 `stage.snapshot.updated`
+   * 或 `preview.event.fast-preview-timeout` 之后, 再由 `consumeHostEvent` 换成
+   * "已执行"或"未能执行"。
+   *
+   * * `isReplay`: 这是点击指示器发起的**重跑**。同一行的重复同步里有两种截然不同的情况 ——
+   *   打字触发的自动同步不该把已经画好的对勾打回"执行中"(会闪), 而重跑必须打回去
+   *   (否则点了图标界面毫无反应)。
+   * * 站点还没就绪时 (预览刚打开/正在重挂) 请求发不出去, 但指示器仍然点亮: 预览就绪后
+   *   `CodeEditor` 会把当前行补发一次, 那一次才决定成败 —— 在这里直接判失败只会把一个
+   *   正常的等待过程显示成红叉。
+   */
+  async syncScene(scenePath: string, lineNumber: number, isReplay = false): Promise<void> {
+    const marker: LivePreviewMarker = {
+      docPath: scenePath,
+      line: lineNumber,
+      phase: isReplay ? 'executing' : this.keepSettledPhase(scenePath, lineNumber),
+      sceneName: sceneNameFromPath(scenePath),
+    };
+    useAppStore.getState().beginLivePreview(marker);
+
     if (!this.siteUrl) return;
 
-    const sceneName = sceneNameFromPath(scenePath);
     const request = createRequestEnvelope('preview.command.sync-scene', createId(), {
-      sceneName,
+      sceneName: marker.sceneName,
       sentenceId: lineNumber,
     });
     try {
@@ -70,6 +112,17 @@ class PreviewClient {
     } catch (e) {
       console.error('sync-scene 发送失败', e);
     }
+  }
+
+  /**
+   * 对同一行的重复同步: 保留已经落定的结果。
+   *
+   * 自动同步是"防抖后的当前行上报", 原地打字会让同一行反复触发。此时结果并没有变化,
+   * 把对勾打回"执行中"只会让它一直闪。
+   */
+  private keepSettledPhase(docPath: string, line: number): LivePreviewPhase {
+    const previous = useAppStore.getState().livePreviewMarker;
+    return previous !== null && previous.docPath === docPath && previous.line === line ? previous.phase : 'executing';
   }
 
   /** 通知引擎重新拉取模板文件 (切换模板 / 模板文件变更后调用)。 */
@@ -80,6 +133,24 @@ class PreviewClient {
       await sendPreviewCommand(JSON.stringify(request));
     } catch (e) {
       console.error('reload-templates 发送失败', e);
+    }
+  }
+
+  /**
+   * 记录预览静音状态。
+   *
+   * 两条路都要走, 缺一不可:
+   * * 告诉宿主服务器 (影响**下次**页面加载时注入脚本里的初始状态, 并让服务端先记住);
+   * * 给已经打开的预览页面发消息实时生效 —— 页面里那段注入脚本统一压所有 `audio`/`video`
+   *   的音量, 因此不依赖引擎版本, 也不需要引擎配合。
+   *
+   * 页面重挂之后由 `PreviewPanel` 在 iframe 的 load 事件里补发一次。
+   */
+  async setMuted(muted: boolean): Promise<void> {
+    try {
+      await setPreviewMuted(muted);
+    } catch (e) {
+      console.error('set_preview_muted 失败', e);
     }
   }
 
@@ -97,14 +168,30 @@ class PreviewClient {
       const ready = Boolean(msg.payload?.ready);
       useAppStore.getState().setPreview({ previewReady: ready });
     } else if (type === 'stage.snapshot.updated') {
-      const p = msg.payload ?? {};
-      useAppStore.getState().setPreview({
-        previewStage: {
-          sceneName: String(p.sceneName ?? ''),
-          sentenceId: Number(p.sentenceId ?? 0),
-        },
-      });
+      const payload = msg.payload ?? {};
+      this.applyLivePreviewEvent((marker) =>
+        isStageSnapshotForLivePreviewMarker(marker, payload)
+          ? applyStageSnapshotToLivePreviewMarker(marker, payload)
+          : marker
+      );
+    } else if (type === 'preview.event.fast-preview-timeout') {
+      const payload = msg.payload ?? {};
+      this.applyLivePreviewEvent((marker) =>
+        isFastPreviewTimeoutForLivePreviewMarker(marker, payload)
+          ? applyFastPreviewTimeoutToLivePreviewMarker(marker)
+          : marker
+      );
     }
+  }
+
+  /**
+   * 把引擎事件折算到指示器上。
+   *
+   * 折算本身是纯函数 (见 `preview/live-preview`), 这里只负责接上 store ——
+   * "这条回灌是否还在说当前这次同步" 的判断也在那些纯函数里, 因此可单独测试。
+   */
+  private applyLivePreviewEvent(fold: (marker: LivePreviewMarker) => LivePreviewMarker): void {
+    useAppStore.getState().applyLivePreviewEvent(fold);
   }
 }
 

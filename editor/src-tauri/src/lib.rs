@@ -51,6 +51,7 @@ pub fn run() {
             service::lsp::start_server,
             service::preview::start_preview_server,
             service::preview::add_static_site,
+            service::preview::set_preview_muted,
             service::preview::set_active_preview_session,
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,

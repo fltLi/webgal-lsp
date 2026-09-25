@@ -38,7 +38,10 @@ use tower_http::services::ServeFile;
 
 use crate::service::preview::sync::*;
 
+mod audio_bridge;
 mod sync;
+
+use audio_bridge::PreviewAudioBridge;
 
 // -------- 状态 --------
 
@@ -46,6 +49,8 @@ mod sync;
 struct SiteConfig {
     project: PathBuf,
     engine: Option<PathBuf>,
+    /// 预览静音桥 (注入到 `index.html`, 见 [`audio_bridge`])
+    audio_bridge: Arc<PreviewAudioBridge>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -383,10 +388,59 @@ async fn handle_static_request(
         .map(IntoResponse::into_response)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
 
+    let response = inject_audio_bridge(&site, &logical_path, response).await;
+
     // 禁用缓存: 引擎运行时通过 HTTP fetch 读取场景/模板等文件,
     // 若被 WebView 启发式缓存, 编辑后 sync-scene / reload-templates 将拿到旧内容。
     apply_no_cache(response)
 }
+
+/// 把预览静音桥注入 `index.html` (其余路径原样返回)。
+///
+/// 注入是**改响应体**, 所以要先去掉 `Content-Length` —— 留着旧长度会让浏览器读到一半
+/// 就停, 画面直接白屏。
+async fn inject_audio_bridge(
+    site: &SiteConfig,
+    logical_path: &Path,
+    response: Response,
+) -> Response {
+    if response.status() != StatusCode::OK || logical_path != Path::new("index.html") {
+        return response;
+    }
+
+    // 先按头长筛一道, 避免把大文件整块读进内存 (读进来才发现太大已经晚了)
+    let content_length = response
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    if content_length.is_some_and(|length| length > MAX_INJECTABLE_HTML_BYTES) {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_INJECTABLE_HTML_BYTES).await else {
+        return Response::from_parts(parts, axum::body::Body::empty());
+    };
+    let Ok(html) = String::from_utf8(bytes.to_vec()) else {
+        // 不是 UTF-8 文本, 原样送回
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    };
+
+    let Some(injected) = site.audio_bridge.inject("index.html", &html) else {
+        return Response::from_parts(parts, axum::body::Body::from(html));
+    };
+
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    parts.headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    Response::from_parts(parts, axum::body::Body::from(injected))
+}
+
+/// 允许注入的 HTML 体积上限 (超过就不碰, 免得把大文件整块读进内存)。
+const MAX_INJECTABLE_HTML_BYTES: usize = 2 * 1024 * 1024;
 
 fn apply_no_cache(mut response: Response) -> Response {
     response.headers_mut().insert(
@@ -530,16 +584,33 @@ pub async fn add_static_site(
         None => None,
     };
 
-    state
-        .lock()
-        .await
-        .app_state
-        .sites
-        .write()
-        .await
-        .insert(hash.clone(), SiteConfig { project, engine });
+    state.lock().await.app_state.sites.write().await.insert(
+        hash.clone(),
+        SiteConfig {
+            project,
+            engine,
+            audio_bridge: Arc::new(PreviewAudioBridge::new(false)),
+        },
+    );
 
     Ok(hash)
+}
+
+/// 记录预览静音状态。
+///
+/// 只影响**之后**的注入 (即下次页面加载的初始状态); 已经打开的预览由宿主直接给页面发
+/// `webgal.preview.output-settings` 消息实时改, 见编辑器侧的 `previewClient.setMuted`。
+#[tauri::command]
+pub async fn set_preview_muted(
+    state: State<'_, Mutex<PreviewState>>,
+    muted: bool,
+) -> Result<(), String> {
+    let app_state = state.lock().await.app_state.clone();
+    let sites = app_state.sites.read().await;
+    for site in sites.values() {
+        site.audio_bridge.set_muted(muted);
+    }
+    Ok(())
 }
 
 #[tauri::command]

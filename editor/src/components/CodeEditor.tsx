@@ -2,12 +2,14 @@
 
 // CodeEditor: 单个文档的 Monaco 编辑器 (仅活动文档被挂载)。
 // 场景编辑器集成 git 行内差异: 行号旁色块 + 点击后在两行之间就地插入差异区 (view zone)。
+// 行号右侧的字形栏画实时预览指示器 (执行中 / 已执行 / 未能执行), 见 `editor/gutter-live-preview`。
 
 import { openUrl } from '@tauri-apps/plugin-opener';
 import * as monaco from 'monaco-editor';
 import { useEffect, useRef } from 'react';
 
 import { gitFileChanges, gitFileRegion } from '../commands/git';
+import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
 import { absToRel } from '../git/util';
 import { fs } from '../lib/fs';
 import { lspClient } from '../lsp/client';
@@ -39,6 +41,8 @@ export function CodeEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const highlightDecorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  /** 实时预览指示器 (行号旁图标); 状态从 store 读, 见下方订阅 */
+  const previewGutter = useRef<ReturnType<typeof createLivePreviewGutterController> | null>(null);
   /** 当前编辑器承载的文档路径 (外部内容回灌前要确认没认错文档) */
   const editorPathRef = useRef<string | null>(null);
   /** 主 effect 里的"同步预览"函数 (外部内容回灌后要触发一次) */
@@ -65,6 +69,9 @@ export function CodeEditor({
       readOnly,
       // 只读时不显示光标插入符, 避免误以为可以编辑
       domReadOnly: readOnly,
+      // 行号右侧的字形栏: 实时预览指示器画在这里 (与 git 差异色块所在的那一栏并排)。
+      // 只给场景文件开 —— 普通资源文本上多一条空栏纯属挤占。
+      glyphMargin: isScene,
       fontFamily: initialSettings.editorFontFamily,
       fontSize: initialSettings.editorFontSize,
       minimap: { enabled: initialSettings.editorMinimap },
@@ -80,6 +87,29 @@ export function CodeEditor({
     editorRef.current = editor;
     editorPathRef.current = path;
     highlightDecorations.current = editor.createDecorationsCollection();
+
+    /*
+     * 实时预览指示器 (行号旁那个图标)。
+     *
+     * 状态从 store 读而不是从 props 传: 场景卡与配音卡共用同一份状态, 编辑器又会随着切卡
+     * 整体重建 —— 状态挂在组件上就会在切卡的瞬间丢掉。点图标重跑时只递一个"重跑第几行"的
+     * 请求, 由下面那个 effect 真正发出同步 (渲染层不该自己拼预览协议)。
+     */
+    let livePreviewMarker = useAppStore.getState().livePreviewMarker;
+    previewGutter.current = createLivePreviewGutterController({
+      editor,
+      getMarker: () => (livePreviewMarker?.docPath === path ? livePreviewMarker : null),
+      isReplayAvailable: () => useAppStore.getState().previewReady,
+      onReplay: (line) => useAppStore.getState().requestPreviewReplay(line),
+    });
+    previewGutter.current.sync();
+
+    // 指示器状态变化 -> 只重画装饰, 不重建编辑器 (否则会丢光标与滚动位置)
+    const previewMarkerSub = useAppStore.subscribe((state, prev) => {
+      if (state.livePreviewMarker === prev.livePreviewMarker && state.previewReady === prev.previewReady) return;
+      livePreviewMarker = state.livePreviewMarker;
+      previewGutter.current?.sync();
+    });
 
     // 编辑器设置变化时热更新 (避免重建编辑器丢失光标)
     const settingsSub = useAppStore.subscribe((state, prev) => {
@@ -330,8 +360,14 @@ export function CodeEditor({
       });
     }
 
-    // 预览就绪后立即同步一次当前光标行
+    /*
+     * 预览就绪后立即同步一次当前光标行 (引擎刚连上时不知道编辑器停在哪)。
+     *
+     * 必须先看「预览」开关: 开关关掉时预览与编辑器之间不该有任何联动, 而"连上了就跳一次"
+     * 会让预览莫名其妙地跳到光标处。
+     */
     const unsubscribeReady = useAppStore.subscribe((state, prev) => {
+      if (!state.settings.autoSyncPreview) return;
       if (state.previewReady && !prev.previewReady) {
         const position = editor.getPosition();
         if (position) void previewClient.syncScene(path, position.lineNumber);
@@ -377,6 +413,7 @@ export function CodeEditor({
       disposed = true;
       closeInline();
       settingsSub();
+      previewMarkerSub();
       unsubscribeReady();
       cursorSub.dispose();
       suggestTriggerSub.dispose();
@@ -400,6 +437,8 @@ export function CodeEditor({
         useAppStore.getState().rememberCursor(path, { line: position.lineNumber, column: position.column });
       }
       highlightDecorations.current = null;
+      previewGutter.current?.dispose();
+      previewGutter.current = null;
       editorRef.current = null;
       editorPathRef.current = null;
       syncRef.current = null;
@@ -439,6 +478,22 @@ export function CodeEditor({
     if (!doc.isScene) lspClient.changeDocument(doc.path, doc.content, model.getVersionId());
     syncRef.current?.();
   }, [doc.content, doc.path, doc.isScene, readOnly]);
+
+  /*
+   * 点击"未能执行"的指示器 -> 重跑那一行。
+   *
+   * 重跑只是把同一个请求再发一次, 因此这里不重新发明一遍同步逻辑: 请求一变就按它记下的
+   * 行号发一次"预览同步", 走的是与光标移动完全相同的那条路。
+   */
+  const previewReplay = useAppStore((s) => s.previewReplay);
+  useEffect(() => {
+    if (!previewReplay) return;
+    const store = useAppStore.getState();
+    if (!store.settings.autoSyncPreview || !store.previewReady) return;
+    // 编辑器只挂载活动文档: 只有令牌对应的那一行属于本文档时才发
+    if (editorPathRef.current !== doc.path) return;
+    void previewClient.syncScene(doc.path, previewReplay.line, true);
+  }, [previewReplay, doc.path]);
 
   /*
    * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。

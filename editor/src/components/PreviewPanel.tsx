@@ -4,12 +4,13 @@
 //
 // iframe 保持 16:9 横向画布: 引擎在竖屏窗口下会把画面旋转 90°, 因此必须保证宽大于高。
 
-import { ArrowClockwiseRegular, OpenRegular } from '@fluentui/react-icons';
+import { ArrowClockwiseRegular, OpenRegular, Speaker2Regular, SpeakerMuteRegular } from '@fluentui/react-icons';
 import { Button, Switch } from '@fluentui/react-components';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState } from 'react';
 
 import { previewClient } from '../preview/client';
+import { createPreviewOutputSettingsMessage } from '../preview/audio-bridge';
 import { createId } from '../preview/protocol';
 import { useAppStore } from '../state/store';
 
@@ -27,6 +28,41 @@ export function PreviewPanel() {
   const launchIdRef = useRef(createId());
   const [frame, setFrame] = useState<{ url: string; key: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const muted = settings.previewMuted;
+
+  /*
+   * 静音: 给预览页面发一条 `webgal.preview.output-settings` 消息。
+   *
+   * 页面里那段注入脚本 (见 `src-tauri/src/service/preview/audio_bridge.rs`) 会把它记成全局
+   * 输出系数, 立刻压住**所有**已存在的 audio/video, 之后新建的也一样 —— 因此不依赖引擎,
+   * 也不需要引擎配合。页面加载时的初始值已经写在注入脚本里, 这里负责之后的切换与重挂补发。
+   *
+   * 这里**现取**开关值而不是捕获闭包: 于是这个函数不必进任何依赖数组, 也就能安全地挂在
+   * iframe 的 `onLoad` 上 —— 关键是别把 `muted` 放进"注册站点"那个 effect 的依赖里, 否则
+   * 拨一下静音就会重新注册站点并换 key 重挂 iframe, 整个预览白重载一次。
+   */
+  const postMuted = () => {
+    const target = iframeRef.current?.contentWindow;
+    if (!target) return;
+    const current = useAppStore.getState().settings.previewMuted;
+    target.postMessage(createPreviewOutputSettingsMessage(current), '*');
+  };
+
+  /*
+   * 让宿主服务器也记住当前开关: 下次页面加载时注入的初始状态就是静音的, 不会先响一声。
+   *
+   * `setMuted` 不依赖预览是否已启动 (它只写服务器上的状态), 因此这个 effect 在挂载时就会
+   * 跑一次 —— 早于下面那段注册站点的异步流程, 注入脚本拿到的初始值就是准的。
+   */
+  useEffect(() => {
+    void previewClient.setMuted(muted);
+  }, [muted]);
+
+  // 预览重挂/首次连上都补发一次 (iframe 的 onLoad 也走这里)
+  useEffect(() => {
+    if (previewReady) postMuted();
+  }, [previewReady, muted, frame]);
 
   useEffect(() => {
     if (!projectPath) {
@@ -94,6 +130,12 @@ export function PreviewPanel() {
           onChange={(_, data) => updateSettings({ autoSyncPreview: data.checked })}
           label="预览"
         />
+        <Button
+          icon={muted ? <SpeakerMuteRegular /> : <Speaker2Regular />}
+          appearance="subtle"
+          title={muted ? '取消静音' : '静音预览'}
+          onClick={() => updateSettings({ previewMuted: !muted })}
+        />
         <Button icon={<ArrowClockwiseRegular />} appearance="subtle" title="刷新预览" onClick={() => void reload()} />
         <Button
           icon={<OpenRegular />}
@@ -115,6 +157,7 @@ export function PreviewPanel() {
               className="preview-frame"
               title="WebGAL 预览"
               allow="autoplay"
+              onLoad={postMuted}
             />
           </div>
         ) : (
