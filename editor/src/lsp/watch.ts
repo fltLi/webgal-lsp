@@ -3,21 +3,38 @@
 // LSP 文件监听: 基于 Tauri plugin-fs 的 watch API (Rust notify) 监听工作区文件变化,
 // 把事件转换为 LSP `workspace/didChangeWatchedFiles` 的 FileEvent (changeType: 1=创建 2=修改 3=删除),
 // 供 LSP 客户端转发给语言服务器 (服务器通过 client/registerCapability 注册过该能力)。
+//
+// 一次"拷贝一整个立绘文件夹到资源目录"会在一瞬间产生成千上万条事件。原来的写法有两个
+// 放大器, 结果就是 issue #25 的第三处症状 (语言服务卡死, 状态栏还写着就绪):
+//
+// 1. **每条 notify 回调各起一条异步链** (`void handleEvent(...)`, 互相不排队), 每条链又
+//    逐条 `await fs.exists` —— 成百上千条链同时在跑, 主线程被 IPC 淹没;
+// 2. 每条 notify 回调各自转发一条通知, 语言服务收到的是成百上千条互相独立的小通知,
+//    每条都要取一次项目写锁并触发一次诊断。
+//
+// 现在: 事件先按路径合并 (同一路径只留最后一次变化), **只有一条转发链**在跑, 复核用的
+// 存在性查询按固定并发度批量做完 (见 `change-batch`), 整批变更作为一条通知发出。
 
 import { watch, type UnwatchFn, type WatchEvent, type WatchEventKind } from '@tauri-apps/plugin-fs';
 
 import { fs } from '../lib/fs';
+import { resolveChanges, type FileChangeType, type WatchedChange } from './change-batch';
 
-export type FileChangeType = 1 | 2 | 3;
-
-export interface WatchedChange {
-  path: string;
-  type: FileChangeType;
-}
+export type { FileChangeType, WatchedChange } from './change-batch';
+/** 事件合并窗口: 一次批量操作的事件先攒一会儿, 按路径合并后再转发 */
+const FLUSH_DELAY_MS = 150;
 
 let unwatch: UnwatchFn | null = null;
 let active = false;
 let queue: Promise<void> = Promise.resolve();
+
+/** 待转发的变更 (path -> 最后一次事件类型) */
+let pending = new Map<string, FileChangeType>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+/** 是否已有转发链在跑 —— 事件再多也只排一条 */
+let forwarding = false;
+/** 当前注册的转发出口 (notify 回调是异步的, 出口要跨调用保存) */
+let sink: ((changes: WatchedChange[]) => void) | null = null;
 
 /** 从 notify 事件类型映射到 LSP changeType; 访问类事件不转发。 */
 function kindToType(kind: WatchEventKind): FileChangeType | null {
@@ -54,52 +71,79 @@ export function stopWatching(): Promise<void> {
 
 function internalStop(): void {
   active = false;
+  sink = null;
   if (unwatch) {
     unwatch();
     unwatch = null;
   }
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  pending = new Map();
 }
 
 async function doStart(roots: string[], onChange: (changes: WatchedChange[]) => void): Promise<void> {
   internalStop();
   if (roots.length === 0) return;
   active = true;
+  sink = onChange;
   try {
     unwatch = await watch(
       roots,
       (event) => {
         if (!active) return;
-        void handleEvent(event, onChange);
+        collect(event);
       },
       { recursive: true, delayMs: 200 }
     );
   } catch (e) {
     console.error('文件监听启动失败', e);
     active = false;
+    sink = null;
   }
 }
 
-async function handleEvent(event: WatchEvent, onChange: (changes: WatchedChange[]) => void): Promise<void> {
+/** 收集一条 notify 事件里的路径 (同一路径只留最后一次变化), 再排一次转发。 */
+function collect(event: WatchEvent): void {
   const type = kindToType(event.type);
   if (type === null) return;
 
-  const changes: WatchedChange[] = [];
   for (const raw of event.paths) {
     const path = normalize(raw);
     if (!path) continue;
-
-    if (type === 1 || type === 2) {
-      // 重命名等场景下旧路径可能已消失: 按当前磁盘状态区分 修改/删除; 目录事件不转发
-      const info = await fs.exists(path);
-      if (!info.exists) {
-        changes.push({ path, type: 3 });
-      } else if (!info.isDirectory) {
-        changes.push({ path, type });
-      }
-    } else {
-      changes.push({ path, type: 3 });
-    }
+    // 拷贝过程中同一路径会被反复报 create/modify: 合并成一条即可
+    pending.set(path, type);
   }
 
-  if (changes.length > 0) onChange(changes);
+  if (flushTimer || pending.size === 0) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flush();
+  }, FLUSH_DELAY_MS);
+}
+
+/**
+ * 把攒下的变更转发给语言服务。
+ *
+ * 同一时刻只有一条转发链: 转发期间新到的事件留在 `pending` 里, 由同一条链接着处理
+ * (循环取走整批, 而不是另起一条链)。这样事件再多也只是"批次变多", 不会变成并发爆炸。
+ */
+async function flush(): Promise<void> {
+  if (forwarding) return;
+  forwarding = true;
+  try {
+    while (active && pending.size > 0) {
+      const batch = pending;
+      pending = new Map();
+
+      const changes = await resolveChanges(batch, { exists: (path) => fs.exists(path) });
+      if (!active) return;
+      if (changes.length > 0) sink?.(changes);
+    }
+  } catch (e) {
+    console.error('文件变更转发失败', e);
+  } finally {
+    forwarding = false;
+  }
 }

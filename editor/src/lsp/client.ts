@@ -97,10 +97,22 @@ interface JsonRpcNotification {
 type NotificationHandler = (params: unknown) => void;
 type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
 
+/**
+ * 一个请求超过这么久还没答复, 就认为语言服务在忙 (而不是"就绪")。
+ *
+ * 处理大批文件变更时语言服务会长时间不给任何答复 —— 连接还在、状态还是 ready, 编辑器
+ * 底部却写着"就绪", 用户看到的就是"卡死了还骗我说没事"(issue #25)。这里按**响应延迟**
+ * 判断忙闲: 只要还有请求超时未答就显示"响应缓慢", 答复一到就自动恢复。
+ */
+const SLOW_REQUEST_MS = 2000;
+
 class LspClient {
   private socket: WebSocket | null = null;
   private nextId = 1;
-  private pending = new Map<number | string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number | string,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void; sentAt: number }
+  >();
   private notificationHandlers = new Map<string, NotificationHandler[]>();
   private requestHandlers = new Map<string, RequestHandler>();
   private diagnosticsListeners = new Set<(uri: string, diags: LspDiagnostic[]) => void>();
@@ -108,6 +120,8 @@ class LspClient {
   private initialized = false;
   private pendingFolders: { added: string[]; removed: string[] } | null = null;
   private frameBuffer: Uint8Array = new Uint8Array(0);
+  /** 忙闲检查的定时器 (同一时刻只留一个) */
+  private activityTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** 文件监听: 服务器通过 client/registerCapability 注册 didChangeWatchedFiles 后启用 */
   private watchedEnabled = false;
@@ -218,6 +232,8 @@ class LspClient {
     this.pending.delete(msg.id);
     if (msg.error) pending.reject(new Error(msg.error.message));
     else pending.resolve(msg.result);
+    // 答复到达即重新判断忙闲: 没有超时未答的请求就恢复正常显示
+    this.refreshActivity();
   }
 
   private handleNotification(msg: JsonRpcNotification): void {
@@ -247,9 +263,38 @@ class LspClient {
   sendRequest(method: string, params?: unknown): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, sentAt: Date.now() });
       this.sendRaw({ jsonrpc: '2.0', id, method, params });
+      this.scheduleActivityCheck();
     });
+  }
+
+  /**
+   * 安排一次忙闲检查。
+   *
+   * 用"延迟"而不是"有没有在跑"判断: 语言服务是被动应答的, 只有请求迟迟不回才说明它忙。
+   */
+  private scheduleActivityCheck(): void {
+    if (this.activityTimer) return;
+    this.activityTimer = setTimeout(() => {
+      this.activityTimer = null;
+      this.refreshActivity();
+    }, SLOW_REQUEST_MS);
+  }
+
+  /** 按"还有多少请求超时未答"更新状态栏里的忙闲提示。 */
+  private refreshActivity(): void {
+    const now = Date.now();
+    let slow = 0;
+    for (const entry of this.pending.values()) {
+      if (now - entry.sentAt >= SLOW_REQUEST_MS) slow += 1;
+    }
+    const store = useAppStore.getState();
+    if (slow > 0) {
+      store.setLspActivity(`语言服务响应缓慢：${slow} 个请求仍未答复（可能正在处理大量文件变更）`);
+    } else if (store.lspActivity) {
+      store.setLspActivity(null);
+    }
   }
 
   sendNotification(method: string, params?: unknown): void {
@@ -380,6 +425,8 @@ class LspClient {
   private rejectAllPending(error: Error): void {
     for (const { reject } of this.pending.values()) reject(error);
     this.pending.clear();
+    // 连接都没了, "响应缓慢"不再是有效信息 (状态会切到"错误/重连中")
+    useAppStore.getState().setLspActivity(null);
   }
 
   /** 重连后恢复已打开文档的同步状态。 */

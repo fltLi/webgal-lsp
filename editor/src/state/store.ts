@@ -75,6 +75,8 @@ interface AppStore {
 
   lspStatus: LspStatus;
   lspError: string | null;
+  /** 语言服务"忙"时的说明 (见 `setLspActivity`) */
+  lspActivity: string | null;
 
   diagnostics: Record<string, LspDiagnostic[]>;
 
@@ -197,6 +199,13 @@ interface AppStore {
   addNovelTab: (tab: WorkbenchTabItem) => void;
   setGitStatus: (status: GitStatus | null) => void;
   setLspStatus: (status: LspStatus, error?: string) => void;
+  /**
+   * 语言服务当前的"忙"说明 (null = 不忙)。
+   *
+   * 连接还在、状态还是 ready, 不代表语言服务答得上来: 处理大批文件变更时它会长时间
+   * 不给任何答复。状态栏必须把这件事说出来 —— 否则用户看到的是"卡死了, 但写着就绪"。
+   */
+  setLspActivity: (activity: string | null) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
   setPreview: (patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady'>>) => void;
   /**
@@ -237,6 +246,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   lspStatus: 'disconnected',
   lspError: null,
+  lspActivity: null,
 
   diagnostics: {},
 
@@ -452,6 +462,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setGitStatus: (status) => set({ gitStatus: status }),
   setLspStatus: (status, error) => set({ lspStatus: status, lspError: error ?? null }),
+  setLspActivity: (activity) => set({ lspActivity: activity }),
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   beginLivePreview: (marker) =>
