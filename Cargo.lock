@@ -6122,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-ink"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-tungstenite",
  "axum",
@@ -6158,7 +6158,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -6180,7 +6180,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6207,7 +6207,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-language-service"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "count",
@@ -6231,7 +6231,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-sentence-macro"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "either",
  "itertools 0.14.0",
@@ -6242,7 +6242,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-simulate"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -6257,7 +6257,7 @@ dependencies = [
 
 [[package]]
 name = "webgal-snapshot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "console",
