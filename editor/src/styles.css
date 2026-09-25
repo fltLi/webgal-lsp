@@ -538,12 +538,21 @@ body.resizing {
   color: var(--app-muted);
 }
 
+/* 语言服务忙 (有请求超时未答): 用了警示色, 不能再长得像"就绪" */
+.lsp-status.lsp-syncing {
+  color: #c19c00;
+}
+
 [data-theme='dark'] .lsp-status.lsp-ready {
   color: #6ccb5f;
 }
 
 [data-theme='dark'] .lsp-status.lsp-error {
   color: #f1707b;
+}
+
+[data-theme='dark'] .lsp-status.lsp-syncing {
+  color: #e5c07b;
 }
 
 /* -------- 预览面板 -------- */

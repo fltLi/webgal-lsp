@@ -14,30 +14,44 @@ import { useAppStore } from './state/store';
 import { makeResourceTab, type ResourceKind } from './tabs/model';
 import { voiceController } from './voice/controller';
 
-/** 读取并打开一个文件: 登记文档并打开 (或聚焦) 对应选项卡。 */
+/** 读取并打开一个文件: 登记文档并打开 (或聚焦) 对应选项卡。
+ *
+ * 已经打开过的文档**一律以内存里那一份为准**, 不再重新读盘: 磁盘上可能是 600ms 之前的
+ * 旧内容 (自动保存还没落地), 拿它覆盖文档会顺着"文档 -> 编辑器"的回灌把用户刚敲的字抹掉,
+ * 还会往撤销栈里塞一条整档替换 (此后撤回/重做就错位了)。要刷新磁盘内容请用差异页或
+ * 场景冲突裁决。
+ */
 export async function openFile(path: string): Promise<void> {
-  const content = await fs.readText(path);
   const normalized = path.replace(/\\/g, '/');
-  const isScene = normalized.includes('/game/scene/');
   const name = normalized.split('/').pop() ?? path;
   const store = useAppStore.getState();
-  store.openDocument({
-    path,
-    name,
-    uri: toUri(path),
-    content,
-    dirty: false,
-    isScene,
-  });
+  const opened = store.documents.some((doc) => doc.path === path);
+
+  if (!opened) {
+    const content = await fs.readText(path);
+    store.openDocument({
+      path,
+      name,
+      uri: toUri(path),
+      content,
+      dirty: false,
+      isScene: normalized.includes('/game/scene/'),
+    });
+  }
+
   // 文档与选项卡是两件事: 只登记文档的话界面上不会出现任何选项卡
   store.openSceneTab(path, name);
 }
 
-/** 打开资源选项卡: 文本资源进入 Monaco, 媒体资源在工作区显示对应控件。 */
+/** 打开资源选项卡: 文本资源进入 Monaco, 媒体资源在工作区显示对应控件。
+ *
+ * 文本资源同样"已打开就不再读盘", 理由见 `openFile`。
+ */
 export async function openResourceFile(path: string, resourceKind: ResourceKind): Promise<void> {
   const name = path.replace(/\\/g, '/').split('/').pop() ?? path;
   const store = useAppStore.getState();
-  if (resourceKind === 'text') {
+
+  if (resourceKind === 'text' && !store.documents.some((doc) => doc.path === path)) {
     const content = await fs.readText(path);
     store.openDocument({
       path,
@@ -48,6 +62,7 @@ export async function openResourceFile(path: string, resourceKind: ResourceKind)
       isScene: false,
     });
   }
+
   store.openTab(makeResourceTab(path, name, resourceKind));
 }
 

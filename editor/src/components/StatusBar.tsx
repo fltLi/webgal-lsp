@@ -22,6 +22,7 @@ const GSV_LABELS: Record<string, string> = {
 export function StatusBar() {
   const lspStatus = useAppStore((s) => s.lspStatus);
   const lspError = useAppStore((s) => s.lspError);
+  const lspActivity = useAppStore((s) => s.lspActivity);
   const cursor = useAppStore((s) => s.cursor);
   const diagnostics = useAppStore((s) => s.diagnostics);
   const novelStats = useAppStore((s) => s.novelStats);
@@ -44,16 +45,23 @@ export function StatusBar() {
   const lineCount = isNovel ? (novelStats?.lines ?? 0) : activeDoc ? activeDoc.content.split('\n').length : 0;
 
   return (
-    <div className="status-bar" title={lspError ?? voiceStatusDetail ?? undefined}>
-      <span className={`lsp-status lsp-${lspStatus}`}>
+    <div className="status-bar" title={lspActivity ?? lspError ?? voiceStatusDetail ?? undefined}>
+      {/*
+        "就绪"说的是连接, 不是"答得上来": 语言服务处理大批文件变更时会长时间不答复任何
+        请求 (issue #25)。这时照旧写"就绪"等于骗人 —— 有请求超时未答就改说"响应缓慢",
+        答复一到自动恢复 (见 `lsp/client.ts` 的忙闲判断)。
+      */}
+      <span className={`lsp-status ${lspActivity ? 'lsp-syncing' : `lsp-${lspStatus}`}`}>
         LSP:{' '}
-        {lspStatus === 'ready'
-          ? '就绪'
-          : lspStatus === 'connecting'
-            ? '连接中'
-            : lspStatus === 'error'
-              ? '错误'
-              : '未连接'}
+        {lspActivity
+          ? '响应缓慢'
+          : lspStatus === 'ready'
+            ? '就绪'
+            : lspStatus === 'connecting'
+              ? '连接中'
+              : lspStatus === 'error'
+                ? '错误'
+                : '未连接'}
       </span>
 
       {/*

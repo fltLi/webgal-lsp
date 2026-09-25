@@ -9,6 +9,7 @@ import * as monaco from 'monaco-editor';
 import { useEffect, useRef } from 'react';
 
 import { gitFileChanges, gitFileRegion } from '../commands/git';
+import { createDocumentSaver } from '../editor/document-saver';
 import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
 import { absToRel } from '../git/util';
 import { fs } from '../lib/fs';
@@ -135,16 +136,18 @@ export function CodeEditor({
      *
      * `readOnly` (配音卡) 下也允许: 配音「应用」在关闭自动保存时只会更新文档与 Monaco,
      * 落盘要靠用户自己 —— 那时 Ctrl+S 必须有效, 否则改动永远留在内存里。
+     *
+     * 写入排队执行, 并且**只在内容仍然有效时**才回执 (标记已保存): 落盘是异步的, 用户
+     * 不会等它 —— 拿写入前取的那一份回执, 会把编辑器里的文档倒退回去 (见
+     * `editor/document-saver`)。
      */
-    const saveDoc = async () => {
-      const text = editor.getValue();
-      try {
-        await fs.writeText(path, text);
-        useAppStore.getState().updateDocument(path, { content: text, dirty: false });
-      } catch (e) {
-        console.error('保存失败', e);
-      }
-    };
+    const saver = createDocumentSaver({
+      read: () => editor.getValue(),
+      write: (text) => fs.writeText(path, text),
+      commit: (text) => useAppStore.getState().updateDocument(path, { content: text, dirty: false }),
+      onError: (error) => console.error('保存失败', path, error),
+    });
+    const saveDoc = () => saver.save();
 
     /**
      * 自动保存。
