@@ -1,8 +1,12 @@
-use std::mem;
+use std::{borrow::Cow, mem};
 
 use lsp_types::*;
+use path_tree::canonicalize;
+use percent_encoding::percent_decode_str;
 use rayon::prelude::*;
 use webgal_language_core::sentence::Scene;
+
+use crate::project::Project;
 
 pub fn offset_utf16_to_utf8(content: &str, offset: u32) -> u32 {
     let mut utf8_pos: usize = 0;
@@ -78,16 +82,32 @@ pub fn range_utf8_to_utf16(scene: &Scene, range: Range) -> Range {
     }
 }
 
-pub fn location_utf8_to_utf16(scene: &Scene, location: Location) -> Location {
-    Location {
+pub fn location_utf8_to_utf16(
+    project: &Project,
+    project_root: &str,
+    location: Location,
+) -> Option<Location> {
+    let absolute_path = location.uri.to_string();
+    let absolute_path = percent_decode_str(&absolute_path)
+        .decode_utf8()
+        .unwrap_or(Cow::Borrowed(&absolute_path));
+    let relative_path = canonicalize(
+        absolute_path
+            .strip_prefix(project_root)?
+            .trim_start_matches('/')
+            .strip_prefix("scene/")?,
+    )?;
+    let scene = project.resource().scene.get(&relative_path)?.as_item()?;
+    Some(Location {
         range: range_utf8_to_utf16(scene, location.range),
         ..location
-    }
+    })
 }
 
-pub fn locations_utf8_to_utf16(scene: &Scene, locations: &mut [Location]) {
+pub fn locations_utf8_to_utf16(project: &Project, project_root: &str, locations: &mut [Location]) {
     locations.par_iter_mut().for_each(|location| {
-        *location = location_utf8_to_utf16(scene, location.clone());
+        *location = location_utf8_to_utf16(project, project_root, location.clone())
+            .expect("Location 指向的位置无效");
     });
 }
 
@@ -282,5 +302,46 @@ mod tests {
         };
         assert_eq!(position_utf16_to_utf8(&scene, position), position);
         assert_eq!(position_utf8_to_utf16(&scene, position), position);
+    }
+
+    #[test]
+    fn locations_conversion_uses_target_scene() {
+        let mut project = Project::new(webgal_language_core::resource::Config::default());
+        project
+            .insert("scene/source.txt", || Ok("setVar:value=1;".to_string()))
+            .unwrap();
+        project
+            .insert("scene/target.txt", || Ok("say:你好x;".to_string()))
+            .unwrap();
+
+        let mut locations = vec![Location {
+            uri: "file:///project/scene/target.txt".parse().unwrap(),
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 10,
+                },
+                end: Position {
+                    line: 0,
+                    character: 11,
+                },
+            },
+        }];
+
+        locations_utf8_to_utf16(&project, "file:///project", &mut locations);
+
+        assert_eq!(
+            locations[0].range,
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 6,
+                },
+                end: Position {
+                    line: 0,
+                    character: 7,
+                },
+            }
+        );
     }
 }

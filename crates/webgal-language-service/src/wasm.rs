@@ -17,6 +17,10 @@ pub struct Scene(Project);
 
 #[wasm_bindgen]
 impl Scene {
+    const fn project_root() -> &'static str {
+        "file:///webgal-playground"
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(text: &str) -> Self {
         let mut project = Project::new(Config::default());
@@ -44,30 +48,22 @@ impl Scene {
 
     pub fn reference(&self, line: u32, character: u32) -> Vec<JsValue> {
         let position = position_utf16_to_utf8(&self, Position { line, character });
-        let references = crate::service::reference("start.txt", position, &self.0)
+        let mut references = references("start.txt", position, &self.0)
             .unwrap_or_default()
-            .into_iter()
-            .map(|(path, range)| (path, range_utf8_to_utf16(&self, range)))
-            .collect();
+            .to_locations(Self::project_root());
+        locations_utf8_to_utf16(&self.0, Self::project_root(), &mut references);
 
-        references_to_locations("file:///webgal-playground", references)
-            .into_iter()
-            .map(serialize)
-            .collect()
+        references.into_iter().map(serialize).collect()
     }
 
     pub fn definition(&self, line: u32, character: u32) -> Vec<JsValue> {
         let position = position_utf16_to_utf8(&self, Position { line, character });
-        let definitions = crate::service::definition("start.txt", position, &self.0)
+        let mut definitions = definition("start.txt", position, &self.0)
             .unwrap_or_default()
-            .into_iter()
-            .map(|(path, range)| (path, range_utf8_to_utf16(&self, range)))
-            .collect();
+            .to_locations(Self::project_root());
+        locations_utf8_to_utf16(&self.0, Self::project_root(), &mut definitions);
 
-        definitions_to_locations("file:///webgal-playground", definitions)
-            .into_iter()
-            .map(serialize)
-            .collect()
+        definitions.into_iter().map(serialize).collect()
     }
 
     /// 悬浮文档

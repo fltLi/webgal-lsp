@@ -6218,6 +6218,7 @@ dependencies = [
  "lsp-types",
  "once_cell",
  "path-tree",
+ "percent-encoding",
  "rayon",
  "serde",
  "serde-wasm-bindgen",

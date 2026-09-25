@@ -650,7 +650,7 @@ impl LanguageServer for Backend {
             );
             let definitions = definition(scene_path, position, &project)?;
             let mut definitions = definitions.to_locations(&project_path);
-            locations_utf8_to_utf16(scene, &mut definitions);
+            locations_utf8_to_utf16(&project, &project_path, &mut definitions);
             Some(definitions)
         })
         .await
@@ -706,7 +706,7 @@ impl LanguageServer for Backend {
             );
             let references = references(scene_path, position, &project)?;
             let mut references = references.to_locations(&project_path);
-            locations_utf8_to_utf16(scene, &mut references);
+            locations_utf8_to_utf16(&project, &project_path, &mut references);
             Some(references)
         })
         .await
