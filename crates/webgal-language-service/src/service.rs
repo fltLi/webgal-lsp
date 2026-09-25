@@ -3,22 +3,20 @@ use lsp_types::*;
 use crate::project::VariableLocation;
 
 pub use complete::*;
-pub use definition::*;
 pub use diagnose::*;
 pub use document::*;
 pub use format::*;
 pub use highlight::*;
 pub use inlay_hint::*;
-pub use reference::*;
+pub use references::*;
 
 mod complete;
-mod definition;
 mod diagnose;
 mod document;
 mod format;
 mod highlight;
 mod inlay_hint;
-mod reference;
+mod references;
 
 // -------- util --------
 

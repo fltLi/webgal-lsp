@@ -39,7 +39,7 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     definition_capability: bool,
     #[getset(set_with = "pub")]
-    reference_capability: bool,
+    references_capability: bool,
     #[getset(set_with = "pub")]
     hover_capability: bool,
     #[getset(set_with = "pub")]
@@ -70,7 +70,7 @@ impl Default for BackendBuilder {
         Self {
             diagnose_capability: true,
             definition_capability: true,
-            reference_capability: true,
+            references_capability: true,
             hover_capability: true,
             highlight_capability: true,
             inlay_hint_capability: true,
@@ -341,7 +341,10 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
-            references_provider: self.options.reference_capability.then(reference_capability),
+            references_provider: self
+                .options
+                .references_capability
+                .then(references_capability),
             definition_provider: self
                 .options
                 .definition_capability
@@ -646,7 +649,7 @@ impl LanguageServer for Backend {
                 params.text_document_position_params.position,
             );
             let definitions = definition(scene_path, position, &project)?;
-            let mut definitions = definitions_to_locations(&project_path, definitions);
+            let mut definitions = definitions.to_locations(&project_path);
             locations_utf8_to_utf16(scene, &mut definitions);
             Some(definitions)
         })
@@ -657,7 +660,7 @@ impl LanguageServer for Backend {
     }
 
     async fn references(&self, params: ReferenceParams) -> jsonrpc::Result<Option<Vec<Location>>> {
-        if !self.options.reference_capability {
+        if !self.options.references_capability {
             warn!("References capability disabled, rejecting request");
             return Err(jsonrpc::Error::method_not_found());
         }
@@ -701,8 +704,8 @@ impl LanguageServer for Backend {
                 scene,
                 params.text_document_position.position,
             );
-            let references = reference(scene_path, position, &project)?;
-            let mut references = references_to_locations(&project_path, references);
+            let references = references(scene_path, position, &project)?;
+            let mut references = references.to_locations(&project_path);
             locations_utf8_to_utf16(scene, &mut references);
             Some(references)
         })

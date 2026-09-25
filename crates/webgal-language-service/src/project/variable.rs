@@ -49,6 +49,16 @@ pub struct VariableLocation {
     pub span: Range<usize>,
 }
 
+impl VariableInfo {
+    /// 遍历变量的所有定义和引用, 获得定位
+    pub fn iter_references(&self) -> impl Iterator<Item = &VariableLocation> {
+        self.definitions
+            .iter()
+            .map(|definition| &definition.location)
+            .chain(&self.references)
+    }
+}
+
 impl VariableKind {
     pub fn is_kind(&self) -> bool {
         matches!(self, Self::Known(_))
