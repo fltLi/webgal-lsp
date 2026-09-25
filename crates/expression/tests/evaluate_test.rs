@@ -227,6 +227,10 @@ fn evaluate_without_context() {
     assert_eq!(evaluate_constantly("random(1, 2, 3)"), None);
     // 解析错误
     assert_eq!(evaluate_constantly("a = 1"), None);
+    assert_eq!(
+        evaluate_constantly("我是整块字符串"),
+        Some(Value::from("我是整块字符串"))
+    );
 }
 
 // -------- 类型推断 --------
@@ -243,6 +247,7 @@ fn infer_result_type() {
     assert_eq!(infer("1 + 2"), Some(ValueKind::Number));
     assert_eq!(infer("-5"), Some(ValueKind::Number));
     assert_eq!(infer("1 + \"x\""), Some(ValueKind::String));
+    assert_eq!(infer("我是整块字符串"), Some(ValueKind::String));
     assert_eq!(infer("hp > 0"), Some(ValueKind::Bool));
     assert_eq!(infer("5.0 == 5"), Some(ValueKind::Bool));
     // 比较运算结果恒为布尔, 即使操作数类型未知

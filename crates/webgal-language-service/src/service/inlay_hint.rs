@@ -24,30 +24,27 @@ fn inlay_hint_variable_definitions(
     span: Range,
     project: &Project,
 ) -> impl Iterator<Item = InlayHint> {
-    project
-        .variable()
-        .values()
-        .filter_map(|variable| Some((variable.kind.as_kind()?, &variable.definitions)))
-        .flat_map(move |(kind, definitions)| {
-            definitions.iter().filter_map(move |definition| {
-                let position = Position {
-                    line: definition.line as u32,
-                    character: definition.span.end as u32,
-                };
-                (definition.scene == scene_path && position_in_range(position, span)).then(|| {
-                    InlayHint {
-                        position,
-                        label: InlayHintLabel::String(format!(": {kind}")),
-                        kind: Some(InlayHintKind::TYPE),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: Some(true),
-                        data: None,
-                    }
-                })
-            })
+    project.variable().values().flat_map(move |variable| {
+        variable.definitions.iter().filter_map(move |definition| {
+            let kind = definition.kind?;
+            let position = Position {
+                line: definition.location.line as u32,
+                character: definition.location.span.end as u32,
+            };
+            (definition.location.scene == scene_path && position_in_range(position, span)).then(
+                || InlayHint {
+                    position,
+                    label: InlayHintLabel::String(format!(": {kind}")),
+                    kind: Some(InlayHintKind::TYPE),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: Some(true),
+                    data: None,
+                },
+            )
         })
+    })
 }
 
 fn inlay_hint_vocal_arguments(scene: &Scene, span: Range) -> impl Iterator<Item = InlayHint> {

@@ -1501,11 +1501,14 @@ impl Complete for ChooseSentence {
                 // 补全文本中的变量插值
                 try_complete_interpolate(prompt, position, project.variable()).unwrap_or_default()
             }
+        } else if rsplit_once_escaped(choice, '(').is_some_and(|(_, s)| !s.contains(')'))
+            || rsplit_once_escaped(choice, '[').is_some_and(|(_, s)| !s.contains(']'))
+        {
+            // 补全选项启用和显示表达式
+            try_complete_expression(choice, position, project.variable()).unwrap_or_default()
         } else {
-            // 补全文本中的变量插值 / 补全选项启用和显示表达式
-            try_complete_interpolate(choice, position, project.variable())
-                .or_else(|| try_complete_expression(choice, position, project.variable()))
-                .unwrap_or_default()
+            // 补全文本中的变量插值
+            try_complete_interpolate(choice, position, project.variable()).unwrap_or_default()
         }
     }
 

@@ -13,11 +13,11 @@ WebGAL 语言基础设施。
 - **语义高亮**：语句类型、参数、变量插值、注释等色彩渲染
 - **悬浮文档**：悬停查看语句、参数的详细说明 -> [详细说明](#documentation-license)
 - **内联提示**：变量类型、部分参数省略语法糖提示
-- **查找变量**：项目内变量转到定义、查找引用支持
+- **引用查询**：项目内变量转到定义、查找引用支持
 - **代码编辑**：提供轻量级编辑器，集成上述语言服务 -> [详细说明](#webgal-ink-编辑器)
 - **配音工具**[^1]：调用本地 GPT-SoVITS v4 为对话生成配音 -> [使用说明](./docs/voice-guide.md)
 - **快照打包**：生成 WebGAL 项目精简压缩包，便于归档和传播
-- **文本处理**：将小说转换为原始脚本（智能识别对话与断句、分配对话者）
+- **文本处理**：将小说转换为原始脚本（识别对话与断句、分配对话者）
 
 [^1]: 实验性功能，后续将逐步完善和稳定。
 
@@ -62,7 +62,7 @@ cargo build -p webgal-language-server
 日志输出到 `stderr`，所有参数均为可选：
 
 - **日志**：`--log-level <LEVEL>`（`error`/`warn`/`info`/`debug`/`trace`，默认 `error`），`--log-format <FORMAT>`（`plain`/`text`/`json`，默认 `plain`）
-- **功能开关**：`--disable-{diagnose,hover,highlight,inlay-hint,complete,format}` 可分别禁用对应能力（默认全部开启）
+- **功能开关**：`--disable-{diagnose,definition,references,hover,highlight,inlay-hint,complete,format}` 可分别禁用对应能力（默认全部开启）
 - **诊断调优**：`--diagnostic-delay <MS>`（批处理延迟，默认 500ms），`--diagnostic-timeout <MS>`（生成超时，默认 10000ms）
 
 示例：
@@ -75,17 +75,15 @@ cargo run -p webgal-language-server -- --log-level debug --disable-hover --disab
 
 ### :pencil2: WebGAL Ink 编辑器
 
-> 基于 Tauri 2 + React + Monaco + Fluent UI 的 WebGAL 桌面场景编辑器，内置上述语言服务与实时预览，开箱即用。
+> 基于 Tauri 2 + React + Monaco + Fluent UI 的 WebGAL 桌面场景编辑器，内置上述语言服务与实用工具等功能，开箱即用。
 
 在 VS Code 中打开项目根目录，选择 **Launch Ink Editor** 启动配置（按 `F5`，或运行同名任务）即可启动开发模式（首次运行会自动安装依赖并编译）。
 
 编辑器特性：
 
-- 多标签场景编辑、自动保存、最近项目；
-- **内置 LSP**：语义高亮、自动补全、诊断、格式化、悬浮文档等；
-- **实时预览**、资源浏览、深浅色主题与编辑器设置；
-- **快照打包**：一键生成精简压缩包，并可实时查看进度；
-- **文本预处理**：将无格式小说转换为 WebGAL 脚本，支持对话识别、断句与说话者分配。
+- **内置 LSP**：嵌入本项目语言服务器，在编辑器中集成全部功能；
+- 实时预览、**git 版本控制**、资源浏览、深浅色主题与编辑器设置；
+- **实用工具**：支持 **GSOV 配音工具**、快照打包、小说文本预处理等特性。
 
 ---
 

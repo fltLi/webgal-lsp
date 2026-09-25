@@ -1426,7 +1426,7 @@ fn parse_set_variable(expression: &str) -> ((String, Expression), Option<anyhow:
     match Expression::from_str(expression) {
         Ok(expression) => ((variable.to_string(), expression.simplify()), None),
         Err(error) => (
-            (variable.to_string(), Expression::default()),
+            (variable.to_string(), Expression::invalid()),
             Some(error.into()),
         ),
     }
@@ -1920,7 +1920,7 @@ mod tests {
 
     #[test]
     fn call_scene_invalid_variable_expression() {
-        // 表达式解析失败的传参记录错误, 并回退默认表达式
+        // 表达式解析失败的传参记录错误, 并保留无效表达式占位符
         let s = "callScene:1.txt -hp=(;";
         let output = Sentence::from_str(s);
         assert!(!output.errors.is_empty());
@@ -1938,6 +1938,24 @@ mod tests {
                 );
             }
             _ => panic!("期望 CallSceneSentence"),
+        }
+    }
+
+    #[test]
+    fn set_variable_invalid_expression_is_not_number() {
+        let output = Sentence::from_str("setVar:value=([1,2,3,4]);");
+        assert!(!output.errors.is_empty());
+        match output.sentence {
+            Sentence::SetVariable(set_variable) => {
+                assert_eq!(
+                    set_variable
+                        .expression
+                        .1
+                        .infer_type(&expression::EmptyTypeContext),
+                    None
+                );
+            }
+            _ => panic!("期望 SetVariableSentence"),
         }
     }
 

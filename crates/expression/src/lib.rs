@@ -21,7 +21,7 @@ use std::str::FromStr;
 
 pub use error::{Error, EvaluationError, ParseError, ParseErrorKind, Result};
 pub use evaluate::{EmptyEvaluationContext, EvaluationContext};
-pub use parse::{EmptyTypeContext, Expression, TypeContext};
+pub use parse::{EmptyTypeContext, Expression, TypeContext, variables_of};
 pub use value::{Number, Value, ValueKind};
 
 mod error;

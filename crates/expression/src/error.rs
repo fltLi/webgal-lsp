@@ -73,6 +73,10 @@ pub enum ParseErrorKind {
 /// 求值错误
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum EvaluationError {
+    /// 表达式解析失败, 无法求值
+    #[error("表达式无效")]
+    InvalidExpression,
+
     /// 变量未定义
     #[error("变量 `{0}` 未定义")]
     UnknownVariable(String),

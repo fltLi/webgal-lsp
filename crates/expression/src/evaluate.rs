@@ -51,6 +51,7 @@ pub(crate) fn evaluate_ast(
         return Err(EvaluationError::RecursionLimit);
     }
     match expression {
+        Expr::Invalid => Err(EvaluationError::InvalidExpression),
         Expr::Number(number) => Ok(Value::Number(*number)),
         Expr::Bool(boolean) => Ok(Value::Bool(*boolean)),
         Expr::Str(string) => Ok(Value::String(string.clone())),
