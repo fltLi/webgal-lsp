@@ -9,7 +9,7 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button, Input, Switch } from '@fluentui/react-components';
-import { DocumentRegular, FolderOpenRegular, GlobeRegular, PersonRegular } from '@fluentui/react-icons';
+import { CodeRegular, DocumentRegular, FolderOpenRegular, GlobeRegular, PersonRegular } from '@fluentui/react-icons';
 import { useEffect, useState } from 'react';
 
 import { useAppStore, type SettingsCategory } from '../state/store';
@@ -161,17 +161,43 @@ export function SettingsDialog() {
             </div>
           )}
           {category === 'about' && (
-            <div className="settings-group">
-              <h3 className="settings-group-title">关于</h3>
-              <div className="settings-link-list">
-                {ABOUT_LINKS.map((link) => (
-                  <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
-                    {link.icon}
-                    {link.label}
-                  </button>
-                ))}
-              </div>
-              <p className="prompt-hint">WebGAL Ink — 轻量级 WebGAL 脚本编辑器</p>
+            <div className="settings-about">
+              <section className="settings-about-intro">
+                <div className="settings-about-mark" aria-hidden="true">
+                  <CodeRegular />
+                </div>
+                <div>
+                  <p className="settings-about-eyebrow">WEBGAL INK</p>
+                  <h3 className="settings-about-title">专注于创作的脚本编辑器</h3>
+                  <p className="settings-about-description">为 WebGAL 项目提供舒适的编写、预览与辅助工具集。</p>
+                </div>
+              </section>
+
+              <section className="settings-about-section">
+                <div className="settings-about-section-head">
+                  <h4>资源与支持</h4>
+                </div>
+                <div className="settings-link-list">
+                  {ABOUT_LINKS.map((link) => (
+                    <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
+                      <span className="settings-link-icon">{link.icon}</span>
+                      <span className="settings-link-copy">
+                        <strong>{link.label}</strong>
+                        <small>{link.url.replace('https://', '')}</small>
+                      </span>
+                      <span className="settings-link-arrow" aria-hidden="true">
+                        ↗
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <footer className="settings-about-footer">
+                <span>WebGAL Ink</span>
+                <span>© 2026 fltLi</span>
+                <span>MPL-2.0</span>
+              </footer>
             </div>
           )}
         </div>

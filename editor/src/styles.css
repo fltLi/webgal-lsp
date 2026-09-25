@@ -1069,37 +1069,176 @@ body.resizing {
   border-color: #f1707b;
 }
 
-/* 关于页链接 */
+.settings-about {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 100%;
+}
+
+.settings-about-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.settings-about-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-hover);
+  color: var(--app-accent);
+}
+
+.settings-about-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-about-eyebrow {
+  margin: 0 0 2px;
+  color: var(--app-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+
+.settings-about-title {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.settings-about-description {
+  margin: 6px 0 0;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-about-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-about-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-about-section-head h4 {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-about-section-head span {
+  color: var(--app-muted);
+  font-size: 11px;
+}
+
 .settings-link-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .settings-link-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  width: 100%;
   padding: 8px 10px;
-  border: none;
-  background: transparent;
+  border: 1px solid var(--app-border);
+  background: var(--app-panel);
   color: var(--app-fg);
-  font-size: 13px;
   cursor: pointer;
   border-radius: 4px;
   text-align: left;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
-.settings-link-item svg {
+.settings-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: var(--app-hover);
+  color: var(--app-accent);
+}
+
+.settings-link-icon svg {
   width: 15px;
   height: 15px;
-  flex: 0 0 auto;
-  color: var(--app-muted);
 }
 
 .settings-link-item:hover {
+  border-color: var(--app-accent);
   background: var(--app-hover);
+}
+
+.settings-link-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-link-copy strong {
+  overflow: hidden;
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-link-copy small {
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-link-arrow {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.settings-link-item:hover .settings-link-arrow {
   color: var(--app-accent);
+}
+
+.settings-about-footer {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--app-border);
+  color: var(--app-muted);
+  font-size: 11px;
 }
 
 /* -------- 模板管理 -------- */
