@@ -2,8 +2,36 @@
 <html lang="zh-Hans">
   <head>
     <meta charset="UTF-8" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <title>WebGAL Ink</title>
+    <script>
+      (() => {
+        const root = document.documentElement;
+        let preference = 'system';
+
+        try {
+          const raw = localStorage.getItem('webgal-ink.settings');
+          const settings = raw ? JSON.parse(raw) : null;
+          if (settings?.theme === 'light' || settings?.theme === 'dark') {
+            preference = settings.theme;
+          }
+        } catch {
+          // 使用系统主题作为启动阶段的回退。
+        }
+
+        const resolveTheme = () => {
+          const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const theme = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+          root.dataset.theme = theme;
+          document.querySelector('meta[name="color-scheme"]').content = theme;
+        };
+
+        resolveTheme();
+        if (preference === 'system') {
+          window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', resolveTheme);
+        }
+      })();
+    </script>
     <style>
       * {
         margin: 0;
@@ -11,15 +39,25 @@
         box-sizing: border-box;
       }
       body {
+        --splash-background: #f7f7f8;
+        --splash-foreground: #242424;
+        --splash-spinner-track: rgba(0, 0, 0, 0.12);
+        --splash-spinner: #2878d8;
         display: flex;
         align-items: center;
         justify-content: center;
         height: 100vh;
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: var(--splash-background);
+        color: var(--splash-foreground);
         font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
         overflow: hidden;
         user-select: none;
+      }
+      [data-theme='dark'] body {
+        --splash-background: #1e1e1e;
+        --splash-foreground: #d4d4d4;
+        --splash-spinner-track: rgba(255, 255, 255, 0.15);
+        --splash-spinner: #4f9cf9;
       }
       .wrap {
         text-align: center;
@@ -34,8 +72,8 @@
         width: 28px;
         height: 28px;
         margin: 0 auto;
-        border: 3px solid rgba(255, 255, 255, 0.15);
-        border-top-color: #4f9cf9;
+        border: 3px solid var(--splash-spinner-track);
+        border-top-color: var(--splash-spinner);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
