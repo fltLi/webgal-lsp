@@ -4,7 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import type { Diagnostic, Hover, InlayHint, Location, Range } from 'vscode-languageserver-types';
+// 与 WebGAL Ink 共用同一套代码块高亮桥接 (后端高亮 -> Monaco tokenizer): Monaco 渲染
+// hover / 补全文档里的 ```webgal 代码块时只认"语言注册的 tokenizer", 它不会自己把 LSP 的
+// semantic tokens 用到代码块上; WebGAL 的高亮只有后端一份, 这里只做转译。
+import { createCodeBlockHighlight } from '../../../editor/src/lsp/code-block-highlight';
 import type { WasmModule } from './wasm';
+
+// 代码块高亮桥接 (缓存跨 provider 重注册复用)
+const codeBlockHighlight = createCodeBlockHighlight();
 
 interface EditorProps {
   value: string;
@@ -97,9 +104,15 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
       });
     }
 
-    // 语义高亮
+    // 语义高亮 (token 类型名单由 wasm 后端给出, 代码块高亮也用它)
     const tokenTypes = wasm?.highlightTokenTypes?.() ?? [];
     const legend = { tokenTypes, tokenModifiers: [] };
+
+    // 文档代码块高亮 (hover 里的 ```webgal): Monaco 用 `tokenizeToString` 渲染代码块, 只认注册
+    // 过 tokenizer 的语言, 不会自己把 semantic tokens 用到代码块上 —— 这里注册读缓存的
+    // tokenizer, 缓存由后端高亮结果转译而来 (见 code-block-highlight.ts)
+    codeBlockHighlight.install(monaco, languageId);
+
     monaco.languages.registerDocumentSemanticTokensProvider(languageId, {
       getLegend: () => legend,
       provideDocumentSemanticTokens: () => {
@@ -143,7 +156,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
 
     // 悬浮文档
     monaco.languages.registerHoverProvider(languageId, {
-      provideHover: (_model, position) => {
+      provideHover: async (_model, position) => {
         if (!wasm) return null;
         try {
           const result = wasm.document(position.lineNumber - 1, position.column - 1) as Hover | null;
@@ -158,6 +171,10 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
           } else if (typeof contentsObj === 'string') {
             contents.push({ value: contentsObj });
           }
+
+          // 文档里的 ```webgal 代码块交给后端高亮并缓存 (Monaco 渲染代码块时才用同步 tokenizer
+          // 取色, 所以必须在返回前完成)
+          await codeBlockHighlight.prime(contents[0]?.value ?? '', tokenTypes, (text) => wasm.highlightText(text));
 
           let monacoRange: monaco.IRange | undefined;
           if (result.range) {

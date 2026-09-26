@@ -190,7 +190,7 @@ export function App() {
           WebGAL Parse Playground
           <span
             className="info-icon"
-            data-tooltip="此 Playground 仅提供高亮、悬浮文档和诊断功能，补全和格式化已禁用。"
+            data-tooltip="此 Playground 仅提供部分语言服务。"
             style={{
               display: 'inline-flex',
               alignItems: 'center',

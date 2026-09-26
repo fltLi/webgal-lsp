@@ -20,6 +20,7 @@ export interface WasmModule {
   highlightTokenTypes: () => string[];
   highlight: () => Uint32Array;
   highlightRange: (startLine: number, startCharacter: number, endLine: number, endCharacter: number) => Uint32Array;
+  highlightText: (text: string) => Uint32Array;
   complete: (line: number, character: number) => unknown[];
   format: () => unknown[];
 }
@@ -74,6 +75,15 @@ export function loadWasm(): Promise<WasmModule> {
       highlightRange: (startLine: number, startCharacter: number, endLine: number, endCharacter: number) => {
         if (!currentScene) return new Uint32Array();
         return currentScene.highlight_range(startLine, startCharacter, endLine, endCharacter);
+      },
+      // 为任意一段场景文本着色 (文档代码块): 用临时 Scene, 不影响编辑器当前的场景
+      highlightText: (text: string) => {
+        const scene = new Scene(text);
+        try {
+          return scene.highlight();
+        } finally {
+          scene.free();
+        }
       },
       complete: (line: number, character: number) => {
         if (!currentScene) return [];

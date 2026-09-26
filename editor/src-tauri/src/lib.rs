@@ -52,6 +52,7 @@ pub fn run() {
             service::git::git_file_changes,
             service::git::git_file_region,
             service::highlight::semantic_token_types,
+            service::highlight::highlight_scene_all,
             service::highlight::highlight_scene,
             service::lsp::start_server,
             service::preview::start_preview_server,

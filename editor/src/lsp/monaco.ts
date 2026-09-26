@@ -19,6 +19,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import { toUri } from '../lib/uri';
 import { useAppStore } from '../state/store';
+import { createCodeBlockHighlight } from './code-block-highlight';
 import {
   lspClient,
   type LspCompletionItem,
@@ -84,18 +85,34 @@ const FALLBACK_SEMANTIC_TOKEN_TYPES = [
 
 let semanticTokenTypes: string[] = FALLBACK_SEMANTIC_TOKEN_TYPES;
 
-async function loadSemanticTokenTypes(): Promise<void> {
+async function loadSemanticTokenTypes(): Promise<string[]> {
   try {
     const types = await invoke<string[]>('semantic_token_types');
     if (Array.isArray(types) && types.length > 0) semanticTokenTypes = types;
   } catch {
     // 后端未就绪时保留回退列表
   }
+  return semanticTokenTypes;
 }
 
 // 语义 token 图例 (全文与区间 provider 共用)
 function semanticTokenLegend(): { tokenTypes: string[]; tokenModifiers: string[] } {
   return { tokenTypes: semanticTokenTypes, tokenModifiers: [] };
+}
+
+// 文档代码块高亮 (后端高亮 -> Monaco tokenizer); 见 code-block-highlight.ts
+const codeBlockHighlight = createCodeBlockHighlight();
+
+/**
+ * 把 markdown 里所有 ```webgal 代码块交给后端高亮并缓存。
+ *
+ * 必须在返回 hover / 补全项**之前**完成: Monaco 渲染代码块用的是同步 tokenizer, 只会读缓存。
+ * `highlight_scene_all` 直接高亮整篇文本, 调用方无需自己算末行末列。
+ */
+async function primeDocCodeBlocks(markdown: string): Promise<void> {
+  await codeBlockHighlight.prime(markdown, semanticTokenTypes, (text) =>
+    invoke<number[]>('highlight_scene_all', { text })
+  );
 }
 
 const LSP_KIND_TO_MONACO: Record<number, monaco.languages.CompletionItemKind> = {
@@ -272,7 +289,7 @@ export function setupMonaco(): void {
   if (setupDone) return;
   setupDone = true;
 
-  // 异步拉取服务端语义 token 类型图例 (替换硬编码列表)。
+  // 服务端语义 token 类型图例 (唯一来源): 语义高亮图例与文档代码块高亮的 token 名都取自它。
   void loadSemanticTokenTypes();
 
   // 补全详情面板默认展开: Monaco 的 `expandSuggestionDocs` 存储标志默认 false,
@@ -314,6 +331,12 @@ export function setupMonaco(): void {
     ],
   });
 
+  // 文档代码块 (hover / 补全项的 ```webgal) 的高亮: Monaco 渲染代码块时走
+  // `tokenizeToString` -> `TokenizationRegistry.getOrCreate(languageId)`, 即只认"语言注册的
+  // tokenizer", 它不会自己消费 LSP 的 semantic tokens; 而 WebGAL 的高亮只有后端一份, 所以这里
+  // 注册一个读缓存的 tokenizer, 缓存内容由后端高亮结果转译而来 (见 code-block-highlight.ts)。
+  codeBlockHighlight.install(monaco, LANGUAGE_ID);
+
   // 语义高亮: 全文与区间两个 provider 都注册, 二者共用同一份 legend。
   //
   // Monaco (0.52.2) 的实际取舍: 全文 provider 一旦有回包, 该 model 就被标记为语义 token
@@ -326,16 +349,10 @@ export function setupMonaco(): void {
     provideDocumentSemanticTokens: async (model) => {
       const path = pathOfModel(model);
       try {
-        // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端单场景高亮, 传整篇区间
+        // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端整篇高亮
         const data = path
           ? await lspClient.semanticTokens(path)
-          : await invoke<number[]>('highlight_scene', {
-              text: model.getValue(),
-              startLine: 0,
-              startCharacter: 0,
-              endLine: model.getLineCount() - 1,
-              endCharacter: model.getLineMaxColumn(model.getLineCount()) - 1,
-            });
+          : await invoke<number[]>('highlight_scene_all', { text: model.getValue() });
         return { data: new Uint32Array(data ?? []) };
       } catch {
         return null;
@@ -413,7 +430,17 @@ export function setupMonaco(): void {
           character: position.column - 1,
         });
         if (!items || items.length === 0) return { suggestions: [] };
-        return { suggestions: items.map((item) => toCompletionItem(item, fallbackRange)) };
+        const suggestions = items.map((item) => toCompletionItem(item, fallbackRange));
+        // 补全项的文档里也有 ```webgal 代码块: 交给后端高亮并缓存, 之后 Monaco 渲染它们时
+        // 用同步 tokenizer 取色 (见 code-block-highlight.ts)
+        await Promise.all(
+          suggestions.map(async (item) => {
+            const documentation =
+              typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
+            if (documentation) await primeDocCodeBlocks(documentation);
+          })
+        );
+        return { suggestions };
       } catch {
         return { suggestions: [] };
       }
@@ -432,6 +459,9 @@ export function setupMonaco(): void {
         if (!hover || !hover.contents) return null;
         const text = hoverText(hover);
         if (!text.trim()) return null;
+        // 文档里的 ```webgal 代码块交给后端高亮并缓存 (Monaco 渲染代码块时才用同步 tokenizer
+        // 取色, 所以必须在返回前完成; 见 code-block-highlight.ts)
+        await primeDocCodeBlocks(text);
         return {
           range: hover.range
             ? toMonacoRange(hover.range)
