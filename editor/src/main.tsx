@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import * as monaco from 'monaco-editor';
 
 import App from './App';
+import { openDevtools } from './commands/devtools';
 import { setupMonaco } from './lsp/monaco';
 import { registerNovelLanguage } from './novel/monaco';
 import './styles.css';
@@ -12,6 +13,26 @@ import 'monaco-editor/min/vs/editor/editor.main.css';
 // 注册 Monaco 语言与 LSP providers (应用级, 只执行一次)
 setupMonaco();
 registerNovelLanguage(monaco);
+
+// 调试构建下 F12 打开开发者工具: 后端关掉了浏览器快捷键 (含 WebView2 自带的 F12),
+// 所以这里自己监听; 发布构建不注册, 开发者工具在后端就已是关闭状态。
+if (import.meta.env.DEV) {
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'F12') return;
+    event.preventDefault();
+    void openDevtools();
+  });
+}
+
+// 禁止把文件 / 链接拖进窗口: 没有这一层, WebView 会导航到被拖入的内容。
+// 场景 / 资源管理器自己的拖放目标会先 preventDefault, 这里放行它们 (见 browser.rs 的说明)。
+const blockDrop = (event: DragEvent) => {
+  if (event.defaultPrevented) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+};
+window.addEventListener('dragover', blockDrop);
+window.addEventListener('drop', blockDrop);
 
 // 注意: 不使用 React.StrictMode —— 与 Fluent UI v9 的弹层组件
 // (Dialog/Dropdown/Tooltip 的 portal 与动画) 存在已知的不兼容。

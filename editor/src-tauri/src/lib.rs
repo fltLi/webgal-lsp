@@ -1,9 +1,10 @@
 //! webgal-ink Tauri 后端入口。
 //!
-//! 提供三类能力:
+//! 提供四类能力:
 //! * LSP 传输: [`service::lsp::start_server`] 启动内置 WebGAL LSP 的 WebSocket 服务。
 //! * 实时预览: [`service::preview`] 启动本地静态服务器 + `/api/webgalsync` 网关。
 //! * 配音工作流: [`service::voice`] 管理 GPT-SoVITS 进程、角色库与音频处理。
+//! * 窗口外壳: [`service::browser`] 关闭 WebView 自带的右键菜单与浏览器快捷键。
 //!
 //! 应用退出时主动关闭 LSP 服务、预览服务器与 GSOV 进程, 避免后台任务阻塞退出。
 
@@ -22,10 +23,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        // 关掉 WebView 的浏览器外壳行为 (右键菜单 / 刷新 / 开发者工具 / F12 等, 见 service::browser)
+        .plugin(service::browser::plugin())
         .manage(LspState::default())
         .manage(Mutex::new(PreviewState::new()))
         .manage(Arc::new(VoiceState::default()))
         .invoke_handler(tauri::generate_handler![
+            service::browser::open_devtools,
             service::fs::copy_directory,
             service::fs::move_to_trash,
             service::game_config::read_game_config,
