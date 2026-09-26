@@ -20,6 +20,7 @@ export function AppConfirmDialog() {
       message={request.description}
       confirmLabel={request.confirmLabel}
       danger={request.danger}
+      info={request.info}
       onClose={() => resolveConfirm(false)}
       onConfirm={async () => {
         resolveConfirm(true);

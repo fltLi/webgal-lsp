@@ -2,14 +2,21 @@
 
 // 目录浏览组件: 每次只打开一层目录 (文件夹 + 文件), 不递归扫描子目录。
 // 进入子目录后才扫描该层; 支持返回上级、在当前目录内搜索、展平当前目录。
+//
+// 长目录**分页渲染**: 一次只挂前 PENDING_PAGE 行, 滚到底 (或点"加载更多") 再补一页。
+// 资源目录动辄上千个文件, 一次性渲染出来会卡住整个界面 —— 磁盘读取其实很快,
+// 卡的是几千个 DOM 节点加同样多的缩略图请求。
 
-import { ArrowUpRegular, MoreVerticalRegular } from '@fluentui/react-icons';
+import { ChevronRightRegular, FolderRegular, MoreVerticalRegular, ArrowUpRegular } from '@fluentui/react-icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { fs } from '../lib/fs';
 
 export type FileKind = 'image' | 'audio' | 'video' | 'text' | 'scene' | 'other';
+
+/** 一次渲染多少行; 滚到接近底部时再补一页 */
+export const FILE_TREE_PAGE_SIZE = 120;
 
 export interface FileNode {
   name: string;
@@ -160,6 +167,8 @@ export function FileTree({
   const [flatEntries, setFlatEntries] = useState<FileNode[] | null>(null);
   const [searchResults, setSearchResults] = useState<FileNode[] | null>(null);
   const [localRefreshKey, setLocalRefreshKey] = useState(0);
+  /** 当前渲染了多少行 (分页渲染, 见 FILE_TREE_PAGE_SIZE) */
+  const [visibleCount, setVisibleCount] = useState(FILE_TREE_PAGE_SIZE);
 
   const currentAbs = currentRel ? `${rootPath}\\${currentRel.replace(/\//g, '\\')}` : rootPath;
   const refreshVersion = refreshKey + localRefreshKey;
@@ -169,6 +178,15 @@ export function FileTree({
   }, [currentAbs, onDirectoryChange]);
 
   // 自动刷新: 监听当前目录变化并在新事件后重建列表；若当前目录被移动/删除则回退到最近存在的祖先目录。
+  /*
+   * 只有"展平/搜索"这两种视图才需要递归监听。
+   *
+   * 普通列表里只有本层的条目, 子目录内部的变化不会影响任何一行 (子目录行的名字只有在它
+   * 本身被改名/删除时才变, 那是本层事件); 而展平/搜索的结果**包含子目录里的文件**, 那才
+   * 需要递归。递归监听会把整棵子树的监视器都挂上 —— 资源目录动辄上千文件, 每进一次目录
+   * 都要重挂一遍, 正是"进目录卡一下"的来源。
+   */
+  const watchRecursively = flat || query.trim() !== '';
   useEffect(() => {
     let cancelled = false;
     let unwatch: (() => void) | null = null;
@@ -185,7 +203,7 @@ export function FileTree({
     void (async () => {
       try {
         unwatch = await import('@tauri-apps/plugin-fs').then(({ watch }) =>
-          watch([currentAbs], () => schedule(), { recursive: true, delayMs: 150 })
+          watch([currentAbs], () => schedule(), { recursive: watchRecursively, delayMs: 150 })
         );
       } catch {
         // 监听失败时直接忽略，交给外部手动刷新兜底。
@@ -197,7 +215,7 @@ export function FileTree({
       if (timer) clearTimeout(timer);
       if (unwatch) unwatch();
     };
-  }, [currentAbs]);
+  }, [currentAbs, watchRecursively]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,6 +306,11 @@ export function FileTree({
     setFlat(false);
   };
 
+  // 换目录 / 换视图 / 改搜索词时回到第一页 (内容刷新不重置, 见 onListScroll)
+  useEffect(() => {
+    setVisibleCount(FILE_TREE_PAGE_SIZE);
+  }, [currentAbs, query, flat]);
+
   const enterDir = (name: string) => {
     setCurrentRel((prev) => (prev ? `${prev}/${name}` : name));
     resetView();
@@ -310,6 +333,24 @@ export function FileTree({
   } else {
     list = dirEntries;
   }
+
+  const visibleList = list.slice(0, visibleCount);
+  const hasMore = list.length > visibleList.length;
+
+  const loadMore = () => setVisibleCount((count) => count + FILE_TREE_PAGE_SIZE);
+
+  /*
+   * 滚到接近底部就补一页。
+   *
+   * 不用 IntersectionObserver 是因为滚动容器就是列表自己 (`.file-tree-list`), 直接读
+   * scrollTop 最直白, 也少一层观察器生命周期; 列表不够长 (没得滚) 时靠底部的
+   * "加载更多"按钮兜底。
+   */
+  const onListScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (!hasMore) return;
+    const el = event.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore();
+  };
 
   // 展平/搜索时展示"从当前位置出发"的相对路径 (去掉从根到当前目录的前缀)
   const displayRel = (node: FileNode): string => {
@@ -422,6 +463,7 @@ export function FileTree({
   const listNode = (
     <div
       className="file-tree-list"
+      onScroll={onListScroll}
       onContextMenu={(event) => {
         event.preventDefault();
         if (onBlankContextMenu) onBlankContextMenu(currentAbs, event);
@@ -442,9 +484,9 @@ export function FileTree({
       {list.length === 0 ? (
         <span className="muted">{searchResults || flatEntries ? '无匹配项' : '空目录'}</span>
       ) : searchResults || flatEntries ? (
-        list.map(fileRow)
+        visibleList.map(fileRow)
       ) : (
-        list.map((node) =>
+        visibleList.map((node) =>
           node.isDirectory ? (
             <div
               key={node.path}
@@ -456,16 +498,30 @@ export function FileTree({
               }}
               title={node.rel}
             >
-              <span className="file-tree-arrow">▸</span>
+              <span className="file-tree-dir-icon" aria-hidden="true">
+                <FolderRegular />
+              </span>
               <span className="file-tree-dir-name" title={node.name}>
                 {middleEllipsis(node.name, 30)}
               </span>
+              <ChevronRightRegular className="file-tree-dir-chevron" />
             </div>
           ) : (
             fileRow(node)
           )
         )
       )}
+
+      {hasMore ? (
+        <div className="file-tree-more">
+          <span className="file-tree-more-count">
+            已显示 {visibleList.length} / {list.length}
+          </span>
+          <button type="button" className="file-tree-more-btn" onClick={loadMore}>
+            加载更多
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 

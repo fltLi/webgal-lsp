@@ -28,6 +28,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             service::fs::copy_directory,
             service::fs::move_to_trash,
+            service::game_config::read_game_config,
             service::git::git_status,
             service::git::git_init,
             service::git::git_set_identity,

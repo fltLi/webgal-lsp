@@ -6,7 +6,7 @@ import { create } from 'zustand';
 
 import type { CacheEntry, Character, GsvStatus } from '../commands/voice';
 import type { GitStatus } from '../commands/git';
-import { bindingKey, loadBindings, persistBindings, type ProjectBinding } from '../lib/bindings';
+import { loadBindings, persistBindings, withBinding, type ProjectBinding } from '../lib/bindings';
 import { loadSettings, saveSettings, type Settings, type ThemePreference } from '../lib/settings';
 import type { LivePreviewMarker } from '../preview/live-preview';
 import {
@@ -15,6 +15,7 @@ import {
   makeWorkbenchTab,
   VOICE_GUIDE_TAB_ID,
   WORKBENCH_TAB_ID,
+  type ConfigTab,
   type ResourceTab,
   type SceneTab,
   type WorkbenchTabItem,
@@ -46,7 +47,7 @@ export interface LspDiagnostic {
 
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
-export type SettingsCategory = 'general' | 'editor' | 'template' | 'about';
+export type SettingsCategory = 'editor' | 'engine' | 'template' | 'about';
 
 interface AppStore {
   settings: Settings;
@@ -167,7 +168,8 @@ interface AppStore {
 
   setTheme: (t: Exclude<ThemePreference, 'system'>) => void;
   updateSettings: (patch: Partial<Settings>) => void;
-  setProject: (path: string | null) => void;
+  /** 设置当前项目; `name` 为 config.txt 里的游戏名 (缺省时用目录名) */
+  setProject: (path: string | null, name?: string | null) => void;
   /** 设置项目绑定 (模板) 并持久化 */
   setProjectBinding: (projectPath: string, binding: ProjectBinding) => void;
 
@@ -274,7 +276,7 @@ export const useAppStore = create<AppStore>((set) => ({
   settingsOpen: false,
   unsavedDialog: false,
   confirmDialog: false,
-  settingsCategory: 'general',
+  settingsCategory: 'editor',
   previewReloadToken: 0,
 
   setTheme: (t) => set({ theme: t }),
@@ -288,14 +290,14 @@ export const useAppStore = create<AppStore>((set) => ({
       set({ livePreviewMarker: null });
     }
   },
-  setProject: (path) => {
+  setProject: (path, name) => {
     if (path) {
-      const name =
+      const fallback =
         path
           .replace(/[\\/]+$/, '')
           .split(/[\\/]/)
           .pop() ?? path;
-      set({ projectPath: path, projectName: name });
+      set({ projectPath: path, projectName: name?.trim() || fallback });
     } else {
       set({
         projectPath: null,
@@ -317,7 +319,7 @@ export const useAppStore = create<AppStore>((set) => ({
   },
   setProjectBinding: (projectPath, binding) =>
     set((s) => {
-      const projectBindings = { ...s.projectBindings, [bindingKey(projectPath)]: binding };
+      const projectBindings = withBinding(s.projectBindings, projectPath, binding);
       persistBindings(projectBindings);
       return { projectBindings };
     }),
@@ -597,6 +599,18 @@ export function activeResourceDocumentOf(state: AppStore): OpenDocument | null {
   const tab = activeResourceTabOf(state);
   if (!tab || tab.resourceKind !== 'text') return null;
   return state.documents.find((doc) => doc.path === tab.path) ?? null;
+}
+
+/** 当前活动的配置选项卡 (`game/config.txt`)。 */
+export function activeConfigTabOf(state: AppStore): ConfigTab | null {
+  const tab = activeTabOf(state);
+  return tab?.kind === 'config' ? tab : null;
+}
+
+/** 当前活动的配置文档。 */
+export function activeConfigDocumentOf(state: AppStore): OpenDocument | null {
+  const tab = activeConfigTabOf(state);
+  return tab ? (state.documents.find((doc) => doc.path === tab.path) ?? null) : null;
 }
 
 /** 项目内是否存在任何选项卡 */

@@ -125,6 +125,8 @@ export interface ConfirmDialogProps extends BaseDialogProps {
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  /** 信息提示模式: 只显示确认按钮 (没有可取消的动作) */
+  info?: boolean;
   onConfirm: () => Promise<string | null>;
 }
 
@@ -133,6 +135,7 @@ export function ConfirmDialog({
   message,
   confirmLabel = '确定',
   danger = false,
+  info = false,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
@@ -151,13 +154,15 @@ export function ConfirmDialog({
     <AppDialog
       title={title}
       size="small"
-      height={260}
+      height={info ? 220 : 260}
       onClose={onClose}
       footer={
         <>
-          <Button appearance="secondary" disabled={busy} onClick={onClose}>
-            取消
-          </Button>
+          {info ? null : (
+            <Button appearance="secondary" disabled={busy} onClick={onClose}>
+              取消
+            </Button>
+          )}
           <Button
             appearance="primary"
             className={danger ? 'danger-button' : undefined}

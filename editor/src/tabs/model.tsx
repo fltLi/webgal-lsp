@@ -10,11 +10,18 @@
 // 图标由**选项卡自身携带**: 控件只负责渲染, 不维护"种类 -> 图标"的映射表
 // (那种映射表会在新增种类时因为忘记登记而丢图标)。
 
-import { ArrowSwapRegular, BookQuestionMarkRegular, DocumentTextRegular, MicRegular } from '@fluentui/react-icons';
+import {
+  ArrowSwapRegular,
+  BookQuestionMarkRegular,
+  DocumentRegular,
+  DocumentTextRegular,
+  MicRegular,
+  WrenchRegular,
+} from '@fluentui/react-icons';
 import type { ReactNode } from 'react';
 
 /** 选项卡种类 */
-export type TabKind = 'scene' | 'resource' | 'novel' | 'diff' | 'voice-workbench' | 'guidance';
+export type TabKind = 'scene' | 'resource' | 'config' | 'novel' | 'diff' | 'voice-workbench' | 'guidance';
 
 export type ResourceKind = 'image' | 'audio' | 'video' | 'text';
 
@@ -47,6 +54,19 @@ export interface ResourceTab extends TabBase {
   resourceKind: ResourceKind;
 }
 
+/**
+ * 游戏配置选项卡 (`game/config.txt`)。
+ *
+ * 单独成为一种选项卡而不是当成普通文本资源: 它是**项目的配置**而不是一份素材, 与
+ * 资源浏览器里点开的 txt 不是一回事 —— 标题图标不同才能一眼认出"这条是配置"。
+ * 渲染仍然复用 Monaco (与文本资源同一条路径)。
+ */
+export interface ConfigTab extends TabBase {
+  kind: 'config';
+  path: string;
+  resourceKind: 'text';
+}
+
 /** 文本预处理选项卡 */
 export interface NovelTab extends TabBase {
   kind: 'novel';
@@ -72,7 +92,7 @@ export interface GuidanceTab extends TabBase {
   kind: 'guidance';
 }
 
-export type WorkbenchTabItem = SceneTab | ResourceTab | NovelTab | DiffTab | WorkbenchTab | GuidanceTab;
+export type WorkbenchTabItem = SceneTab | ResourceTab | ConfigTab | NovelTab | DiffTab | WorkbenchTab | GuidanceTab;
 
 export const WORKBENCH_TAB_ID = 'voice-workbench';
 export const VOICE_GUIDE_TAB_ID = 'voice-guide';
@@ -85,6 +105,11 @@ export function sceneTabId(path: string): string {
 /** 资源选项卡的稳定 id。 */
 export function resourceTabId(path: string): string {
   return `resource:${path}`;
+}
+
+/** 游戏配置选项卡的稳定 id (与资源选项卡区分开, 同一个文件两种选项卡不会互相顶掉)。 */
+export function configTabId(path: string): string {
+  return `config:${path}`;
 }
 
 /** 构造场景选项卡 */
@@ -105,9 +130,23 @@ export function makeResourceTab(path: string, name: string, resourceKind: Resour
     kind: 'resource',
     title: name,
     tooltip: path,
-    icon: <DocumentTextRegular />,
+    // 空白页图标: 中间不画内容, 与"带内容的文本页"(文本预处理) 一眼区分
+    icon: <DocumentRegular />,
     path,
     resourceKind,
+  };
+}
+
+/** 构造游戏配置选项卡 (`game/config.txt`)。 */
+export function makeConfigTab(path: string, name: string): ConfigTab {
+  return {
+    id: configTabId(path),
+    kind: 'config',
+    title: name,
+    tooltip: `${path}（项目配置）`,
+    icon: <WrenchRegular />,
+    path,
+    resourceKind: 'text',
   };
 }
 

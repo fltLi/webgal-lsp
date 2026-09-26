@@ -3,6 +3,8 @@
 // 快照打包进度/结果对话框: 打开时自动开始打包, 实时显示扫描与打包进度。
 
 import { Button } from '@fluentui/react-components';
+import { FolderOpenRegular } from '@fluentui/react-icons';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState } from 'react';
 
 import { packSnapshot, type SnapshotEvent, type SnapshotResult } from '../commands/snapshot';
@@ -146,9 +148,17 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
       closeOnBackdrop={phase === 'done'}
       onClose={onClose}
       footer={
-        <Button appearance="primary" disabled={phase !== 'done'} onClick={onClose}>
-          关闭
-        </Button>
+        <>
+          {/* 打包完成后最常见的下一步就是去看那个 zip: 指明路径还不够, 直接开文件夹 */}
+          {phase === 'done' && !result?.aborted ? (
+            <Button icon={<FolderOpenRegular />} onClick={() => void revealItemInDir(destination)}>
+              打开文件夹
+            </Button>
+          ) : null}
+          <Button appearance="primary" disabled={phase !== 'done'} onClick={onClose}>
+            关闭
+          </Button>
+        </>
       }
     >
       <p className="snapshot-destination" title={destination}>

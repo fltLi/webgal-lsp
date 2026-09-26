@@ -12,6 +12,7 @@ import { useRef, useState } from 'react';
 
 import { useAppStore, type WorkbenchTabItem } from '../state/store';
 import { dropIndicator, dropSlot, slotToIndex, type TabBox } from './dnd';
+import type { ConfigTab, SceneTab } from './model';
 import { FileBadges } from '../components/FileBadges';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
@@ -120,12 +121,12 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
             {renderLeadingAction?.(tab)}
 
             <span className="tab-strip-title">
-              {tab.kind === 'scene' && <SceneDirtyDot path={tab.path} />}
+              {isDocumentTab(tab) && <DocumentDirtyDot path={tab.path} />}
               {tab.icon && <span className="tab-strip-icon">{tab.icon}</span>}
               {tab.title}
               {tab.kind === 'voice-workbench' && <QueueBadge />}
             </span>
-            {tab.kind === 'scene' ? <FileBadges path={tab.path} /> : null}
+            {isDocumentTab(tab) ? <FileBadges path={tab.path} /> : null}
 
             <button
               type="button"
@@ -145,8 +146,18 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
   );
 }
 
-/** 场景选项卡的未保存标记 */
-function SceneDirtyDot({ path }: { path: string }) {
+/**
+ * 是否是"有对应文档"的选项卡 (场景与项目配置)。
+ *
+ * 这两类都要显示未保存标记与文件徽标 (git 更改); 资源媒体的选项卡没有可编辑文档,
+ * 文本预处理/差异页则各有各的状态显示。
+ */
+function isDocumentTab(tab: WorkbenchTabItem): tab is SceneTab | ConfigTab {
+  return tab.kind === 'scene' || tab.kind === 'config';
+}
+
+/** 场景/配置选项卡的未保存标记 */
+function DocumentDirtyDot({ path }: { path: string }) {
   const dirty = useAppStore((s) => s.documents.find((doc) => doc.path === path)?.dirty ?? false);
   return dirty ? <span className="tab-strip-dirty">●</span> : null;
 }

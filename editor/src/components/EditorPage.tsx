@@ -15,9 +15,6 @@ import {
   MicRegular,
   PanelLeftContractRegular,
   PanelLeftExpandRegular,
-  SettingsRegular,
-  WeatherMoonRegular,
-  WeatherSunnyRegular,
 } from '@fluentui/react-icons';
 import { useEffect, useRef, useState } from 'react';
 
@@ -25,6 +22,7 @@ import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status
 import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
 import {
+  activeConfigDocumentOf,
   activeSceneDocumentOf,
   activeResourceDocumentOf,
   activeResourceTabOf,
@@ -59,12 +57,12 @@ export function EditorPage() {
   const activeDoc = useAppStore(activeSceneDocumentOf);
   const activeResourceTab = useAppStore(activeResourceTabOf);
   const activeResourceDoc = useAppStore(activeResourceDocumentOf);
+  const activeConfigDoc = useAppStore(activeConfigDocumentOf);
   // 工作台是否打开由选项卡序列推导 (它就是一个普通选项卡, 没有独立开关)
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
   const activeTabId = useAppStore((s) => s.activeTabId);
   const voiceModePaths = useAppStore((s) => s.voiceModePaths);
   const voiceStatus = useAppStore((s) => s.voiceStatus);
-  const theme = useAppStore((s) => s.theme);
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project' | 'repository'>('scenes');
@@ -85,8 +83,6 @@ export function EditorPage() {
 
   const MIN_SIDEBAR = 280;
   const MAX_SIDEBAR = 760;
-
-  const toggleTheme = () => useAppStore.getState().updateSettings({ theme: theme === 'dark' ? 'light' : 'dark' });
 
   /** 开始拖拽分隔条 (指针捕获, 移动时调整侧栏宽度) */
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -191,6 +187,13 @@ export function EditorPage() {
         );
       case 'resource':
         return activeResourceTab ? <ResourceTab tab={activeResourceTab} document={activeResourceDoc} /> : null;
+      case 'config':
+        // 项目配置就是一份文本文件, 走与文本资源相同的编辑器, 只是选项卡带自己的图标
+        return activeConfigDoc ? (
+          <CodeEditor doc={activeConfigDoc} />
+        ) : (
+          <div className="editor-empty">正在读取项目配置…</div>
+        );
       default:
         return null;
     }
@@ -217,22 +220,6 @@ export function EditorPage() {
           onClick={onToggleVoiceWorkbench}
         />
         <Button appearance="subtle" icon={<ArchiveRegular />} title="生成快照" onClick={startSnapshot} />
-        <Button
-          appearance="subtle"
-          icon={theme === 'dark' ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
-          title="切换主题"
-          onClick={toggleTheme}
-        />
-        <Button
-          appearance="subtle"
-          icon={<SettingsRegular />}
-          title="设置"
-          onClick={() => {
-            const store = useAppStore.getState();
-            store.setSettingsCategory('general');
-            store.setSettingsOpen(true);
-          }}
-        />
       </div>
 
       <div className="editor-main">

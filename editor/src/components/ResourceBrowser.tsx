@@ -24,19 +24,22 @@ import {
   renamePath,
   validateName,
 } from '../fileops';
+import { requestAlert } from '../confirm';
+import { resolveProjectEngine } from '../lib/engine';
 import { fs } from '../lib/fs';
+import { samePath } from '../lib/paths';
 import { sniffKind } from '../lib/sniff';
 import { previewClient } from '../preview/client';
-import { openResourceFile } from '../project';
+import { configPathOf, openProjectConfig, openResourceFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
 import { FileTree, type FileKind, type FileNode } from './FileTree';
-import { ConfirmDialog, NameInputDialog } from './SceneFileDialogs';
+import { NameInputDialog } from './SceneFileDialogs';
 
 export function ResourceBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);
-  const settings = useAppStore((s) => s.settings);
+  const enginePath = useAppStore((s) => resolveProjectEngine(s.settings, s.projectBindings, s.projectPath)?.path);
   const activeResourcePath = useAppStore((s) => {
     const tab = s.tabs.find((item) => item.id === s.activeTabId);
     return tab?.kind === 'resource' ? tab.path : null;
@@ -48,7 +51,6 @@ export function ResourceBrowser() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [menu, setMenu] = useState<{ node: FileNode; x: number; y: number } | null>(null);
   const [prompt, setPrompt] = useState<{ mode: 'newFolder' | 'rename'; dir?: string; node?: FileNode } | null>(null);
-  const [deleting, setDeleting] = useState<FileNode | null>(null);
   const [openingResourcePath, setOpeningResourcePath] = useState<string | null>(null);
   const selectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearPreview = useCallback(() => setSelected(null), []);
@@ -63,13 +65,13 @@ export function ResourceBrowser() {
   useEffect(() => {
     if (!projectPath) return;
     let cancelled = false;
-    void previewClient.ensureSite(projectPath, settings.enginePath ?? undefined).then((url) => {
+    void previewClient.ensureSite(projectPath, enginePath).then((url) => {
       if (!cancelled) setAssetBase(url);
     });
     return () => {
       cancelled = true;
     };
-  }, [projectPath, settings.enginePath]);
+  }, [projectPath, enginePath]);
 
   useEffect(() => {
     setSelected(null);
@@ -122,6 +124,15 @@ export function ResourceBrowser() {
   const openResource = async (file: FileNode): Promise<void> => {
     if (selectTimer.current) clearTimeout(selectTimer.current);
     setOpeningResourcePath(file.path);
+    // 项目的 config.txt 走"配置选项卡", 免得同一个文件出现两种选项卡 (图标还不一样)
+    if (projectPath && samePath(file.path, configPathOf(projectPath))) {
+      try {
+        await openProjectConfig(projectPath);
+      } finally {
+        setOpeningResourcePath(null);
+      }
+      return;
+    }
     if (file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' || file.kind === 'text') {
       setSelected(file);
       try {
@@ -239,15 +250,19 @@ export function ResourceBrowser() {
     }
   };
 
-  const submitDelete = async (): Promise<string | null> => {
-    if (!deleting) return null;
+  /**
+   * 删除 (移入系统回收站), **不弹二次确认**。
+   *
+   * 与场景浏览器同一套规则: 菜单里的"删除"就是用户的决定, 删的是回收站, 恢复成本很低。
+   * 失败必须说出来 (文件被占用时删不掉), 走模态框而不是页内红字。
+   */
+  const removeEntry = async (node: FileNode) => {
     try {
-      await deletePath(deleting.path);
+      await deletePath(node.path);
       setRefreshKey((k) => k + 1);
-      setDeleting(null);
-      return null;
+      if (selected?.path === node.path) clearPreview();
     } catch (e) {
-      return String(e);
+      requestAlert('移入回收站失败', `${node.name}\n${String(e)}`);
     }
   };
 
@@ -360,10 +375,10 @@ export function ResourceBrowser() {
                   },
                   {
                     key: 'delete',
-                    label: '删除',
+                    label: '移入回收站',
                     icon: <DeleteRegular />,
                     danger: true,
-                    onClick: () => setDeleting(menu.node),
+                    onClick: () => void removeEntry(menu.node),
                   },
                 ]
           }
@@ -378,16 +393,6 @@ export function ResourceBrowser() {
           validate={validateTarget}
           onSubmit={submitPrompt}
           onClose={() => setPrompt(null)}
-        />
-      ) : null}
-      {deleting ? (
-        <ConfirmDialog
-          title="删除文件"
-          message={`确定要删除“${deleting.name}”吗？将移入回收站，可稍后恢复。`}
-          confirmLabel="删除"
-          danger
-          onConfirm={submitDelete}
-          onClose={() => setDeleting(null)}
         />
       ) : null}
     </div>

@@ -4,7 +4,7 @@
 
 import { fs } from './fs';
 import type { Settings, TemplateEntry } from './settings';
-import { bindingKey, type ProjectBinding } from './bindings';
+import { findBinding, type ProjectBinding } from './bindings';
 
 export interface TemplateValidation {
   valid: boolean;
@@ -94,7 +94,7 @@ export function resolveTemplate(
   bindings: Record<string, ProjectBinding>,
   projectPath: string
 ): TemplateEntry | null {
-  const binding = bindings[bindingKey(projectPath)];
+  const binding = findBinding(bindings, projectPath);
   if (binding?.templateId) {
     return settings.templates.find((t) => t.id === binding.templateId) ?? null;
   }

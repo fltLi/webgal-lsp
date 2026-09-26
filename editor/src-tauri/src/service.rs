@@ -1,4 +1,5 @@
 pub mod fs;
+pub mod game_config;
 pub mod git;
 pub mod highlight;
 pub mod lsp;

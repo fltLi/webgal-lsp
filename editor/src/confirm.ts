@@ -25,6 +25,13 @@ interface PendingConfirm {
   confirmLabel: string;
   /** 危险操作 (取消任务、丢弃内容) 的确认按钮用危险色 */
   danger?: boolean;
+  /**
+   * 只是"告诉用户一件事": 不显示取消按钮, 只有一个确认键。
+   *
+   * 失败提示走这里而不是在页面上插一行红字 —— 页面内容不该因为一次操作而变样
+   * (列表少一行、多一行错误都算), 提示应当是**盖在上面**的一层。
+   */
+  info?: boolean;
   /** 用户点确认后执行的动作 */
   action: () => void;
 }
@@ -35,6 +42,16 @@ let pending: PendingConfirm | null = null;
 export function requestConfirm(options: PendingConfirm): void {
   pending = options;
   useAppStore.getState().setConfirmDialog(true);
+}
+
+/**
+ * 提示一条信息 (如"打开项目失败")。
+ *
+ * 与 `requestConfirm` 共用同一个对话框与开关: 一次只可能有一个待处理请求, 分成两套
+ * 反而要维护"谁该盖在谁上面"。
+ */
+export function requestAlert(title: string, description: string): void {
+  requestConfirm({ title, description, confirmLabel: '知道了', info: true, action: () => {} });
 }
 
 /** 当前待确认的内容 (供对话框渲染) */

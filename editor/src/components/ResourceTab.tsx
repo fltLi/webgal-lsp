@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { projectRelativePath } from '../fileops';
+import { resolveProjectEngine } from '../lib/engine';
 import { previewClient } from '../preview/client';
 import { useAppStore, type OpenDocument } from '../state/store';
 import type { ResourceTab as ResourceTabModel } from '../tabs/model';
@@ -10,19 +11,21 @@ import { CodeEditor } from './CodeEditor';
 
 export function ResourceTab({ tab, document }: { tab: ResourceTabModel; document: OpenDocument | null }) {
   const projectPath = useAppStore((state) => state.projectPath);
-  const settings = useAppStore((state) => state.settings);
+  const enginePath = useAppStore(
+    (state) => resolveProjectEngine(state.settings, state.projectBindings, state.projectPath)?.path
+  );
   const [assetBase, setAssetBase] = useState<string | null>(null);
 
   useEffect(() => {
     if (tab.resourceKind === 'text' || !projectPath) return;
     let cancelled = false;
-    void previewClient.ensureSite(projectPath, settings.enginePath ?? undefined).then((url) => {
+    void previewClient.ensureSite(projectPath, enginePath).then((url) => {
       if (!cancelled) setAssetBase(url);
     });
     return () => {
       cancelled = true;
     };
-  }, [projectPath, settings.enginePath, tab.resourceKind]);
+  }, [projectPath, enginePath, tab.resourceKind]);
 
   if (tab.resourceKind === 'text') {
     return document ? <CodeEditor doc={document} /> : <div className="editor-empty">正在读取资源…</div>;

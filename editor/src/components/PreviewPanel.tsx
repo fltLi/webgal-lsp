@@ -9,6 +9,7 @@ import { Button, Switch } from '@fluentui/react-components';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState } from 'react';
 
+import { resolveProjectEngine } from '../lib/engine';
 import { previewClient } from '../preview/client';
 import { createPreviewOutputSettingsMessage } from '../preview/audio-bridge';
 import { createId } from '../preview/protocol';
@@ -19,6 +20,8 @@ const BOOTSTRAP_PROVIDE = 'webgal.preview.bootstrap.provide';
 
 export function PreviewPanel() {
   const projectPath = useAppStore((s) => s.projectPath);
+  // 项目用哪个引擎由"项目绑定 -> 引擎列表第一个"决定 (见 lib/engine.ts)
+  const enginePath = useAppStore((s) => resolveProjectEngine(s.settings, s.projectBindings, s.projectPath)?.path);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const previewReady = useAppStore((s) => s.previewReady);
@@ -74,7 +77,7 @@ export function PreviewPanel() {
     (async () => {
       try {
         previewClient.resetSite();
-        const url = await previewClient.ensureSite(projectPath, settings.enginePath ?? undefined);
+        const url = await previewClient.ensureSite(projectPath, enginePath);
         if (cancelled) return;
         if (url) {
           const id = createId();
@@ -91,7 +94,7 @@ export function PreviewPanel() {
     return () => {
       cancelled = true;
     };
-  }, [projectPath, settings.enginePath]);
+  }, [projectPath, enginePath]);
 
   // bootstrap 握手: 引擎在 iframe 内请求 embeddedLaunchId
   useEffect(() => {

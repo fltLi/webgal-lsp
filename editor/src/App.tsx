@@ -8,10 +8,13 @@ import { useEffect } from 'react';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { EditorPage } from './components/EditorPage';
 import { SettingsDialog } from './components/SettingsDialog';
+import { TitleBar } from './components/TitleBar';
 import { UnsavedDialog } from './components/UnsavedDialog';
 import { WelcomePage } from './components/WelcomePage';
 import { lspClient } from './lsp/client';
 import { setMonacoTheme } from './lsp/monaco';
+import { applyWindowMode } from './lib/window';
+import { startSessionTracking } from './project';
 import { useAppStore } from './state/store';
 import { confirmClose } from './unsaved';
 import { voiceController } from './voice/controller';
@@ -42,6 +45,11 @@ export default function App() {
     void lspClient.start();
   }, []);
 
+  // 持续记录每个项目打开过的场景选项卡, 下次打开时恢复 (见 project.ts)
+  useEffect(() => {
+    startSessionTracking();
+  }, []);
+
   // 启动时同步配音工作流状态: GSOV 进程状态、角色库与音频缓存
   useEffect(() => {
     void voiceController.initialize();
@@ -53,6 +61,11 @@ export default function App() {
     void main.show();
     void WebviewWindow.getByLabel('splashscreen').then((win) => win?.close());
   }, []);
+
+  // 开始界面用紧凑窗口, 打开项目后自动最大化 (见 lib/window.ts)
+  useEffect(() => {
+    void applyWindowMode(Boolean(projectPath));
+  }, [projectPath]);
 
   // 退出程序时如有未保存更改则弹窗确认
   useEffect(() => {
@@ -75,6 +88,8 @@ export default function App() {
 
   return (
     <FluentProvider theme={theme === 'dark' ? webDarkTheme : webLightTheme} className="app-root">
+      {/* 自绘标题栏: 开始界面与编辑界面共用 (原生标题栏已在 tauri.conf.json 关闭) */}
+      <TitleBar />
       {projectPath ? <EditorPage /> : <WelcomePage />}
       {/* 设置/未保存/通用确认对话框为应用级, 欢迎页与编辑页共用 */}
       <SettingsDialog />

@@ -5,6 +5,8 @@
 export interface ProjectBinding {
   /** 使用的模板 id (settings.templates 中的 id); 缺省时跟随引擎内置模板 */
   templateId?: string;
+  /** 使用的引擎 id (settings.engines 中的 id); 缺省时用引擎列表中的第一个 */
+  engineId?: string;
 }
 
 const STORAGE_KEY = 'webgal-ink.project-bindings';
@@ -12,6 +14,40 @@ const STORAGE_KEY = 'webgal-ink.project-bindings';
 /** 规范化项目路径作为绑定键 (Windows 大小写不敏感)。 */
 export function bindingKey(projectPath: string): string {
   return projectPath.replace(/\\/g, '/').replace(/^([a-zA-Z]):/, (_, d: string) => d.toUpperCase() + ':');
+}
+
+/**
+ * 查项目绑定。
+ *
+ * 键的规范化只统一了盘符大小写 (历史遗留), 因此这里再按大小写不敏感兜一层: 同一个项目
+ * 可能以 `C:\Proj\Game` 与 `c:\proj\game` 两种写法进来 (最近项目列表、命令行、拖拽),
+ * 只认规范键会让用户"明明绑定过却回到默认引擎"。
+ */
+export function findBinding(bindings: Record<string, ProjectBinding>, projectPath: string): ProjectBinding | undefined {
+  const key = bindingKey(projectPath);
+  const direct = bindings[key];
+  if (direct) return direct;
+  const lower = key.toLowerCase();
+  for (const [storedKey, value] of Object.entries(bindings)) {
+    if (storedKey.toLowerCase() === lower) return value;
+  }
+  return undefined;
+}
+
+/** 写入绑定: 顺带清掉同一个项目的大小写变体, 避免留下两份。 */
+export function withBinding(
+  bindings: Record<string, ProjectBinding>,
+  projectPath: string,
+  binding: ProjectBinding
+): Record<string, ProjectBinding> {
+  const key = bindingKey(projectPath);
+  const lower = key.toLowerCase();
+  const next: Record<string, ProjectBinding> = {};
+  for (const [storedKey, value] of Object.entries(bindings)) {
+    if (storedKey.toLowerCase() !== lower) next[storedKey] = value;
+  }
+  next[key] = binding;
+  return next;
 }
 
 export function loadBindings(): Record<string, ProjectBinding> {

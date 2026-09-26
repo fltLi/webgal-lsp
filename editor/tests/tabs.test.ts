@@ -8,7 +8,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { dropIndicator, dropSlot, slotToIndex, type TabBox } from '../src/tabs/dnd';
-import { makeDiffTab, makeNovelTab, makeSceneTab, makeWorkbenchTab } from '../src/tabs/model';
+import {
+  configTabId,
+  makeConfigTab,
+  makeDiffTab,
+  makeNovelTab,
+  makeResourceTab,
+  makeSceneTab,
+  makeWorkbenchTab,
+} from '../src/tabs/model';
 import { closeTab, insertTab, moveTab, removeTabsByKind } from '../src/tabs/order';
 
 const sceneA = makeSceneTab('C:/p/game/scene/a.txt', 'a.txt');
@@ -181,5 +189,27 @@ describe('拖拽落点', () => {
   it('空序列不产生落点', () => {
     expect(dropSlot([], 50)).toBeNull();
     expect(dropIndicator([], sceneA.id, 0)).toBeNull();
+  });
+});
+
+describe('配置选项卡', () => {
+  const configPath = 'C:/p/game/config.txt';
+  const config = makeConfigTab(configPath, 'config.txt');
+  const resource = makeResourceTab(configPath, 'config.txt', 'text');
+
+  it('是与资源选项卡不同的种类 (选项卡上才能有不同图标)', () => {
+    expect(config.kind).toBe('config');
+    expect(resource.kind).toBe('resource');
+    expect(config.icon).toBeTruthy();
+  });
+
+  it('与资源选项卡的 id 不同: 同一个文件不会互相顶掉', () => {
+    expect(config.id).toBe(configTabId(configPath));
+    expect(config.id).not.toBe(resource.id);
+  });
+
+  it('配置选项卡不会被"关闭某类选项卡"误伤', () => {
+    const tabs = [sceneA, config, resource];
+    expect(removeTabsByKind(tabs, 'resource').map((tab) => tab.kind)).toEqual(['scene', 'config']);
   });
 });

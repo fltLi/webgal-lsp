@@ -2,6 +2,9 @@
 
 // 用户设置持久化 (localStorage)。
 
+import { baseName } from './paths';
+import { normalizeRecentProjects, type RecentProject } from './recentProjects';
+
 export type ThemePreference = 'light' | 'dark' | 'system';
 
 /** 已添加的 WebGAL 模板 (引用式: 记录磁盘路径, 不复制)。 */
@@ -9,6 +12,23 @@ export interface TemplateEntry {
   id: string;
   name: string;
   /** template.json 中的模板编号, 用于识别项目当前模板。 */
+  manifestId?: string;
+  path: string;
+}
+
+/**
+ * 已添加的 WebGAL 引擎 (引用式: 记录磁盘路径, 不复制)。
+ *
+ * 多个引擎共存是刻意的: 不同项目可能锁不同版本的引擎, 而项目绑定 (见 `bindings.ts`)
+ * 记住每个项目用的是哪一个。没有绑定关系的项目用列表里的第一个。
+ */
+export interface EngineEntry {
+  id: string;
+  /** 引擎自述文件里的显示名 (`webgal-engine.json` 的 `name`), 缺省时是目录名 */
+  name: string;
+  /** WebGAL 运行时版本; 读不到自述文件时缺省 */
+  version?: string;
+  /** 自述文件里的引擎编号 (`id`), 用于识别同一个引擎的不同副本 */
   manifestId?: string;
   path: string;
 }
@@ -25,9 +45,9 @@ export interface Settings {
    * 若这里不留一份, 用户上一步刚静音、下一步刷新预览就又开始响了。
    */
   previewMuted: boolean;
-  /** 全局默认 WebGAL 引擎目录 (项目自带 index.html 时无需设置) */
-  enginePath: string | null;
-  recentProjects: string[];
+  /** 已添加的 WebGAL 引擎列表 (第一个是未绑定项目的默认引擎) */
+  engines: EngineEntry[];
+  recentProjects: RecentProject[];
   /** 已添加的模板列表 */
   templates: TemplateEntry[];
   // Monaco 编辑器
@@ -37,6 +57,14 @@ export interface Settings {
   editorMinimap: boolean;
 }
 
+/** v0.5.1 及以前的设置形状, 只用于读取老数据。 */
+interface LegacySettings {
+  /** 旧的"全局 WebGAL 引擎目录", 已改为引擎列表 */
+  enginePath?: string | null;
+  /** 旧的最近项目: 只有路径的字符串数组 */
+  recentProjects?: unknown;
+}
+
 const STORAGE_KEY = 'webgal-ink.settings';
 
 export const defaultSettings: Settings = {
@@ -44,7 +72,7 @@ export const defaultSettings: Settings = {
   autoSave: true,
   autoSyncPreview: true,
   previewMuted: false,
-  enginePath: null,
+  engines: [],
   recentProjects: [],
   templates: [],
   editorFontFamily: 'FiraCode, SourceHanSans, Consolas, "Courier New", monospace',
@@ -57,7 +85,7 @@ export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...defaultSettings };
-    return { ...defaultSettings, ...(JSON.parse(raw) as Partial<Settings>) };
+    return normalizeSettings(JSON.parse(raw) as Partial<Settings> & LegacySettings);
   } catch {
     return { ...defaultSettings };
   }
@@ -71,7 +99,38 @@ export function saveSettings(settings: Settings): void {
   }
 }
 
-export function pushRecentProject(settings: Settings, path: string): Settings {
-  const next = [path, ...settings.recentProjects.filter((p) => p !== path)].slice(0, 10);
-  return { ...settings, recentProjects: next };
+/**
+ * 把任意历史数据整理成当前形状的设置。
+ *
+ * 两处迁移:
+ * * `enginePath` (单个全局引擎目录) -> `engines` (列表), 名字取目录名, 版本留空;
+ * * `recentProjects` 由 `string[]` 升级为带元数据的对象数组 (见 `normalizeRecentProjects`)。
+ */
+export function normalizeSettings(raw: Partial<Settings> & LegacySettings): Settings {
+  const engines = Array.isArray(raw.engines) ? raw.engines.filter(isEngineEntry) : [];
+  const legacyPath = typeof raw.enginePath === 'string' ? raw.enginePath.trim() : '';
+  return {
+    ...defaultSettings,
+    ...raw,
+    engines: engines.length === 0 && legacyPath ? [legacyEngineEntry(legacyPath)] : engines,
+    recentProjects: normalizeRecentProjects(raw.recentProjects),
+    templates: Array.isArray(raw.templates) ? raw.templates.filter(isTemplateEntry) : [],
+  };
+}
+
+function isEngineEntry(value: unknown): value is EngineEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<EngineEntry>;
+  return typeof entry.id === 'string' && typeof entry.path === 'string' && typeof entry.name === 'string';
+}
+
+function isTemplateEntry(value: unknown): value is TemplateEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<TemplateEntry>;
+  return typeof entry.id === 'string' && typeof entry.path === 'string' && typeof entry.name === 'string';
+}
+
+/** 由旧的全局引擎目录造一个引擎条目 (版本未知, 交给"引擎"设置页重新探测)。 */
+function legacyEngineEntry(path: string): EngineEntry {
+  return { id: 'eng-legacy', name: baseName(path), path };
 }
