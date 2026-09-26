@@ -137,18 +137,23 @@ function toCompletionItem(item: LspCompletionItem, fallbackRange: monaco.IRange)
   const isSnippet = item.insertTextFormat === 2;
   const insertText = edit && 'newText' in edit ? edit.newText : (item.insertText ?? item.label);
   const range = edit && 'range' in edit ? toMonacoRange(edit.range) : fallbackRange;
-  // 服务端把"详细描述"放在 labelDetails.description, 映射到条目右部 (Monaco detail)
-  const detail = item.detail ?? item.labelDetails?.description ?? undefined;
+  const label = item.labelDetails
+    ? {
+        label: item.label,
+        detail: item.labelDetails.detail ?? undefined,
+        description: item.labelDetails.description ?? undefined,
+      }
+    : item.label;
   // 文档: 兼容字符串与 MarkupContent {kind, value}, 以 markdown 形式呈现
   const rawDoc = item.documentation;
   const docValue = typeof rawDoc === 'string' ? rawDoc : rawDoc?.value;
   return {
-    label: item.label,
+    label,
     kind:
       item.kind !== undefined
         ? (LSP_KIND_TO_MONACO[item.kind] ?? monaco.languages.CompletionItemKind.Text)
         : monaco.languages.CompletionItemKind.Text,
-    detail,
+    detail: item.detail,
     documentation: docValue ? { value: docValue, isTrusted: false } : undefined,
     insertText,
     insertTextRules: isSnippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
