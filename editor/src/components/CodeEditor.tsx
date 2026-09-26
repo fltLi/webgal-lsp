@@ -10,6 +10,7 @@ import { useEffect, useRef } from 'react';
 
 import { gitFileChanges, gitFileRegion } from '../commands/git';
 import { createDocumentSaver } from '../editor/document-saver';
+import { diffGutterMarks } from '../editor/diff-gutter';
 import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
 import { absToRel } from '../git/util';
 import { fs } from '../lib/fs';
@@ -316,21 +317,15 @@ export function CodeEditor({
         const current = store.documents.find((doc) => doc.path === path);
         const changes = await gitFileChanges(project, rel, current?.dirty ? model.getValue() : undefined);
         if (disposed) return;
-        const lineCount = model.getLineCount();
-        const cls: Record<string, string> = {
-          A: 'git-gutter-added',
-          M: 'git-gutter-modified',
-          D: 'git-gutter-deleted',
-        };
-        const decorations: monaco.editor.IModelDeltaDecoration[] = changes
-          .filter((c) => cls[c.kind])
-          .map((c) => {
-            const line = Math.min(Math.max(1, c.line), Math.max(1, lineCount));
-            return {
-              range: new monaco.Range(line, 1, line, 1),
-              options: { linesDecorationsClassName: cls[c.kind] },
-            };
-          });
+        // 区间取到行末: 自动换行时折叠区间只会落在折出来的第一行上 (见 diff-gutter.ts)
+        const decorations: monaco.editor.IModelDeltaDecoration[] = diffGutterMarks(
+          changes,
+          model.getLineCount(),
+          (line) => model.getLineMaxColumn(line)
+        ).map((mark) => ({
+          range: new monaco.Range(mark.lineNumber, 1, mark.lineNumber, mark.endColumn),
+          options: { linesDecorationsClassName: mark.className },
+        }));
         gutterDecorations.set(decorations);
       } catch {
         gutterDecorations.clear();
@@ -339,7 +334,7 @@ export function CodeEditor({
 
     const gitClickSub = editor.onMouseDown((e) => {
       const el = e.target.element as HTMLElement | null;
-      if (el && /git-gutter-(added|modified|deleted)/.test(el.className)) {
+      if (el && /diff-gutter-(added|modified|deleted)/.test(el.className)) {
         const store = useAppStore.getState();
         const project = store.projectPath;
         const rel = project ? absToRel(project, path) : '';

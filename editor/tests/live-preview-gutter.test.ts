@@ -172,7 +172,7 @@ describe('指示器的点击重跑', () => {
 
   it('点别处 (不是我们的图标) 不重跑', () => {
     const { emitMouseDown, onReplay } = setup(marker({ phase: 'failed' }));
-    emitMouseDown(mouseEvent('git-gutter-added'));
+    emitMouseDown(mouseEvent('diff-gutter-added'));
     expect(onReplay).not.toHaveBeenCalled();
   });
 });

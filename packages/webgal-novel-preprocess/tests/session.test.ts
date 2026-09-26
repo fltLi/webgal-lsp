@@ -136,4 +136,55 @@ describe('NovelSession', () => {
     expect(host.readOnly).toBe(false);
     expect(session.getState().text).toBe('; “你好。”\n%:你好。');
   });
+
+  it('第 2 步的差异基准是预处理后的文本', () => {
+    const host = new FakeHost();
+    const session = new NovelSession(host);
+    expect(session.getState().stepBaseline).toBeNull();
+
+    host.setContent('“你好。”\n今天天气不错。');
+    session.next(); // 1 -> 2
+    const baseline = '; “你好。”\n%:你好。\n; 今天天气不错。\n:今天天气不错。';
+    expect(session.getState().stepBaseline).toBe(baseline);
+    // 刚进来时没有改动 (基准就是编辑器里这份文本)
+    expect(session.getState().text).toBe(baseline);
+
+    // 第 2 步里手改文本不会改变基准 (基准是"本步开始时"的状态), 差异就是这次手改
+    host.setContent('; “你好。”\n%:你好呀。\n; 今天天气不错。\n:今天天气不错。');
+    expect(session.getState().stepBaseline).toBe(baseline);
+    expect(session.getState().text).toBe('; “你好。”\n%:你好呀。\n; 今天天气不错。\n:今天天气不错。');
+  });
+
+  it('第 3 步的差异基准是进入时的文本', () => {
+    const host = new FakeHost();
+    const session = new NovelSession(host);
+    host.setContent('“你好。”');
+    session.next(); // 1 -> 2
+    session.next(); // 2 -> 3
+    const baseline = session.getState().stepBaseline;
+    expect(baseline).toBe('; “你好。”\n%:你好。');
+    expect(session.getState().text).toBe(baseline);
+
+    // 分配说话者只改当前文本, 基准不动 (差异色块要显示的就是这次改动)
+    session.addSpeaker();
+    session.updateSpeaker('1', { name: '小明' });
+    host.emitCursor(1);
+    host.emitKey('1');
+    expect(session.getState().text).toBe('; “你好。”\n1-小明:你好。');
+    expect(session.getState().stepBaseline).toBe(baseline);
+  });
+
+  it('回到上一步改完再进来时, 基准按当时的文本重算', () => {
+    const host = new FakeHost();
+    const session = new NovelSession(host);
+    host.setContent('“你好。”');
+    session.next(); // 1 -> 2
+    session.next(); // 2 -> 3
+    session.back(); // 3 -> 2
+    expect(session.getState().stepBaseline).toBe('; “你好。”\n%:你好。');
+
+    host.setContent('; “你好。”\n%:你好。\n:补充一句。');
+    session.next(); // 2 -> 3
+    expect(session.getState().stepBaseline).toBe('; “你好。”\n%:你好。\n:补充一句。');
+  });
 });

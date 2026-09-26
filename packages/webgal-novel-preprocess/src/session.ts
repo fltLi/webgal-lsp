@@ -29,6 +29,11 @@ export interface SessionState {
   step: Step;
   /** 当前步骤对应的编辑器文本。 */
   text: string;
+  /**
+   * 进入本步时的文本, 用于显示"本步改了什么"的差异色块。
+   * 第 2、3 步都有 (第 2 步是预处理结果, 第 3 步是进入时序列化出的文本); 其余步骤为 null。
+   */
+  stepBaseline: string | null;
   speakers: Speaker[];
   warnings: Warning[];
   diagnostics: Diagnostic[];
@@ -51,6 +56,8 @@ export class NovelSession {
   private host: IEditorHost | null = null;
   private step: Step = 1;
   private texts: Record<Step, string> = { 1: '', 2: '', 3: '', 4: '' };
+  /** 各步开始时的文本 (只有需要显示"本步改动"的第 2、3 步会记录) */
+  private baselines: Partial<Record<Step, string>> = {};
   private model: DocumentModel | null = null;
   private speakers: Speaker[] = [];
   private warnings: Warning[] = [];
@@ -130,6 +137,7 @@ export class NovelSession {
     return {
       step: this.step,
       text: this.texts[this.step],
+      stepBaseline: this.baselines[this.step] ?? null,
       speakers: this.speakers,
       warnings: this.warnings,
       diagnostics: this.diagnostics,
@@ -190,6 +198,8 @@ export class NovelSession {
         const { intermediate, warnings } = preprocess(this.texts[1]);
         this.warnings = warnings;
         this.texts[2] = intermediate;
+        // 第 2 步的改动 = 自动处理的结果又被手动改成了什么
+        this.baselines[2] = intermediate;
         this.diagnostics = [];
         this.step = 2;
         this.syncHost();
@@ -204,6 +214,8 @@ export class NovelSession {
         if (model.lines.length === 0) break;
         this.model = model;
         this.texts[3] = serialize(model);
+        // 第 3 步的改动从"进入时的文本"算起 (之后每分配一个说话者都会改动它)
+        this.baselines[3] = this.texts[3];
         this.step = 3;
         // 进入分配步骤立即锁定第一个对话段 (无对话段则为 -1)。
         this.currentSegment = this.model.segments.length > 0 ? 0 : -1;

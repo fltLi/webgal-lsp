@@ -2803,34 +2803,34 @@ body.resizing {
   background: var(--app-bg);
 }
 
-/* 编辑器行内差异标记 */
-.git-gutter-added {
+/* 差异色块 (git 行内差异 / 文本预处理各步改动): 行号旁的竖条 */
+.diff-gutter-added {
   width: 3px !important;
   margin-left: 3px;
   background: #1a7f37;
 }
 
-[data-theme='dark'] .git-gutter-added {
+[data-theme='dark'] .diff-gutter-added {
   background: #3fb950;
 }
 
-.git-gutter-modified {
+.diff-gutter-modified {
   width: 3px !important;
   margin-left: 3px;
   background: #0a66c2;
 }
 
-[data-theme='dark'] .git-gutter-modified {
+[data-theme='dark'] .diff-gutter-modified {
   background: #4a9eff;
 }
 
-.git-gutter-deleted {
+.diff-gutter-deleted {
   width: 3px !important;
   margin-left: 3px;
   background: #d1242f;
 }
 
-[data-theme='dark'] .git-gutter-deleted {
+[data-theme='dark'] .diff-gutter-deleted {
   background: #f85149;
 }
 

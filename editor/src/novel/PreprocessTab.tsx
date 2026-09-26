@@ -8,6 +8,8 @@ import * as monaco from 'monaco-editor';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AppDialog } from '../components/AppDialog';
+import { diffGutterMarks } from '../editor/diff-gutter';
+import { diffLines } from '../editor/line-diff';
 import { LANGUAGE_ID as WEBGAL_LANGUAGE_ID } from '../lsp/monaco';
 import { useAppStore } from '../state/store';
 import { createEditorBlockEmphasisController } from './block-emphasis';
@@ -18,6 +20,7 @@ import { NovelSession, type SessionState, type Speaker, type Step } from 'webgal
 const EMPTY_STATE: SessionState = {
   step: 1,
   text: '',
+  stepBaseline: null,
   speakers: [],
   warnings: [],
   diagnostics: [],
@@ -111,8 +114,39 @@ export function PreprocessTab({ id }: { id: string }) {
         return { start: st.selectedHeadLine, end: st.selectedEndLine };
       },
     });
-    const unsubscribeSession = sess.subscribe(() => emphasis.sync());
+
+    /*
+     * 第 2 / 3 步的差异色块: 与该步开始时的文本比较。
+     *
+     * * 第 2 步看自动处理的结果又被手动改了什么 (基准是预处理结果);
+     * * 第 3 步看说话者分配改了什么 (基准是进入本步时的文本)。
+     * 基准由会话给出 (见 NovelSession 的 `stepBaseline`), 这里只负责算差异并画色块。
+     */
+    const diffDecorations = editor.createDecorationsCollection();
+    const syncDiff = () => {
+      const st = sess.getState();
+      const model = editor.getModel();
+      if (!model || st.stepBaseline === null || (st.step !== 2 && st.step !== 3)) {
+        diffDecorations.clear();
+        return;
+      }
+      const marks = diffGutterMarks(diffLines(st.stepBaseline, st.text), model.getLineCount(), (line) =>
+        model.getLineMaxColumn(line)
+      );
+      diffDecorations.set(
+        marks.map((mark) => ({
+          range: new monaco.Range(mark.lineNumber, 1, mark.lineNumber, mark.endColumn),
+          options: { linesDecorationsClassName: mark.className },
+        }))
+      );
+    };
+
+    const unsubscribeSession = sess.subscribe(() => {
+      emphasis.sync();
+      syncDiff();
+    });
     emphasis.sync();
+    syncDiff();
 
     // 状态栏光标位置同步 (带文档标识, 避免被别的卡继承)。
     // 预处理卡是"非文档"编辑器, 因此不进 `cursors` 留档表。
