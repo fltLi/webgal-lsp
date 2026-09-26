@@ -119,6 +119,28 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
       },
     });
 
+    // 区间语义高亮：全文高亮返回前先为可见区域上色（Monaco 在全文结果就绪后只用全文 provider）。
+    monaco.languages.registerDocumentRangeSemanticTokensProvider(languageId, {
+      getLegend: () => legend,
+      provideDocumentRangeSemanticTokens: (_model, range) => {
+        try {
+          const result = wasm?.highlightRange?.(
+            range.startLineNumber - 1,
+            range.startColumn - 1,
+            range.endLineNumber - 1,
+            range.endColumn - 1
+          );
+          if (!result || result.length === 0) {
+            return { data: new Uint32Array() };
+          }
+          return { data: result };
+        } catch (e) {
+          console.error('Highlight range error:', e);
+          return { data: new Uint32Array() };
+        }
+      },
+    });
+
     // 悬浮文档
     monaco.languages.registerHoverProvider(languageId, {
       provideHover: (_model, position) => {

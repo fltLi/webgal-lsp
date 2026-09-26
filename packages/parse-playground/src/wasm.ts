@@ -19,6 +19,7 @@ export interface WasmModule {
   definition: (line: number, character: number) => unknown[];
   highlightTokenTypes: () => string[];
   highlight: () => Uint32Array;
+  highlightRange: (startLine: number, startCharacter: number, endLine: number, endCharacter: number) => Uint32Array;
   complete: (line: number, character: number) => unknown[];
   format: () => unknown[];
 }
@@ -69,6 +70,10 @@ export function loadWasm(): Promise<WasmModule> {
       highlight: () => {
         if (!currentScene) return new Uint32Array();
         return currentScene.highlight();
+      },
+      highlightRange: (startLine: number, startCharacter: number, endLine: number, endCharacter: number) => {
+        if (!currentScene) return new Uint32Array();
+        return currentScene.highlight_range(startLine, startCharacter, endLine, endCharacter);
       },
       complete: (line: number, character: number) => {
         if (!currentScene) return [];

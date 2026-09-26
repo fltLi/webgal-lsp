@@ -825,7 +825,7 @@ impl LanguageServer for Backend {
                 }
             };
 
-            // 生成补全
+            // 生成高亮
             info!(project = %project_path, %path, "Highlight scene");
             let mut tokens = highlight(scene);
             highlights_utf8_to_utf16(scene, &mut tokens);
@@ -836,6 +836,66 @@ impl LanguageServer for Backend {
 
         Ok(tokens.map(|tokens| {
             SemanticTokensResult::Tokens(SemanticTokens {
+                data: tokens,
+                ..Default::default()
+            })
+        }))
+    }
+
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> jsonrpc::Result<Option<SemanticTokensRangeResult>> {
+        if !self.options.highlight_capability {
+            warn!("Highlighting range capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Highlighting range requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let tokens = spawn_blocking(move || {
+            // 校验路径
+            let (kind, path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Highlighting range skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %path, "Scene not found for highlighting range");
+                    return None;
+                }
+            };
+
+            // 生成高亮
+            info!(project = %project_path, %path, "Highlight range scene");
+            let span = range_utf16_to_utf8(scene, params.range);
+            let mut tokens = highlight_range(scene, span);
+            highlights_utf8_to_utf16(scene, &mut tokens);
+            Some(tokens)
+        })
+        .await
+        .unwrap();
+
+        Ok(tokens.map(|tokens| {
+            SemanticTokensRangeResult::Tokens(SemanticTokens {
                 data: tokens,
                 ..Default::default()
             })
@@ -883,8 +943,8 @@ impl LanguageServer for Backend {
 
             // 生成补全
             info!(project = %project_path, %path, "Inlay hinting scene");
-            let range = range_utf16_to_utf8(scene, params.range);
-            let mut hints = inlay_hint(path, range, &project)?;
+            let span = range_utf16_to_utf8(scene, params.range);
+            let mut hints = inlay_hint(path, span, &project)?;
             inlay_hints_utf8_to_utf16(scene, &mut hints);
             Some(hints)
         })

@@ -94,18 +94,36 @@ impl Scene {
         let mut tokens = highlight(&self);
         highlights_utf8_to_utf16(&self, &mut tokens);
 
-        tokens
-            .into_iter()
-            .flat_map(|token| {
-                [
-                    token.delta_line,
-                    token.delta_start,
-                    token.length,
-                    token.token_type,
-                    token.token_modifiers_bitset,
-                ]
-            })
-            .collect()
+        flatten_highlights(tokens)
+    }
+
+    /// 提供局部场景高亮
+    ///
+    /// 区间为 UTF-16 行列 (与 Monaco 一致), 返回格式同 [`Scene::highlight`].
+    pub fn highlight_range(
+        &self,
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+    ) -> Vec<u32> {
+        let span = range_utf16_to_utf8(
+            &self,
+            Range {
+                start: Position {
+                    line: start_line,
+                    character: start_character,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_character,
+                },
+            },
+        );
+        let mut tokens = highlight_range(&self, span);
+        highlights_utf8_to_utf16(&self, &mut tokens);
+
+        flatten_highlights(tokens)
     }
 
     pub fn inlay_hint(&self) -> Vec<JsValue> {
@@ -158,6 +176,21 @@ impl Deref for Scene {
 }
 
 // -------- util --------
+
+fn flatten_highlights(tokens: Vec<SemanticToken>) -> Vec<u32> {
+    tokens
+        .into_iter()
+        .flat_map(|token| {
+            [
+                token.delta_line,
+                token.delta_start,
+                token.length,
+                token.token_type,
+                token.token_modifiers_bitset,
+            ]
+        })
+        .collect()
+}
 
 fn serialize<T: Serialize>(value: T) -> JsValue {
     serde_wasm_bindgen::to_value(&value).unwrap()

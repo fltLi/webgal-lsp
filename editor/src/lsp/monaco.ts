@@ -93,6 +93,11 @@ async function loadSemanticTokenTypes(): Promise<void> {
   }
 }
 
+// 语义 token 图例 (全文与区间 provider 共用)
+function semanticTokenLegend(): { tokenTypes: string[]; tokenModifiers: string[] } {
+  return { tokenTypes: semanticTokenTypes, tokenModifiers: [] };
+}
+
 const LSP_KIND_TO_MONACO: Record<number, monaco.languages.CompletionItemKind> = {
   1: monaco.languages.CompletionItemKind.Text,
   2: monaco.languages.CompletionItemKind.Method,
@@ -309,29 +314,66 @@ export function setupMonaco(): void {
     ],
   });
 
+  // 语义高亮: 全文与区间两个 provider 都注册, 二者共用同一份 legend。
+  //
+  // Monaco (0.52.2) 的实际取舍: 全文 provider 一旦有回包, 该 model 就被标记为语义 token
+  // "已完成" (documentSemanticTokens.js:336 `setSemanticTokens(result, true)`; 返回 null 时同文件
+  // 265 行同样标记为 true), 之后区间 provider 不再被调用 —— viewportSemanticTokens.js:89 与
+  // tokenizationTextModelPart.js:185 都先判定 hasCompleteSemanticTokens()。
+  // 即当前生效的是全文 provider (整篇与缩略图都有色), 区间 provider 在本版本 Monaco 下不会被触发。
   monaco.languages.registerDocumentSemanticTokensProvider(LANGUAGE_ID, {
-    getLegend: () => ({ tokenTypes: semanticTokenTypes, tokenModifiers: [] }),
+    getLegend: semanticTokenLegend,
     provideDocumentSemanticTokens: async (model) => {
       const path = pathOfModel(model);
-      if (!path) {
-        // 内存文档 (如文本预处理生成的脚本): 调用后端单场景高亮。
-        try {
-          const data = await invoke<number[]>('highlight_scene', { text: model.getValue() });
-          if (!data || data.length === 0) return null;
-          return { data: new Uint32Array(data) };
-        } catch {
-          return null;
-        }
-      }
       try {
-        const data = await lspClient.semanticTokens(path);
-        if (!data || data.length === 0) return null;
-        return { data: new Uint32Array(data) };
+        // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端单场景高亮, 传整篇区间
+        const data = path
+          ? await lspClient.semanticTokens(path)
+          : await invoke<number[]>('highlight_scene', {
+              text: model.getValue(),
+              startLine: 0,
+              startCharacter: 0,
+              endLine: model.getLineCount() - 1,
+              endCharacter: model.getLineMaxColumn(model.getLineCount()) - 1,
+            });
+        return { data: new Uint32Array(data ?? []) };
       } catch {
         return null;
       }
     },
+    // 无 resultId (不使用 delta 协议), 无需释放
     releaseDocumentSemanticTokens: () => {},
+  });
+
+  monaco.languages.registerDocumentRangeSemanticTokensProvider(LANGUAGE_ID, {
+    getLegend: semanticTokenLegend,
+    provideDocumentRangeSemanticTokens: async (model, range) => {
+      // Monaco 行列从 1 开始, LSP 从 0 开始
+      const startLine = range.startLineNumber - 1;
+      const startCharacter = range.startColumn - 1;
+      const endLine = range.endLineNumber - 1;
+      const endCharacter = range.endColumn - 1;
+      const path = pathOfModel(model);
+      try {
+        // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端单场景高亮。
+        const data = path
+          ? await lspClient.semanticTokensRange(path, {
+              start: { line: startLine, character: startCharacter },
+              end: { line: endLine, character: endCharacter },
+            })
+          : await invoke<number[]>('highlight_scene', {
+              text: model.getValue(),
+              startLine,
+              startCharacter,
+              endLine,
+              endCharacter,
+            });
+        // 空结果也要提交: Monaco 会据此清掉该区间上一次的高亮
+        return { data: new Uint32Array(data ?? []) };
+      } catch {
+        return null;
+      }
+    },
   });
 
   monaco.languages.registerInlayHintsProvider(LANGUAGE_ID, {

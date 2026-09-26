@@ -539,6 +539,15 @@ class LspClient {
     return null;
   }
 
+  async semanticTokensRange(path: string, range: LspRange): Promise<number[] | null> {
+    const r = await this.sendRequest('textDocument/semanticTokens/range', {
+      textDocument: { uri: toUri(path) },
+      range,
+    });
+    if (r && typeof r === 'object' && 'data' in r) return (r as { data: number[] }).data;
+    return null;
+  }
+
   async inlayHints(path: string, range: LspRange): Promise<LspInlayHint[] | null> {
     const r = await this.sendRequest('textDocument/inlayHint', {
       textDocument: { uri: toUri(path) },

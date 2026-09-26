@@ -2,13 +2,14 @@
 
 //! 单场景语义高亮后端: 供文本预处理生成的脚本复用 WebGAL 高亮。
 
+use lsp_types::{Position, Range};
 use webgal_language_core::sentence::Scene;
 use webgal_language_service::{
-    encode::highlights_utf8_to_utf16,
-    service::{highlight, token_types},
+    encode::{highlights_utf8_to_utf16, range_utf16_to_utf8},
+    service::{highlight_range, token_types},
 };
 
-/// 语义 token 类型图例 (与 Monaco `registerDocumentSemanticTokensProvider` 的 legend 对应)。
+/// 语义 token 类型图例 (与 Monaco 语义高亮 provider 的 legend 对应)。
 #[tauri::command]
 pub fn semantic_token_types() -> Vec<String> {
     token_types()
@@ -17,14 +18,35 @@ pub fn semantic_token_types() -> Vec<String> {
         .collect()
 }
 
-/// 渲染单场景高亮。
+/// 渲染单场景指定区间的高亮。
 ///
-/// 返回扁平化的 `[delta_line, delta_start, length, token_type, token_modifiers_bitset]`
+/// 区间为 UTF-16 行列 (与 Monaco 一致), 返回扁平化的
+/// `[delta_line, delta_start, length, token_type, token_modifiers_bitset]`
 /// 数组, 偏移已转换为 UTF-16 (匹配 Monaco 列号)。
+/// 传入整篇区间即为全文高亮 (与 `Scene::highlight` 等价): 末行不按 `end_character` 截断。
 #[tauri::command]
-pub fn highlight_scene(text: String) -> Vec<u32> {
+pub fn highlight_scene(
+    text: String,
+    start_line: u32,
+    start_character: u32,
+    end_line: u32,
+    end_character: u32,
+) -> Vec<u32> {
     let scene = Scene::from_str(text.as_str());
-    let mut tokens = highlight(&scene);
+    let span = range_utf16_to_utf8(
+        &scene,
+        Range {
+            start: Position {
+                line: start_line,
+                character: start_character,
+            },
+            end: Position {
+                line: end_line,
+                character: end_character,
+            },
+        },
+    );
+    let mut tokens = highlight_range(&scene, span);
     highlights_utf8_to_utf16(&scene, &mut tokens);
 
     tokens
