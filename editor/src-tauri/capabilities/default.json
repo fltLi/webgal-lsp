@@ -16,6 +16,7 @@
     "core:window:allow-unmaximize",
     "core:window:allow-set-size",
     "core:window:allow-center",
+    "core:window:allow-set-fullscreen",
     "opener:default",
     "dialog:default",
     "fs:default",
