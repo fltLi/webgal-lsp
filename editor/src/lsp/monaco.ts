@@ -512,6 +512,27 @@ export function setupMonaco(): void {
     },
   });
 
+  // 资源文档链接: 语句中指向项目内文件的资源路径 (由后端勾画, 缺失资源不生成链接)。
+  // 点击后的打开动作由 link-opener.ts 注册。
+  monaco.languages.registerLinkProvider(LANGUAGE_ID, {
+    provideLinks: async (model) => {
+      const path = pathOfModel(model);
+      if (!path) return { links: [] };
+      try {
+        const links = await lspClient.documentLinks(path);
+        return {
+          links: (links ?? []).map((link) => ({
+            range: toMonacoRange(link.range),
+            url: link.target ? monaco.Uri.parse(link.target) : undefined,
+            tooltip: link.tooltip,
+          })),
+        };
+      } catch {
+        return { links: [] };
+      }
+    },
+  });
+
   monaco.languages.registerDocumentFormattingEditProvider(LANGUAGE_ID, {
     provideDocumentFormattingEdits: async (model) => {
       const path = pathOfModel(model);

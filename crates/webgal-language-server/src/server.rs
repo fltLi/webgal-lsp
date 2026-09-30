@@ -41,6 +41,8 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     references_capability: bool,
     #[getset(set_with = "pub")]
+    document_link_capability: bool,
+    #[getset(set_with = "pub")]
     hover_capability: bool,
     #[getset(set_with = "pub")]
     highlight_capability: bool,
@@ -71,6 +73,7 @@ impl Default for BackendBuilder {
             diagnose_capability: true,
             definition_capability: true,
             references_capability: true,
+            document_link_capability: true,
             hover_capability: true,
             highlight_capability: true,
             inlay_hint_capability: true,
@@ -353,14 +356,18 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
-            references_provider: self
-                .options
-                .references_capability
-                .then(references_capability),
             definition_provider: self
                 .options
                 .definition_capability
                 .then(definition_capability),
+            references_provider: self
+                .options
+                .references_capability
+                .then(references_capability),
+            document_link_provider: self
+                .options
+                .document_link_capability
+                .then(document_link_capability),
             hover_provider: self.options.hover_capability.then(document_capability),
             semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
             inlay_hint_provider: self
@@ -725,6 +732,60 @@ impl LanguageServer for Backend {
         .unwrap();
 
         Ok(references)
+    }
+
+    async fn document_link(
+        &self,
+        params: DocumentLinkParams,
+    ) -> jsonrpc::Result<Option<Vec<DocumentLink>>> {
+        if !self.options.document_link_capability {
+            warn!("Document link capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Document links requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let links = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Document links skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for document links");
+                    return None;
+                }
+            };
+
+            // 收集资源链接
+            info!(project = %project_path, %scene_path, "Collecting document links");
+            let mut links = document_links(scene_path, &project)?.to_links(&project_path);
+            document_links_utf8_to_utf16(scene, &mut links);
+            Some(links)
+        })
+        .await
+        .unwrap();
+
+        Ok(links)
     }
 
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {

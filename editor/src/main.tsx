@@ -5,6 +5,7 @@ import * as monaco from 'monaco-editor';
 
 import App from './App';
 import { openDevtools } from './commands/devtools';
+import { registerLinkOpener } from './lsp/link-opener';
 import { setupMonaco } from './lsp/monaco';
 import { registerNovelLanguage } from './novel/monaco';
 import './styles.css';
@@ -13,6 +14,8 @@ import 'monaco-editor/min/vs/editor/editor.main.css';
 // 注册 Monaco 语言与 LSP providers (应用级, 只执行一次)
 setupMonaco();
 registerNovelLanguage(monaco);
+// 文档链接 / 转到定义的目标资源交给编辑器标签页打开
+registerLinkOpener();
 
 // 调试构建下 F12 打开开发者工具: 后端关掉了浏览器快捷键 (含 WebView2 自带的 F12),
 // 所以这里自己监听; 发布构建不注册, 开发者工具在后端就已是关闭状态。

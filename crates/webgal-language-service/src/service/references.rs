@@ -5,8 +5,11 @@ use crate::{
     service::references::{collect::*, recognize::*},
 };
 
+pub use resource::*;
+
 mod collect;
 mod recognize;
+mod resource;
 
 // TODO: 可能的优化, 先尝试获取变量名并在变量表查找, 失败时再回退到遍历变量表
 // TODO: 变量表遍历定位使用二分查找进行优化

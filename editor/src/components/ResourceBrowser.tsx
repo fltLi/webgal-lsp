@@ -34,8 +34,9 @@ import { configPathOf, openProjectConfig, openResourceFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
-import { FileTree, type FileKind, type FileNode } from './FileTree';
+import { FileTree, type FileNode } from './FileTree';
 import { NameInputDialog } from './SceneFileDialogs';
+import type { FileKind } from '../lib/fileKind';
 
 export function ResourceBrowser() {
   const projectPath = useAppStore((s) => s.projectPath);

@@ -2,7 +2,7 @@
 
 // 资源类型探测: 通过文件头魔数 (magic bytes) 判断实际类型, 不只看扩展名。
 
-import type { FileKind } from '../components/FileTree';
+import type { FileKind } from './fileKind';
 
 function ascii(bytes: Uint8Array, start: number, len: number): string {
   return String.fromCharCode(...bytes.subarray(start, start + len));

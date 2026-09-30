@@ -61,6 +61,13 @@ export interface LspLocation {
   range: LspRange;
 }
 
+export interface LspDocumentLink {
+  range: LspRange;
+  /** 链接目标 URI (无法解析时可能缺省) */
+  target?: string;
+  tooltip?: string;
+}
+
 export interface LspCompletionItem {
   label: string;
   kind?: number;
@@ -581,6 +588,13 @@ class LspClient {
     if (Array.isArray(r)) return r as LspLocation[];
     if (r && typeof r === 'object' && 'uri' in r) return [r as LspLocation];
     return null;
+  }
+
+  async documentLinks(path: string): Promise<LspDocumentLink[] | null> {
+    const r = await this.sendRequest('textDocument/documentLink', {
+      textDocument: { uri: toUri(path) },
+    });
+    return (r as LspDocumentLink[] | null) ?? null;
   }
 }
 

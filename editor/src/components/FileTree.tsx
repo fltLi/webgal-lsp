@@ -12,8 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { fs } from '../lib/fs';
-
-export type FileKind = 'image' | 'audio' | 'video' | 'text' | 'scene' | 'other';
+import { JSON_EXT, kindFor, type FileKind } from '../lib/fileKind';
 
 /** 一次渲染多少行; 滚到接近底部时再补一页 */
 export const FILE_TREE_PAGE_SIZE = 120;
@@ -24,46 +23,6 @@ export interface FileNode {
   rel: string;
   isDirectory: boolean;
   kind: FileKind;
-}
-
-const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
-const AUDIO_EXT = ['mp3', 'ogg', 'wav', 'flac', 'm4a', 'aac'];
-const VIDEO_EXT = ['mp4', 'webm', 'ogv', 'mov'];
-const JSON_EXT = ['json', 'jsonl', 'jsonc', 'json5', 'geojson', 'webmanifest', 'har', 'map', 'wmdl'];
-const TEXT_EXT = [
-  ...JSON_EXT,
-  'txt',
-  'js',
-  'jsx',
-  'mjs',
-  'cjs',
-  'css',
-  'scss',
-  'less',
-  'html',
-  'htm',
-  'csv',
-  'md',
-  'markdown',
-  'ts',
-  'tsx',
-  'xml',
-  'yaml',
-  'yml',
-  'ini',
-  'conf',
-  'toml',
-  'sql',
-];
-
-export function kindFor(name: string): FileKind {
-  const i = name.lastIndexOf('.');
-  const e = i < 0 ? '' : name.slice(i + 1).toLowerCase();
-  if (IMAGE_EXT.includes(e)) return 'image';
-  if (AUDIO_EXT.includes(e)) return 'audio';
-  if (VIDEO_EXT.includes(e)) return 'video';
-  if (TEXT_EXT.includes(e)) return 'text';
-  return 'other';
 }
 
 /** 长名称中间省略: 保留开头与扩展名后缀。 */
