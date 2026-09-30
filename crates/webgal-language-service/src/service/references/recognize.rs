@@ -106,49 +106,6 @@ pub fn recognize_ident<'a>(
     }
 }
 
-/// 语句中可能承载标识符的位置
-///
-/// # Returns
-/// 语句内 UTF-8 字节偏移, 依次为:
-/// * 语句类型 (对话人物名);
-/// * 主参数;
-/// * 参数名 (对话的隐式语音参数);
-/// * 参数值;
-/// * 分支选项的跳转目标.
-///
-/// # Notes
-/// 必须与 [`recognize_ident`] 判定的位置保持一致.
-/// 变量插值仅可能识别为变量, 而变量由变量表提供, 故不在此列.
-pub(super) fn candidate_offsets(info: &SentenceInfo) -> Vec<usize> {
-    let primary = &info.primary;
-    let mut offsets = Vec::with_capacity(2 + primary.arguments.len() * 2);
-    offsets.push(span_of(info.content, primary.command).start);
-
-    if let Some(content) = primary.content {
-        offsets.push(span_of(info.content, content).start);
-    }
-
-    for &(name, value) in &primary.arguments {
-        offsets.push(span_of(info.content, name).start);
-        if let Some(value) = value {
-            offsets.push(span_of(info.content, value).start);
-        }
-    }
-
-    // 分支选项的跳转目标可指向场景或标签
-    if let Some(content) = primary.content
-        && matches!(info.sentence, Sentence::Choose(_))
-    {
-        offsets.extend(
-            ChoiceSplit::new(content)
-                .filter_map(|choice| choice.target)
-                .map(|target| span_of(info.content, target).start),
-        );
-    }
-
-    offsets
-}
-
 fn recognize_ident_in_command<'a>(
     command: &'a str,
     offset: usize,

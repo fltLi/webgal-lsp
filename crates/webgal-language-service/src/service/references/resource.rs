@@ -2,9 +2,8 @@
 
 //! 资源文档链接
 //!
-//! 勾画语句中指向项目内文件的资源引用, 与识别层共用同一份判定:
-//! 遍历 [`candidate_offsets`] 给出的候选位置, 交由 [`recognize_ident`] 判定,
-//! 只保留资源类型的标识符.
+//! 勾画语句中指向项目内文件的资源引用: 由收集层给出场景内的出现的标识符
+//! (见 [`collect_scene_idents`]), 只保留资源类型.
 //!
 //! # Behavior
 //! * 仅为项目中**真实存在**的资源生成链接 (缺失资源交由诊断提示, 避免死链);
@@ -13,14 +12,12 @@
 use derive_more::{Deref, Into, IntoIterator};
 use lsp_types::*;
 use path_tree::{canonicalize, join, name_of};
-use webgal_language_core::{
-    resource::{FigureKind, ResourceKind},
-    util::span_of,
+use webgal_language_core::resource::{FigureKind, ResourceKind};
+
+use crate::{
+    project::Project,
+    service::references::{collect::collect_scene_idents, recognize::Ident},
 };
-
-use crate::project::Project;
-
-use super::recognize::{Ident, candidate_offsets, recognize_ident};
 
 /// 文档链接能力
 pub fn document_link_capability() -> DocumentLinkOptions {
@@ -63,41 +60,17 @@ pub fn document_links(scene_path: &str, project: &Project) -> Option<DocumentLin
     let scene = project.resource().scene.get(scene_path)?.as_item()?;
     let mut links = Vec::new();
 
-    for (line, info) in scene.sentences().iter().enumerate() {
-        for offset in candidate_offsets(info) {
-            let position = Position {
-                line: line as u32,
-                character: offset as u32,
-            };
-            let Some(Ident::Resource(kind, name)) = recognize_ident(scene_path, position, project)
-            else {
-                continue;
-            };
-            let Some(path) = resource_file(project, kind, name) else {
-                continue;
-            };
+    for (line, occurrence) in collect_scene_idents(scene, project) {
+        let Ident::Resource(kind, name) = occurrence.ident else {
+            continue;
+        };
+        let Some(path) = resource_file(project, kind, name) else {
+            continue;
+        };
 
-            // 链接区间为标识符自身的名称区间
-            let span = span_of(info.content, name);
-            links.push((
-                kind,
-                path,
-                Range {
-                    start: Position {
-                        line: line as u32,
-                        character: span.start as u32,
-                    },
-                    end: Position {
-                        line: line as u32,
-                        character: span.end as u32,
-                    },
-                },
-            ));
-        }
+        links.push((kind, path, occurrence.to_range(line)));
     }
 
-    // 分支目标等位置可能被重复识别, 去重时保留首次出现
-    links.dedup();
     Some(DocumentLinkList(links))
 }
 
