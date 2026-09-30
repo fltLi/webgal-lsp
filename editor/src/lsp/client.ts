@@ -61,6 +61,25 @@ export interface LspLocation {
   range: LspRange;
 }
 
+export interface LspDocumentLink {
+  range: LspRange;
+  /** 链接目标 URI (无法解析时可能缺省) */
+  target?: string;
+  tooltip?: string;
+}
+
+/** `textDocument/prepareRename` 的结果 (RangeWithPlaceholder) */
+export interface LspRenameLocation {
+  range: LspRange;
+  /** 当前符号名, 作为输入框的占位内容 */
+  placeholder: string;
+}
+
+/** `textDocument/rename` 的结果: 按文件 URI 分组的文本编辑 */
+export interface LspWorkspaceEdit {
+  changes?: Record<string, LspTextEdit[]>;
+}
+
 export interface LspCompletionItem {
   label: string;
   kind?: number;
@@ -581,6 +600,30 @@ class LspClient {
     if (Array.isArray(r)) return r as LspLocation[];
     if (r && typeof r === 'object' && 'uri' in r) return [r as LspLocation];
     return null;
+  }
+
+  async documentLinks(path: string): Promise<LspDocumentLink[] | null> {
+    const r = await this.sendRequest('textDocument/documentLink', {
+      textDocument: { uri: toUri(path) },
+    });
+    return (r as LspDocumentLink[] | null) ?? null;
+  }
+
+  async prepareRename(path: string, position: LspPosition): Promise<LspRenameLocation | null> {
+    const r = await this.sendRequest('textDocument/prepareRename', {
+      textDocument: { uri: toUri(path) },
+      position,
+    });
+    return (r as LspRenameLocation | null) ?? null;
+  }
+
+  async rename(path: string, position: LspPosition, newName: string): Promise<LspWorkspaceEdit | null> {
+    const r = await this.sendRequest('textDocument/rename', {
+      textDocument: { uri: toUri(path) },
+      position,
+      newName,
+    });
+    return (r as LspWorkspaceEdit | null) ?? null;
   }
 }
 

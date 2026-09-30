@@ -145,6 +145,19 @@ pub fn document_utf8_to_utf16(scene: &Scene, document: &mut Hover) {
     }
 }
 
+pub fn document_links_utf8_to_utf16(scene: &Scene, links: &mut [DocumentLink]) {
+    links.par_iter_mut().for_each(|link| {
+        *link = document_link_utf8_to_utf16(scene, link.clone());
+    });
+}
+
+pub fn document_link_utf8_to_utf16(scene: &Scene, link: DocumentLink) -> DocumentLink {
+    DocumentLink {
+        range: range_utf8_to_utf16(scene, link.range),
+        ..link
+    }
+}
+
 pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
     let mut current_line = 0;
     let mut current_byte_pos = 0; // 当前行内的字节偏移
@@ -343,5 +356,49 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn document_links_conversion_uses_utf16_offsets() {
+        let scene = Scene::from("say:你好x;");
+        let mut links = vec![DocumentLink {
+            // 字节区间: `x` 位于 10..11
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 10,
+                },
+                end: Position {
+                    line: 0,
+                    character: 11,
+                },
+            },
+            target: Some("file:///project/background/bg.png".parse().unwrap()),
+            tooltip: Some("背景资源: bg.png".to_string()),
+            data: None,
+        }];
+
+        document_links_utf8_to_utf16(&scene, &mut links);
+
+        // UTF-16 区间: `x` 位于 6..7
+        assert_eq!(
+            links[0].range,
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 6,
+                },
+                end: Position {
+                    line: 0,
+                    character: 7,
+                },
+            }
+        );
+        // 目标与提示不受编码转换影响
+        assert_eq!(
+            links[0].target.as_ref().map(|target| target.as_str()),
+            Some("file:///project/background/bg.png")
+        );
+        assert_eq!(links[0].tooltip.as_deref(), Some("背景资源: bg.png"));
     }
 }

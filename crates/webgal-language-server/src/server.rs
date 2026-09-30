@@ -41,6 +41,8 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     references_capability: bool,
     #[getset(set_with = "pub")]
+    document_link_capability: bool,
+    #[getset(set_with = "pub")]
     hover_capability: bool,
     #[getset(set_with = "pub")]
     highlight_capability: bool,
@@ -50,6 +52,8 @@ pub struct BackendBuilder {
     complete_capability: bool,
     #[getset(set_with = "pub")]
     format_capability: bool,
+    #[getset(set_with = "pub")]
+    rename_capability: bool,
 
     // 高级配置
     #[getset(set_with = "pub")]
@@ -71,11 +75,13 @@ impl Default for BackendBuilder {
             diagnose_capability: true,
             definition_capability: true,
             references_capability: true,
+            document_link_capability: true,
             hover_capability: true,
             highlight_capability: true,
             inlay_hint_capability: true,
             complete_capability: true,
             format_capability: true,
+            rename_capability: true,
             diagnostic_delay: Duration::from_millis(500),
             diagnostic_timeout: Duration::from_secs(10),
         }
@@ -353,14 +359,18 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 },
             )),
-            references_provider: self
-                .options
-                .references_capability
-                .then(references_capability),
             definition_provider: self
                 .options
                 .definition_capability
                 .then(definition_capability),
+            references_provider: self
+                .options
+                .references_capability
+                .then(references_capability),
+            document_link_provider: self
+                .options
+                .document_link_capability
+                .then(document_link_capability),
             hover_provider: self.options.hover_capability.then(document_capability),
             semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
             inlay_hint_provider: self
@@ -369,6 +379,7 @@ impl LanguageServer for Backend {
                 .then(inlay_hint_capability),
             completion_provider: self.options.complete_capability.then(complete_capability),
             document_formatting_provider: self.options.format_capability.then(format_capability),
+            rename_provider: self.options.rename_capability.then(rename_capability),
             workspace: Some(WorkspaceServerCapabilities {
                 workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                     supported: Some(true),
@@ -727,6 +738,60 @@ impl LanguageServer for Backend {
         Ok(references)
     }
 
+    async fn document_link(
+        &self,
+        params: DocumentLinkParams,
+    ) -> jsonrpc::Result<Option<Vec<DocumentLink>>> {
+        if !self.options.document_link_capability {
+            warn!("Document link capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Document links requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let links = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Document links skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for document links");
+                    return None;
+                }
+            };
+
+            // 收集资源链接
+            info!(project = %project_path, %scene_path, "Collecting document links");
+            let mut links = document_links(scene_path, &project)?.to_links(&project_path);
+            document_links_utf8_to_utf16(scene, &mut links);
+            Some(links)
+        })
+        .await
+        .unwrap();
+
+        Ok(links)
+    }
+
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
         if !self.options.hover_capability {
             warn!("Hover capability disabled, rejecting request");
@@ -1061,6 +1126,158 @@ impl LanguageServer for Backend {
         .unwrap();
 
         Ok(edits)
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> jsonrpc::Result<Option<PrepareRenameResponse>> {
+        if !self.options.rename_capability {
+            warn!("Rename capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Prepare rename requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let response = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Prepare rename skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for prepare rename");
+                    return None;
+                }
+            };
+
+            // 判定光标处是否可重命名
+            info!(project = %project_path, %scene_path, "Prepare rename");
+            let position = position_utf16_to_utf8(scene, params.position);
+            Some(
+                prepare_rename(scene_path, position, &project).map(|(range, placeholder)| {
+                    PrepareRenameResponse::RangeWithPlaceholder {
+                        range: range_utf8_to_utf16(scene, range),
+                        placeholder,
+                    }
+                }),
+            )
+        })
+        .await
+        .unwrap();
+
+        match response {
+            // 不在项目内 / 不是场景文件: 交由客户端决定
+            None => Ok(None),
+            Some(Ok(response)) => Ok(Some(response)),
+            // 光标处不支持重命名: 报错让客户端提示并禁止改名
+            Some(Err(error)) => Err(jsonrpc::Error::invalid_params(error.to_string())),
+        }
+    }
+
+    async fn rename(&self, params: RenameParams) -> jsonrpc::Result<Option<WorkspaceEdit>> {
+        if !self.options.rename_capability {
+            warn!("Rename capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document_position.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Rename requested but not in any project");
+                return Ok(None);
+            }
+        };
+
+        let response = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Rename skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for rename");
+                    return None;
+                }
+            };
+
+            // 收集全项目待替换位置
+            info!(project = %project_path, %scene_path, "Renaming symbol");
+            let position = position_utf16_to_utf8(scene, params.text_document_position.position);
+            let positions = match rename(scene_path, position, &params.new_name, &project) {
+                Ok(positions) => positions,
+                Err(error) => return Some(Err(error)),
+            };
+
+            // 按场景分组为文本编辑 (区间逐场景转换为 UTF-16)
+            let scene_root = join(&project_path, "scene");
+            let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+            for (target_path, range) in positions {
+                let Some(target) = project.resource().scene.get(&target_path).and_then(Node::as_item)
+                else {
+                    continue;
+                };
+                let Some(uri) = join(&scene_root, &target_path).parse().ok() else {
+                    continue;
+                };
+
+                let edit = TextEdit {
+                    range,
+                    new_text: params.new_name.clone(),
+                };
+                changes
+                    .entry(uri)
+                    .or_default()
+                    .push(text_edit_utf8_to_utf16(target, edit));
+            }
+
+            Some(Ok(WorkspaceEdit {
+                changes: Some(changes),
+                ..Default::default()
+            }))
+        })
+        .await
+        .unwrap();
+
+        match response {
+            // 不在项目内 / 不是场景文件: 交由客户端决定
+            None => Ok(None),
+            Some(Ok(edit)) => Ok(Some(edit)),
+            // 符号不支持重命名 / 名称不合法 / 名称冲突
+            Some(Err(error)) => Err(jsonrpc::Error::invalid_params(error.to_string())),
+        }
     }
 }
 

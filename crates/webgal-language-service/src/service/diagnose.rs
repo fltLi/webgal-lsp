@@ -6,10 +6,7 @@ use webgal_language_core::sentence::*;
 
 use crate::{
     project::Project,
-    service::diagnose::{
-        environment::diagnose_environment,
-        syntax::{diagnose_format, diagnose_sentence_error},
-    },
+    service::diagnose::{environment::*, syntax::*},
 };
 
 mod environment;

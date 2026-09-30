@@ -14,12 +14,38 @@ use crate::util::{span_of, split_once_escaped};
 /// 用于标识光标在一条语句的不同组成部分内, 方便补全 / 跳转 / 悬浮文档等功能使用.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SentenceLocation<'a> {
-    Command(&'a str),
-    Content(&'a str),
-    ArgumentName(usize, &'a str),
-    ArgumentValue(usize, &'a str, &'a str),
-    Comment(&'a str),
+    Command(&'a str, usize),
+    Content(&'a str, usize),
+    ArgumentName(usize, &'a str, usize),
+    ArgumentValue(usize, &'a str, &'a str, usize),
+    Comment(&'a str, usize),
     Other,
+}
+
+impl<'a> SentenceLocation<'a> {
+    /// 返回光标所在文本片段及字节偏移
+    pub fn text_and_offset(&self) -> Option<(&'a str, usize)> {
+        match *self {
+            Self::Command(s, offset) => Some((s, offset)),
+            Self::Content(s, offset) => Some((s, offset)),
+            Self::Comment(s, offset) => Some((s, offset)),
+            Self::ArgumentName(_, name, offset) => Some((name, offset)),
+            Self::ArgumentValue(_, _, value, offset) => Some((value, offset)),
+            Self::Other => None,
+        }
+    }
+
+    /// 返回光标之前的字符串
+    pub fn prefix(&self) -> Option<&'a str> {
+        let (s, offset) = self.text_and_offset()?;
+        s.get(..offset)
+    }
+
+    /// 返回光标之后的字符串
+    pub fn suffix(&self) -> Option<&'a str> {
+        let (s, offset) = self.text_and_offset()?;
+        s.get(offset..)
+    }
 }
 
 /// 初级语句
@@ -164,13 +190,13 @@ impl<'a> PrimarySentence<'a> {
         } = self;
 
         if position <= command.len() {
-            return SentenceLocation::Command(&command[..position]);
+            return SentenceLocation::Command(command, position);
         }
 
         if let Some(content) = content {
             let Range { start, end } = self.get_span(content);
             if position <= end {
-                return SentenceLocation::Content(&content[..position.saturating_sub(start)]);
+                return SentenceLocation::Content(content, position.saturating_sub(start));
             }
         }
 
@@ -180,7 +206,7 @@ impl<'a> PrimarySentence<'a> {
             if position < start {
                 return SentenceLocation::Other;
             } else if position <= end {
-                return SentenceLocation::ArgumentName(i, &name[..position - start]);
+                return SentenceLocation::ArgumentName(i, name, position - start);
             }
 
             if let Some(value) = value {
@@ -189,7 +215,8 @@ impl<'a> PrimarySentence<'a> {
                     return SentenceLocation::ArgumentValue(
                         i,
                         name,
-                        &value[..position.saturating_sub(start)],
+                        value,
+                        position.saturating_sub(start),
                     );
                 }
             }
@@ -197,7 +224,7 @@ impl<'a> PrimarySentence<'a> {
 
         let comment_start = self.len() - self.comment.len() + 1;
         if position >= comment_start && position <= self.len() {
-            return SentenceLocation::Comment(&comment[..=position - comment_start]);
+            return SentenceLocation::Comment(comment, position - comment_start + 1);
         }
 
         SentenceLocation::Other
@@ -489,12 +516,12 @@ mod tests {
     fn locate_in_command() {
         let s = "changeBg:bg.png -next -unlockname=home;";
         let parsed = PrimarySentence::from_str(s);
-        assert_eq!(parsed.locate(0), SentenceLocation::Command(""));
-        assert_eq!(parsed.locate(4), SentenceLocation::Command("chan"));
+        assert_eq!(parsed.locate(0), SentenceLocation::Command("changeBg", 0));
+        assert_eq!(parsed.locate(4), SentenceLocation::Command("changeBg", 4));
         let cmd_len = "changeBg".len();
         assert_eq!(
             parsed.locate(cmd_len),
-            SentenceLocation::Command("changeBg")
+            SentenceLocation::Command("changeBg", cmd_len)
         );
     }
 
@@ -504,15 +531,18 @@ mod tests {
         let parsed = PrimarySentence::from_str(s);
         let cmd_len = "changeBg".len();
         let content_start = cmd_len + 1;
-        assert_eq!(parsed.locate(content_start), SentenceLocation::Content(""));
+        assert_eq!(
+            parsed.locate(content_start),
+            SentenceLocation::Content("bg.png", 0)
+        );
         assert_eq!(
             parsed.locate(content_start + 2),
-            SentenceLocation::Content("bg")
+            SentenceLocation::Content("bg.png", 2)
         );
         let content_len = "bg.png".len();
         assert_eq!(
             parsed.locate(content_start + content_len),
-            SentenceLocation::Content("bg.png")
+            SentenceLocation::Content("bg.png", content_len)
         );
     }
 
@@ -528,15 +558,15 @@ mod tests {
         assert_eq!(parsed.locate(span.start), SentenceLocation::Other);
         assert_eq!(
             parsed.locate(span.start + 1),
-            SentenceLocation::ArgumentName(0, "")
+            SentenceLocation::ArgumentName(0, "name", 0)
         );
         assert_eq!(
             parsed.locate(name_start + 2),
-            SentenceLocation::ArgumentName(0, "na")
+            SentenceLocation::ArgumentName(0, "name", 2)
         );
         assert_eq!(
             parsed.locate(name_start + 4),
-            SentenceLocation::ArgumentName(0, "name")
+            SentenceLocation::ArgumentName(0, "name", 4)
         );
     }
 
@@ -549,15 +579,15 @@ mod tests {
         let value_start = span.start + "-name=".len();
         assert_eq!(
             parsed.locate(value_start),
-            SentenceLocation::ArgumentValue(0, "name", "")
+            SentenceLocation::ArgumentValue(0, "name", "value", 0)
         );
         assert_eq!(
             parsed.locate(value_start + 1),
-            SentenceLocation::ArgumentValue(0, "name", "v")
+            SentenceLocation::ArgumentValue(0, "name", "value", 1)
         );
         assert_eq!(
             parsed.locate(value_start + 5),
-            SentenceLocation::ArgumentValue(0, "name", "value")
+            SentenceLocation::ArgumentValue(0, "name", "value", 5)
         );
     }
 
@@ -570,11 +600,11 @@ mod tests {
         let name_start = span.start + 1;
         assert_eq!(
             parsed.locate(name_start + 2),
-            SentenceLocation::ArgumentName(0, "fl")
+            SentenceLocation::ArgumentName(0, "flag", 2)
         );
         assert_eq!(
             parsed.locate(name_start + 4),
-            SentenceLocation::ArgumentName(0, "flag")
+            SentenceLocation::ArgumentName(0, "flag", 4)
         );
         assert_eq!(parsed.locate(name_start + 5), SentenceLocation::Other);
     }
@@ -590,7 +620,7 @@ mod tests {
         assert!(gap_start < gap_end);
         assert_eq!(
             parsed.locate(gap_start),
-            SentenceLocation::ArgumentValue(0, "a", "")
+            SentenceLocation::ArgumentValue(0, "a", "", 0)
         );
         assert_eq!(parsed.locate(gap_end), SentenceLocation::Other);
     }
@@ -600,9 +630,11 @@ mod tests {
         let s = "cmd:content; comment here";
         let parsed = PrimarySentence::from_str(s);
         let semicolon_pos = s.find(';').unwrap(); // 11
+        // 注意: 由于 comment_start = len - comment.len() + 1,
+        // 偏移量 = position - comment_start + 1 = position - (len - comment.len()).
         assert_eq!(
             parsed.locate(semicolon_pos + 3),
-            SentenceLocation::Comment(" c")
+            SentenceLocation::Comment(" comment here", 2)
         );
     }
 
@@ -611,10 +643,13 @@ mod tests {
         let s = "cmd:content; comment here";
         let parsed = PrimarySentence::from_str(s);
         let comment_start = parsed.len() - parsed.comment.len() + 1;
-        assert_eq!(parsed.locate(comment_start), SentenceLocation::Comment(" "));
+        assert_eq!(
+            parsed.locate(comment_start),
+            SentenceLocation::Comment(" comment here", 1)
+        );
         assert_eq!(
             parsed.locate(parsed.len()),
-            SentenceLocation::Comment(" comment here")
+            SentenceLocation::Comment(" comment here", parsed.comment.len())
         );
     }
 
@@ -622,7 +657,7 @@ mod tests {
     fn locate_empty_sentence() {
         let s = ";";
         let parsed = PrimarySentence::from_str(s);
-        assert_eq!(parsed.locate(0), SentenceLocation::Command(""));
+        assert_eq!(parsed.locate(0), SentenceLocation::Command("", 0));
         assert_eq!(parsed.locate(1), SentenceLocation::Other);
     }
 }
