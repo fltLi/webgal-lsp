@@ -31,6 +31,7 @@ import {
   type LspRange,
   type LspTextEdit,
 } from './client';
+import { installDocAlerts } from './doc-alert';
 import { applyTextEdits, renameFileEdits, type RenameFileEdit } from './rename';
 
 // Monaco 内部模块 (无公开类型声明): 用于在启动时把补全详情面板设为默认展开
@@ -40,6 +41,10 @@ import { applyTextEdits, renameFileEdits, type RenameFileEdit } from './rename';
 import { IStorageService } from 'monaco-editor/esm/vs/platform/storage/common/storage.js';
 // @ts-expect-error -- Monaco 内部模块, 无类型声明
 import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js';
+// Monaco 渲染文档 Markdown 用的就是它自己打包的 marked 实例 (见 lsp/doc-alert.ts): 文档警告块
+// 的扩展必须注册到**这个实例**上, npm 上的 `marked` 是另一个实例, 注册过去不会生效。
+// @ts-expect-error -- Monaco 内部模块, 无类型声明
+import * as monacoMarked from 'monaco-editor/esm/vs/base/common/marked/marked.js';
 
 // 配置 Monaco worker (Vite 打包); webgal 为自定义语言, 仅需基础 editor worker
 self.MonacoEnvironment = {
@@ -405,6 +410,12 @@ export function setupMonaco(): void {
   // tokenizer", 它不会自己消费 LSP 的 semantic tokens; 而 WebGAL 的高亮只有后端一份, 所以这里
   // 注册一个读缓存的 tokenizer, 缓存内容由后端高亮结果转译而来 (见 code-block-highlight.ts)。
   codeBlockHighlight.install(monaco, LANGUAGE_ID);
+
+  // 文档警告块 (hover / 补全项文档里的 `> [!WARNING]` 等): 后端文档由 `scripts/update-document.py`
+  // 从 VitePress 的 `::: warning` 容器转成 GitHub Alert 语法, 但 marked 本身不认识它, 只会当
+  // 普通引用块。这里把 `marked-alert` 扩展注册到 Monaco 渲染文档用的 marked 实例上
+  // (见 doc-alert.ts; npm 上的 `marked` 不是同一个实例)。
+  installDocAlerts(monacoMarked);
 
   // 语义高亮: 全文与区间两个 provider 都注册, 二者共用同一份 legend。
   //

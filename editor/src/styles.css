@@ -4676,3 +4676,72 @@ input[type='number'].voice-control {
   background: color-mix(in srgb, #4a9eff 14%, transparent);
   box-shadow: inset 2px 0 0 #4a9eff;
 }
+
+/*
+ * 文档警告块 (GFM Alert): hover / 补全项详情里的 `> [!WARNING]` 等。
+ *
+ * 标记由 lsp/doc-alert.ts (marked-alert 扩展) 生成 —— `<div data-alert="{type}">` 加一个
+ * 标题段落。为什么是 data 属性而不是类名: Monaco 渲染文档前会过一遍 HTML 消毒器, 它只放行
+ * span 上的 class, 其余元素的 class 一律剥掉 (见 doc-alert.ts 的文件头注释)。
+ * 选择器挂在 `.rendered-markdown` (Monaco 给文档根节点加的类) 上, 不会影响编辑器正文。
+ * 五种类型沿用 GitHub 的配色: 注意蓝 / 提示绿 / 重要紫 / 警告黄 / 小心红。
+ */
+.rendered-markdown div[data-alert] {
+  margin: 8px 0;
+  padding: 0 10px;
+  border-left: 3px solid var(--doc-alert-color);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--doc-alert-color) 9%, transparent);
+}
+
+/* 警告块的第一段是标题 (扩展的固定结构) */
+.rendered-markdown div[data-alert] > p:first-child {
+  margin: 6px 0 4px;
+  font-weight: 600;
+  color: var(--doc-alert-color);
+}
+
+/* 警告块内最后一段贴着底边会显得局促 */
+.rendered-markdown div[data-alert] > :last-child {
+  margin-bottom: 6px;
+}
+
+.rendered-markdown div[data-alert='note'] {
+  --doc-alert-color: #0969da;
+}
+
+.rendered-markdown div[data-alert='tip'] {
+  --doc-alert-color: #1a7f37;
+}
+
+.rendered-markdown div[data-alert='important'] {
+  --doc-alert-color: #8250df;
+}
+
+.rendered-markdown div[data-alert='warning'] {
+  --doc-alert-color: #9a6700;
+}
+
+.rendered-markdown div[data-alert='caution'] {
+  --doc-alert-color: #cf222e;
+}
+
+[data-theme='dark'] .rendered-markdown div[data-alert='note'] {
+  --doc-alert-color: #4493f8;
+}
+
+[data-theme='dark'] .rendered-markdown div[data-alert='tip'] {
+  --doc-alert-color: #3fb950;
+}
+
+[data-theme='dark'] .rendered-markdown div[data-alert='important'] {
+  --doc-alert-color: #ab7df8;
+}
+
+[data-theme='dark'] .rendered-markdown div[data-alert='warning'] {
+  --doc-alert-color: #d29922;
+}
+
+[data-theme='dark'] .rendered-markdown div[data-alert='caution'] {
+  --doc-alert-color: #f85149;
+}

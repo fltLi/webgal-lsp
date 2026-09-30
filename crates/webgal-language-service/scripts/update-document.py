@@ -51,6 +51,16 @@ DEFAULT_OUTPUT = os.path.join("data", "document.json")
 
 HTTP_TIMEOUT = 30
 
+CONTAINER_LABELS: Dict[str, str] = {
+    "info": "NOTE",
+    "tip": "TIP",
+    "warning": "WARNING",
+    "danger": "CAUTION",
+    "note": "NOTE",
+    "details": "NOTE",
+    "important": "IMPORTANT",
+}
+
 # --------------------------------------------------------------------------- #
 # GitHub API 响应类型
 # --------------------------------------------------------------------------- #
@@ -346,6 +356,59 @@ def convert_links_in_markdown(text: str, base_url: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# VitePress 容器转译
+# --------------------------------------------------------------------------- #
+
+
+def convert_vitepress_containers(markdown: str) -> str:
+    """将 VitePress 的 ::: 容器语法转换为 GitHub Alert 语法.
+
+    VitePress 容器 (如 ::: warning) 不是标准 Markdown, Monaco 会将其按
+    普通文本渲染. 这里转换为 GitHub Alert (如 > [!WARNING]), 便于 Monaco
+    等编辑器正确识别. 同时跳过代码块内的 ::: 字面量, 并支持嵌套容器.
+
+    指令格式:
+        ::: warning
+        内容
+        :::
+    """
+    open_re = re.compile(r"^:::[ \t]*([A-Za-z]+)?[ \t]*(.*)$")
+    close_re = re.compile(r"^:::[ \t]*$")
+
+    lines = markdown.split("\n")
+    output: List[str] = []
+    depth = 0
+    in_code_block = False
+
+    for line in lines:
+        stripped = line.lstrip()
+        is_fence = stripped.startswith("```") or stripped.startswith("~~~")
+
+        if not in_code_block:
+            if close_re.match(line) and depth > 0:
+                depth -= 1
+                continue
+
+            m = open_re.match(line)
+            if m and m.group(1) and m.group(1).lower() in CONTAINER_LABELS:
+                alert_type = CONTAINER_LABELS[m.group(1).lower()]
+                depth += 1
+                output.append(f"{'> ' * depth}[!{alert_type}]")
+                continue
+
+        if depth > 0:
+            prefix = "> " * depth
+            output.append(f"{prefix}{line}" if line.strip() else prefix.rstrip())
+        else:
+            output.append(line)
+
+        if is_fence:
+            in_code_block = not in_code_block
+
+    return "\n".join(output)
+
+
+# --------------------------------------------------------------------------- #
 # 文档解析与结构化
 # --------------------------------------------------------------------------- #
 
@@ -375,8 +438,13 @@ def parse_global_parameters(commands: Dict[str, str]) -> Dict[str, str]:
 
 
 def build_document_field(content: str, link: str) -> DocumentField:
-    """根据内容和链接创建 DocumentField，并将内容中的相对链接转换为绝对链接。"""
+    """根据内容和链接创建 DocumentField.
+
+    内容中的相对链接将转换为绝对链接, VitePress 的 ::: 容器语法也会
+    转换为 GitHub Alert 语法.
+    """
     converted = convert_links_in_markdown(content, COMMANDS_BASE_URL)
+    converted = convert_vitepress_containers(converted)
     return DocumentField(link=link, document=converted.strip())
 
 
