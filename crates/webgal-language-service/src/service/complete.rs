@@ -3,7 +3,7 @@ use webgal_language_core::sentence::{Scene, SentenceInfo, SentenceLocation};
 
 use crate::{
     project::Project,
-    service::complete::{argument::Complete, command::complete_command, comment::complete_comment},
+    service::complete::{argument::*, command::*, comment::*},
 };
 
 mod argument;
