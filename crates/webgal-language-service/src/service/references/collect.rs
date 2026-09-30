@@ -61,7 +61,7 @@ pub fn collect_ident_definition(ident: Ident, project: &Project) -> Option<Refer
                 .collect(),
         )),
 
-        ident if ident_name(&ident).is_empty() => None,
+        ident if ident.name().is_empty() => None,
 
         ident => Some(collect_ident_occurrences(
             project,
@@ -90,7 +90,7 @@ pub fn collect_ident_references(ident: Ident, project: &Project) -> Option<Refer
                 .collect(),
         )),
 
-        ident if ident_name(&ident).is_empty() => None,
+        ident if ident.name().is_empty() => None,
 
         ident => Some(collect_ident_occurrences(
             project,
@@ -145,7 +145,7 @@ fn collect_ident_occurrences(
                     continue;
                 }
 
-                let span = span_of(info.content, ident_name(&ident));
+                let span = span_of(info.content, ident.name());
                 references.push((
                     scene_path.clone(),
                     Range {
@@ -200,20 +200,6 @@ fn is_definition(info: &SentenceInfo, ident: &Ident, offset: usize) -> bool {
 /// * `unlockname` 声明鉴赏名称 (其引用位置为 `unlockCg` / `unlockBgm` 的 `name` 参数).
 fn is_declaration_argument(name: &str) -> bool {
     matches!(name, "id" | "series" | "unlockname")
-}
-
-/// 获取标识符的名称
-fn ident_name<'a>(ident: &Ident<'a>) -> &'a str {
-    match *ident {
-        Ident::Resource(_, path) => path,
-        Ident::Speaker(name)
-        | Ident::Object(name)
-        | Ident::Sound(name)
-        | Ident::Label(name)
-        | Ident::Variable(name)
-        | Ident::Series(name)
-        | Ident::Unlockname(name) => name,
-    }
 }
 
 #[cfg(test)]

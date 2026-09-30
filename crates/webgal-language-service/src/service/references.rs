@@ -5,10 +5,12 @@ use crate::{
     service::references::{collect::*, recognize::*},
 };
 
+pub use rename::*;
 pub use resource::*;
 
 mod collect;
 mod recognize;
+mod rename;
 mod resource;
 
 // TODO: 可能的优化, 先尝试获取变量名并在变量表查找, 失败时再回退到遍历变量表

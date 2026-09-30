@@ -23,6 +23,7 @@
 //! * `--disable-inlay-hint` - 禁用内联提示 (默认启用).
 //! * `--disable-complete` - 禁用自动补全 (默认启用).
 //! * `--disable-format` - 禁用文档格式化 (默认启用).
+//! * `--disable-rename` - 禁用符号重命名 (默认启用).
 //! * `--diagnostic-delay <MS>` - 诊断批处理延迟 (毫秒), 默认 500ms.
 //! * `--diagnostic-timeout <MS>` - 单个项目诊断生成超时 (毫秒), 默认 10000ms (10s).
 
@@ -108,6 +109,8 @@ struct Args {
     disable_complete: bool,
     #[arg(long)]
     disable_format: bool,
+    #[arg(long)]
+    disable_rename: bool,
     #[arg(long, default_value_t = 500)]
     diagnostic_delay: u64,
     #[arg(long, default_value_t = 10000)]
@@ -132,6 +135,7 @@ async fn main() -> Result<()> {
         .with_inlay_hint_capability(!args.disable_inlay_hint)
         .with_complete_capability(!args.disable_complete)
         .with_format_capability(!args.disable_format)
+        .with_rename_capability(!args.disable_rename)
         .with_diagnostic_delay(Duration::from_millis(args.diagnostic_delay))
         .with_diagnostic_timeout(Duration::from_millis(args.diagnostic_timeout));
 

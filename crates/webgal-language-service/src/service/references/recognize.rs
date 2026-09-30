@@ -31,6 +31,42 @@ pub enum Ident<'a> {
     Unlockname(&'a str),
 }
 
+impl<'a> Ident<'a> {
+    /// 获取符号名称
+    ///
+    /// # Behavior
+    /// * 名称是语句原始字符串的子串, 可用 [`span_of`] 求其在语句中的区间.
+    pub(super) fn name(&self) -> &'a str {
+        match *self {
+            Self::Resource(_, path) => path,
+            Self::Speaker(name)
+            | Self::Object(name)
+            | Self::Sound(name)
+            | Self::Label(name)
+            | Self::Variable(name)
+            | Self::Series(name)
+            | Self::Unlockname(name) => name,
+        }
+    }
+
+    /// 以新名称构造同类符号
+    ///
+    /// # Notes
+    /// 名称可以来自项目外 (如客户端请求的新名称), 不要求与符号同生命周期.
+    pub(super) fn with_name(self, name: &'a str) -> Self {
+        match self {
+            Self::Resource(kind, _) => Self::Resource(kind, name),
+            Self::Speaker(_) => Self::Speaker(name),
+            Self::Object(_) => Self::Object(name),
+            Self::Sound(_) => Self::Sound(name),
+            Self::Label(_) => Self::Label(name),
+            Self::Variable(_) => Self::Variable(name),
+            Self::Series(_) => Self::Series(name),
+            Self::Unlockname(_) => Self::Unlockname(name),
+        }
+    }
+}
+
 /// 识别光标指向的符号类型
 pub fn recognize_ident<'a>(
     scene_path: &str,

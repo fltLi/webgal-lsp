@@ -17,6 +17,7 @@ import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
 import 'monaco-editor/esm/vs/basic-languages/monaco.contribution';
 import { invoke } from '@tauri-apps/api/core';
 
+import { fs } from '../lib/fs';
 import { toUri } from '../lib/uri';
 import { useAppStore } from '../state/store';
 import { createCodeBlockHighlight } from './code-block-highlight';
@@ -30,6 +31,7 @@ import {
   type LspRange,
   type LspTextEdit,
 } from './client';
+import { applyTextEdits, renameFileEdits, type RenameFileEdit } from './rename';
 
 // Monaco 内部模块 (无公开类型声明): 用于在启动时把补全详情面板设为默认展开
 // (expandSuggestionDocs 标志默认 false, 会导致补全项文档不显示)。
@@ -285,6 +287,73 @@ function defineWebgalThemes(): void {
 
 let setupDone = false;
 
+/** 重命名被拒绝 (Monaco 的 RenameProvider 返回值需同时满足 WorkspaceEdit 与 Rejection) */
+function rejectRename(rejectReason: string): monaco.languages.WorkspaceEdit & monaco.languages.Rejection {
+  return { edits: [], rejectReason };
+}
+
+/** 重命名位置被拒绝 (Monaco 的类型要求同时给出区间与文本, 运行时只看 rejectReason) */
+function rejectRenameLocation(
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
+  rejectReason: string
+): monaco.languages.RenameLocation & monaco.languages.Rejection {
+  const word = model.getWordAtPosition(position);
+  return {
+    range: new monaco.Range(
+      position.lineNumber,
+      word?.startColumn ?? position.column,
+      position.lineNumber,
+      word?.endColumn ?? position.column
+    ),
+    text: word?.word ?? '',
+    rejectReason,
+  };
+}
+
+/**
+ * 应用跨文件重命名。
+ *
+ * 当前文件交回 Monaco 应用: 它与编辑器共用撤销栈, 也会由编辑器自动保存。其余文件直接落盘 ——
+ * 未打开的文档没有自动保存, 只交给 Monaco 会把改动留在内存里。因此有未保存修改的文件一律拒绝,
+ * 免得落盘覆盖掉用户没保存的内容。
+ */
+async function applyRename(
+  targets: RenameFileEdit[],
+  currentPath: string
+): Promise<monaco.languages.WorkspaceEdit & monaco.languages.Rejection> {
+  const store = useAppStore.getState();
+  const others = targets.filter((target) => target.path !== currentPath);
+
+  const unsaved = others.find((target) => store.documents.some((doc) => doc.path === target.path && doc.dirty));
+  if (unsaved) {
+    const name = unsaved.path.replace(/\\/g, '/').split('/').pop() ?? unsaved.path;
+    return rejectRename(`请先保存 ${name} 再重命名`);
+  }
+
+  for (const target of others) {
+    const next = applyTextEdits(await fs.readText(target.path), target.edits);
+    await fs.writeText(target.path, next);
+    store.updateDocument(target.path, { content: next, dirty: false });
+
+    // 已打开的文档同步 model (内容变化会通知语言服务); 语言服务对其余文件走文件监听
+    const model = monaco.editor.getModel(monaco.Uri.parse(toUri(target.path)));
+    if (model && model.getValue() !== next) model.setValue(next);
+  }
+
+  return {
+    edits: targets
+      .filter((target) => target.path === currentPath)
+      .flatMap((target) =>
+        target.edits.map((textEdit) => ({
+          resource: monaco.Uri.parse(toUri(target.path)),
+          textEdit: { range: toMonacoRange(textEdit.range), text: textEdit.newText },
+          versionId: undefined,
+        }))
+      ),
+  };
+}
+
 export function setupMonaco(): void {
   if (setupDone) return;
   setupDone = true;
@@ -529,6 +598,41 @@ export function setupMonaco(): void {
         };
       } catch {
         return { links: [] };
+      }
+    },
+  });
+
+  // 符号重命名: 可用性 (含"此处不支持") 由后端 prepareRename 判定, 待替换位置由后端全项目计算。
+  monaco.languages.registerRenameProvider(LANGUAGE_ID, {
+    resolveRenameLocation: async (model, position) => {
+      const path = pathOfModel(model);
+      if (!path) return rejectRenameLocation(model, position, '该文档不属于 WebGAL 项目');
+      try {
+        const location = await lspClient.prepareRename(path, {
+          line: position.lineNumber - 1,
+          character: position.column - 1,
+        });
+        if (!location) return rejectRenameLocation(model, position, '此处不支持重命名');
+        return { range: toMonacoRange(location.range), text: location.placeholder };
+      } catch (error) {
+        return rejectRenameLocation(model, position, error instanceof Error ? error.message : String(error));
+      }
+    },
+    provideRenameEdits: async (model, position, newName) => {
+      const path = pathOfModel(model);
+      if (!path) return rejectRename('该文档不属于 WebGAL 项目');
+      try {
+        const edit = await lspClient.rename(
+          path,
+          { line: position.lineNumber - 1, character: position.column - 1 },
+          newName
+        );
+        const targets = renameFileEdits(edit ?? {});
+        if (targets.length === 0) return { edits: [] };
+        return await applyRename(targets, path);
+      } catch (error) {
+        // 名称不合法 / 与已有符号冲突 / 光标处不支持: 后端以错误响应给出原因
+        return rejectRename(error instanceof Error ? error.message : String(error));
       }
     },
   });
