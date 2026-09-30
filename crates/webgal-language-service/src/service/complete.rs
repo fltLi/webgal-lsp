@@ -39,16 +39,21 @@ pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<Com
     };
 
     // 转发补全
-    let completions = match primary.locate(position.character as usize) {
-        SentenceLocation::Command(input) => complete_command(input, position, project),
-        SentenceLocation::Content(input) => sentence.complete_content(input, position, project),
-        SentenceLocation::ArgumentName(_, input) => {
-            sentence.complete_argument_name(input, position, project)
+    let location = primary.locate(position.character as usize);
+    let completions = match &location {
+        SentenceLocation::Command(..) => {
+            complete_command(location.prefix().unwrap(), position, project)
         }
-        SentenceLocation::ArgumentValue(_, name, input) => {
-            sentence.complete_argument_value(name, input, position, project)
+        SentenceLocation::Content(..) => {
+            sentence.complete_content(location.prefix().unwrap(), position, project)
         }
-        SentenceLocation::Comment(input) => complete_comment(input, position),
+        SentenceLocation::ArgumentName(..) => {
+            sentence.complete_argument_name(location.prefix().unwrap(), position, project)
+        }
+        SentenceLocation::ArgumentValue(_, name, ..) => {
+            sentence.complete_argument_value(name, location.prefix().unwrap(), position, project)
+        }
+        SentenceLocation::Comment(..) => complete_comment(location.prefix().unwrap(), position),
         SentenceLocation::Other => Vec::default(),
     };
     completions.into_iter().map(From::from).collect()

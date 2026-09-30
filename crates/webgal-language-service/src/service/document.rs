@@ -23,13 +23,11 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
         _ => primary.command,
     };
     let documentation = match primary.locate(position.character as usize) {
-        SentenceLocation::Command(_) => document_command(command),
-        SentenceLocation::Content(_) => document_content(command),
-        SentenceLocation::ArgumentName(index, _) => {
-            document_argument(command, primary.arguments[index].0)
-        }
+        SentenceLocation::Command(..) => document_command(command),
+        SentenceLocation::Content(..) => document_content(command),
+        SentenceLocation::ArgumentName(_, name, ..) => document_argument(command, name),
         SentenceLocation::ArgumentValue(..) => None,
-        SentenceLocation::Comment(_) => None,
+        SentenceLocation::Comment(..) => None,
         SentenceLocation::Other if matches!(sentence, Sentence::Comment(_)) => {
             document_comment_sentence()
         }
