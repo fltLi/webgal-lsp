@@ -125,18 +125,27 @@ type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
  */
 const SLOW_REQUEST_MS = 2000;
 
-class LspClient {
+export class LspClient {
   private socket: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<
     number | string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void; sentAt: number }
+    { resolve: (v: unknown) => void; reject: (e: Error) => void; sentAt: number; sent: boolean }
   >();
   private notificationHandlers = new Map<string, NotificationHandler[]>();
   private requestHandlers = new Map<string, RequestHandler>();
   private diagnosticsListeners = new Set<(uri: string, diags: LspDiagnostic[]) => void>();
   private started = false;
   private initialized = false;
+  /**
+   * 握手 (initialize 往返 + initialized 通知) 是否已完成 —— 服务端在那之前不会处理任何
+   * 请求与通知 (tower-lsp 直接回 -32002 或直接丢弃), 因此出站消息在此之前只能先攒着。
+   */
+  private ready = false;
+  /** 握手完成前攒下的出站消息, 见 `sendRaw` */
+  private outbox: unknown[] = [];
+  /** 后端压根没起来 (`start_server` 失败): 之后的请求当场失败, 不排在缓冲里假装还能连上 */
+  private unreachable: Error | null = null;
   private pendingFolders: { added: string[]; removed: string[] } | null = null;
   private frameBuffer: Uint8Array = new Uint8Array(0);
   /** 忙闲检查的定时器 (同一时刻只留一个) */
@@ -234,7 +243,8 @@ class LspClient {
       try {
         result = await handler(msg.params);
       } catch (e) {
-        this.sendRaw({
+        // 应答服务端反向请求: 绕开缓冲 —— 它正等着这个结果
+        this.writeFrame({
           jsonrpc: '2.0',
           id: msg.id,
           error: { code: -32603, message: String(e) },
@@ -242,7 +252,7 @@ class LspClient {
         return;
       }
     }
-    this.sendRaw({ jsonrpc: '2.0', id: msg.id, result });
+    this.writeFrame({ jsonrpc: '2.0', id: msg.id, result });
   }
 
   private handleResponse(msg: JsonRpcResponse): void {
@@ -264,26 +274,76 @@ class LspClient {
     this.notificationHandlers.get(msg.method)?.forEach((h) => h(msg.params));
   }
 
+  /**
+   * 发送一条出站消息。
+   *
+   * 连接就绪之前**不能**直接写 socket, 也不能丢掉: 旧实现这时直接 `return`, 于是启动期间
+   * 发出的 `didOpen` 与语义高亮请求被静默吞掉 —— 请求的 Promise 再也没有结果, Monaco 的
+   * provider 就此停在那里 (场景一直不着色, 直到用户切标签页重建编辑器)。现在改为按序缓冲,
+   * 握手完成后一次性冲出 (`flushOutbox`), 顺序即语义。
+   */
   private sendRaw(obj: unknown): void {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      // LSP stdio 帧协议, 以二进制帧发送
-      // (ws_stream_tungstenite 只支持二进制消息, 文本消息会导致连接被关闭)
-      const json = JSON.stringify(obj);
-      const encoder = new TextEncoder();
-      const jsonBytes = encoder.encode(json);
-      const headerBytes = encoder.encode(`Content-Length: ${jsonBytes.length}\r\n\r\n`);
-      const frame = new Uint8Array(headerBytes.length + jsonBytes.length);
-      frame.set(headerBytes, 0);
-      frame.set(jsonBytes, headerBytes.length);
-      this.socket.send(frame);
+    if (this.unreachable) return; // 后端没起来: 通知留着也没人能收
+    if (this.ready && this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.writeFrame(obj);
+      return;
     }
+    this.outbox.push(obj);
+  }
+
+  /**
+   * 真正写一帧。
+   *
+   * 握手消息 (`initialize` / `initialized`) 与"对服务端反向请求的应答"走这里 —— 它们
+   * 必须绕开缓冲, 否则缓冲永远等不到释放它的那条消息。
+   */
+  private writeFrame(obj: unknown): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    // 缓冲期间不计入响应延迟: 请求真正发出时才起算, 否则状态栏会误报"响应缓慢"
+    const id = (obj as { id?: number | string }).id;
+    if (id !== undefined) {
+      const pending = this.pending.get(id);
+      if (pending) {
+        pending.sentAt = Date.now();
+        pending.sent = true;
+      }
+    }
+    // LSP stdio 帧协议, 以二进制帧发送
+    // (ws_stream_tungstenite 只支持二进制消息, 文本消息会导致连接被关闭)
+    const json = JSON.stringify(obj);
+    const encoder = new TextEncoder();
+    const jsonBytes = encoder.encode(json);
+    const headerBytes = encoder.encode(`Content-Length: ${jsonBytes.length}\r\n\r\n`);
+    const frame = new Uint8Array(headerBytes.length + jsonBytes.length);
+    frame.set(headerBytes, 0);
+    frame.set(jsonBytes, headerBytes.length);
+    this.socket.send(frame);
+  }
+
+  /** 握手完成后按序送出缓冲的消息。 */
+  private flushOutbox(): void {
+    const queued = this.outbox;
+    this.outbox = [];
+    for (const obj of queued) this.writeFrame(obj);
   }
 
   sendRequest(method: string, params?: unknown): Promise<unknown> {
+    return this.dispatch(method, params, false);
+  }
+
+  /** 发起一个请求; `immediate` 为真时绕开缓冲 (只有握手请求这么做)。 */
+  private dispatch(method: string, params: unknown, immediate: boolean): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, sentAt: Date.now() });
-      this.sendRaw({ jsonrpc: '2.0', id, method, params });
+      // 后端没起来时不再排队: 让调用方立刻拿到失败, 而不是等一个不会到来的握手
+      if (this.unreachable && !immediate) {
+        reject(this.unreachable);
+        return;
+      }
+      this.pending.set(id, { resolve, reject, sentAt: Date.now(), sent: false });
+      const request = { jsonrpc: '2.0', id, method, params };
+      if (immediate) this.writeFrame(request);
+      else this.sendRaw(request);
       this.scheduleActivityCheck();
     });
   }
@@ -306,6 +366,8 @@ class LspClient {
     const now = Date.now();
     let slow = 0;
     for (const entry of this.pending.values()) {
+      // 还没发出去的请求不算"服务端没答复": 那是在等握手, 不是语言服务慢
+      if (!entry.sent) continue;
       if (now - entry.sentAt >= SLOW_REQUEST_MS) slow += 1;
     }
     const store = useAppStore.getState();
@@ -381,6 +443,11 @@ class LspClient {
       port = await invoke<number>('start_server');
     } catch (e) {
       store.setLspStatus('error', String(e));
+      // 连接根本没起来: 缓冲里的请求必须当场结算, 否则调用方永远等不到结果 (它们原本
+      // 会一直排在缓冲里等一个不会到来的握手)
+      this.unreachable = new Error(`语言服务未启动: ${String(e)}`);
+      this.rejectAllPending(this.unreachable, true);
+      this.outbox = [];
       return;
     }
 
@@ -396,28 +463,46 @@ class LspClient {
       socket.onopen = () => {
         void (async () => {
           try {
-            await this.sendRequest('initialize', {
-              processId: null,
-              rootUri: null,
-              capabilities: {
-                workspace: { workspaceFolders: true },
-                textDocument: {
-                  synchronization: { dynamicRegistration: true, didSave: false },
+            await this.dispatch(
+              'initialize',
+              {
+                processId: null,
+                rootUri: null,
+                capabilities: {
+                  workspace: { workspaceFolders: true },
+                  textDocument: {
+                    synchronization: { dynamicRegistration: true, didSave: false },
+                  },
                 },
+                workspaceFolders: [],
               },
-              workspaceFolders: [],
-            });
-            this.sendNotification('initialized', {});
+              true
+            );
+            // `initialized` 同样绕开缓冲: 缓冲里的消息正是在等它发出去
+            this.writeFrame({ jsonrpc: '2.0', method: 'initialized', params: {} });
             this.initialized = true;
-            useAppStore.getState().setLspStatus('ready');
+            this.ready = true;
+            this.unreachable = null; // 重连成功后重新可以排队
+            /* 顺序即语义, 服务端按收到的顺序处理:
+             * 1. 工作区变更 (它决定服务端何时开始扫描项目);
+             * 2. 启动期间攒下的 didOpen / didChange / 语义高亮请求;
+             * 3. 重连或恢复时按当前内容补发的 didOpen。
+             */
             if (this.pendingFolders) {
               const pending = this.pendingFolders;
               this.pendingFolders = null;
               this.changeWorkspaceFolders(pending.added, pending.removed);
             }
+            this.flushOutbox();
+            useAppStore.getState().setLspStatus('ready');
             this.reopenDocuments();
           } catch (e) {
-            useAppStore.getState().setLspStatus('error', String(e));
+            // 握手失败: 这条连接不会有任何结果, 之后的请求立刻失败总好过永远排队
+            const error = new Error(`语言服务握手失败: ${String(e)}`);
+            useAppStore.getState().setLspStatus('error', error.message);
+            this.unreachable = error;
+            this.rejectAllPending(error, true);
+            this.outbox = [];
           }
           resolve();
         })();
@@ -427,8 +512,10 @@ class LspClient {
       socket.onclose = () => {
         if (this.socket !== socket) return; // 已由新连接接管
         this.socket = null;
+        this.ready = false;
         this.initialized = false;
-        this.rejectAllPending(new Error('LSP 连接已断开'));
+        // 请求当场结算 (没人能再收它们了); 通知保留 —— 重连后必须补发文档与工作区状态
+        this.rejectAllPending(new Error('LSP 连接已断开'), true);
         useAppStore.getState().setLspStatus('error', 'LSP 连接已断开，正在重连…');
         // 后端支持重复接入, 稍后自动重连并恢复文档
         setTimeout(() => {
@@ -441,9 +528,19 @@ class LspClient {
     });
   }
 
-  private rejectAllPending(error: Error): void {
+  /**
+   * 结算所有未答复的请求。
+   *
+   * `queued` 为真时把还排在缓冲里的**请求**一并结算并移出缓冲: 连接已经没了, 它们发不出去,
+   * 留着只会让调用方永远等下去。缓冲里的**通知**保留 —— 那是文档与工作区的状态更新, 重连
+   * 之后必须照原样补发。
+   */
+  private rejectAllPending(error: Error, queued = false): void {
     for (const { reject } of this.pending.values()) reject(error);
     this.pending.clear();
+    if (queued) {
+      this.outbox = this.outbox.filter((obj) => (obj as { id?: unknown }).id === undefined);
+    }
     // 连接都没了, "响应缓慢"不再是有效信息 (状态会切到"错误/重连中")
     useAppStore.getState().setLspActivity(null);
   }

@@ -32,6 +32,7 @@ import {
   type LspTextEdit,
 } from './client';
 import { installDocAlerts } from './doc-alert';
+import { resolveSemanticTokens } from './highlight-fallback';
 import { applyTextEdits, renameFileEdits, type RenameFileEdit } from './rename';
 
 // Monaco 内部模块 (无公开类型声明): 用于在启动时把补全详情面板设为默认展开
@@ -121,6 +122,22 @@ async function primeDocCodeBlocks(markdown: string): Promise<void> {
     invoke<number[]>('highlight_scene_all', { text })
   );
 }
+
+/** 后端整篇高亮 (不需要项目上下文, 也不需要语言服务在线) */
+function highlightScene(text: string): Promise<number[]> {
+  return invoke<number[]>('highlight_scene_all', { text });
+}
+
+/**
+ * 全文语义高亮愿意等语言服务多久。
+ *
+ * 握手 (initialize 往返) 通常 200ms 内就完成, 这里等的主要是**项目加载** —— 项目越大越慢。
+ * 但高亮本身不需要项目上下文 (同一份 highlight(), 只是本地调用), 所以不必陪着它一起等:
+ * 预算一到就用本地结果着色, 用户不会对着一片灰等下去。
+ */
+const HIGHLIGHT_LSP_BUDGET_MS = 1500;
+/** 预算内的重试间隔 (语言服务答"还不知道这个文件"时) */
+const HIGHLIGHT_RETRY_MS = 250;
 
 const LSP_KIND_TO_MONACO: Record<number, monaco.languages.CompletionItemKind> = {
   1: monaco.languages.CompletionItemKind.Text,
@@ -424,19 +441,31 @@ export function setupMonaco(): void {
   // 265 行同样标记为 true), 之后区间 provider 不再被调用 —— viewportSemanticTokens.js:89 与
   // tokenizationTextModelPart.js:185 都先判定 hasCompleteSemanticTokens()。
   // 即当前生效的是全文 provider (整篇与缩略图都有色), 区间 provider 在本版本 Monaco 下不会被触发。
+  //
+  // 正因为"空回包也算完成", 全文 provider 不能一上来就把空答案交出去: 语言服务在项目还没扫完时
+  // 对本项目文件只会回空, 一旦被 Monaco 记成"已完成", 这个场景就再也不会有高亮。取值策略
+  // (预算内重试 + 超时退回本地高亮) 见 highlight-fallback.ts。
   monaco.languages.registerDocumentSemanticTokensProvider(LANGUAGE_ID, {
     getLegend: semanticTokenLegend,
-    provideDocumentSemanticTokens: async (model) => {
+    provideDocumentSemanticTokens: async (model, _lastResultId, token) => {
       const path = pathOfModel(model);
-      try {
-        // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端整篇高亮
-        const data = path
-          ? await lspClient.semanticTokens(path)
-          : await invoke<number[]>('highlight_scene_all', { text: model.getValue() });
-        return { data: new Uint32Array(data ?? []) };
-      } catch {
-        return null;
+      const text = model.getValue();
+      // 内存文档 (如文本预处理生成的脚本) 没有 LSP 路径: 调用后端整篇高亮
+      if (!path) {
+        try {
+          return { data: new Uint32Array(await highlightScene(text)) };
+        } catch {
+          return null;
+        }
       }
+      const data = await resolveSemanticTokens({
+        lsp: () => lspClient.semanticTokens(path),
+        local: () => highlightScene(text),
+        budgetMs: HIGHLIGHT_LSP_BUDGET_MS,
+        retryMs: HIGHLIGHT_RETRY_MS,
+        isCancelled: () => token.isCancellationRequested,
+      });
+      return { data: new Uint32Array(data ?? []) };
     },
     // 无 resultId (不使用 delta 协议), 无需释放
     releaseDocumentSemanticTokens: () => {},

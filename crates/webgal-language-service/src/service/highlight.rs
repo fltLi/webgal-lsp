@@ -174,7 +174,7 @@ fn highlight_command<F>(primary: &PrimarySentence, sentence: &Sentence, mut f: F
 where
     F: FnMut(PrimaryToken),
 {
-    if !sentence.is_say() {
+    if !sentence.is_say() || primary.command == "say" {
         f(PrimaryToken {
             span: primary.get_span(primary.command),
             kind: TokenType::Function,

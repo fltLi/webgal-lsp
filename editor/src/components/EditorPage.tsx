@@ -240,9 +240,10 @@ export function EditorPage() {
           title="关闭项目"
           onClick={() => confirmClose(() => closeProject())}
         />
-        <span className="project-name">{projectName ?? '未命名项目'}</span>
-
-        <span className="top-bar-spacer" />
+        {/* 项目名占据左侧栏与右侧按钮之间的全部空档：短名不留空白，长名才被省略号截断。 */}
+        <span className="project-name" title={projectName ?? '未命名项目'}>
+          {projectName ?? '未命名项目'}
+        </span>
 
         <Button appearance="subtle" icon={<DocumentTextRegular />} title="文本预处理" onClick={startNovelPreprocess} />
         <Button

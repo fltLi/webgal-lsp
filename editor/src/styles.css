@@ -422,8 +422,9 @@ body {
 .project-name {
   font-weight: 600;
   font-size: 14px;
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
-  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -489,10 +490,6 @@ body {
   padding: 8px;
   color: var(--app-muted);
   font-size: 12px;
-}
-
-.top-bar-spacer {
-  flex: 1;
 }
 
 .editor-main {
