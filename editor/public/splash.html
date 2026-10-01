@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-Hans">
   <head>
     <meta charset="UTF-8" />
@@ -33,61 +33,156 @@
       })();
     </script>
     <style>
+      /* 开屏窗口 (360×130, 无边框) 的唯一职责是遮住主窗口初始化的白屏。
+         配色与字体对齐 styles.css 的 :root 变量, 保持与主界面同一套 Fluent 观感。 */
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
       }
+      html,
       body {
-        --splash-background: #f7f7f8;
-        --splash-foreground: #242424;
-        --splash-spinner-track: rgba(0, 0, 0, 0.12);
-        --splash-spinner: #2878d8;
+        height: 100%;
+      }
+      body {
+        --splash-bg: #fafafa;
+        --splash-fg: #333333;
+        --splash-muted: #666666;
+        --splash-accent: #005caf;
+        --splash-track: rgba(0, 0, 0, 0.12);
         display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100vh;
-        background: var(--splash-background);
-        color: var(--splash-foreground);
-        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        align-items: stretch;
+        padding: 18px 22px;
+        gap: 18px;
+        background: var(--splash-bg);
+        color: var(--splash-fg);
+        font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
         overflow: hidden;
         user-select: none;
       }
       [data-theme='dark'] body {
-        --splash-background: #1e1e1e;
-        --splash-foreground: #d4d4d4;
-        --splash-spinner-track: rgba(255, 255, 255, 0.15);
-        --splash-spinner: #4f9cf9;
+        --splash-bg: #181818;
+        --splash-fg: #dfdfdf;
+        --splash-muted: #969696;
+        --splash-accent: #59b2ff;
+        --splash-track: rgba(255, 255, 255, 0.15);
       }
-      .wrap {
-        text-align: center;
+
+      /* 左侧: 应用图标。
+         图标不走 <img>, 而是由 vite.config.ts 的 inlineSplashIcon 在开发/构建时把
+         public/icon.svg 注入到下面的占位符里 —— 外链会让图标比文字晚一帧出现
+         (webview 先画文字, 图片还要再走一次资源请求), 首屏那一下的"缺角"很明显。 */
+      .mark {
+        flex: 0 0 auto;
+        width: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: breathe 2.6s ease-in-out infinite;
+      }
+      .mark svg {
+        display: block;
+        width: 48px;
+        height: 48px;
+      }
+
+      /* 右侧: 标题 + 介绍文本贴右上, 进度条贴右下 */
+      .side {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: space-between;
+        text-align: right;
+        padding: 1px 0;
+        animation: rise 0.4s ease both;
+        animation-delay: 0.08s;
       }
       .title {
-        font-size: 22px;
+        font-size: 18px;
         font-weight: 600;
-        letter-spacing: 0.5px;
-        margin-bottom: 18px;
+        line-height: 1.3;
+        letter-spacing: 0.01em;
       }
-      .spinner {
-        width: 28px;
-        height: 28px;
-        margin: 0 auto;
-        border: 3px solid var(--splash-spinner-track);
-        border-top-color: var(--splash-spinner);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
+      .intro {
+        margin-top: 2px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--splash-muted);
+        letter-spacing: 0.02em;
       }
-      @keyframes spin {
+
+      /* 不定长进度条 (与主界面同一套强调色), 是这一屏唯一的加载指示 */
+      .progress {
+        width: 160px;
+        height: 2px;
+        border-radius: 1px;
+        background: var(--splash-track);
+        overflow: hidden;
+      }
+      .progress span {
+        display: block;
+        width: 45%;
+        height: 100%;
+        border-radius: 1px;
+        background: var(--splash-accent);
+        /* 负延迟让首帧就落在轨道中段: 窗口一出现就能看见它在移动, 而不是先空一拍 */
+        animation: sweep 1.4s ease-in-out infinite;
+        animation-delay: -0.35s;
+      }
+
+      /* 两端各留一点在轨道内 (-85% / 205%): 全程都有可见的一段,
+         否则每轮开头/结尾会出现"空轨道", 开屏只活一两秒, 恰好停在那一帧就像没在加载。 */
+      @keyframes sweep {
+        0% {
+          transform: translateX(-85%);
+        }
+        100% {
+          transform: translateX(205%);
+        }
+      }
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 0.82;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
         to {
-          transform: rotate(360deg);
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      /* 尊重系统的"减少动态效果"设置: 只停掉装饰性动画 (入场/呼吸)。
+         进度条不在此列 —— 它是这一屏唯一的加载指示, 停住就只剩一根不动的细线,
+         看不出是在加载; 而它只是 2px 高的一条在 160px 内移动, 不构成前庭负担。 */
+      @media (prefers-reduced-motion: reduce) {
+        .mark,
+        .side {
+          animation: none;
         }
       }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="title">WebGAL Ink</div>
-      <div class="spinner"></div>
+    <div class="mark" aria-hidden="true"><!-- inline:icon.svg --></div>
+    <div class="side">
+      <div class="head">
+        <div class="title">WebGAL Ink</div>
+        <!-- 与开始界面副标题、设置「关于」介绍保持同一句 -->
+        <div class="intro">WebGAL 视觉小说代码编辑器</div>
+      </div>
+      <div class="progress"><span></span></div>
     </div>
   </body>
 </html>

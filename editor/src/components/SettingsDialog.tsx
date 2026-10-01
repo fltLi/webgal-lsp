@@ -142,7 +142,7 @@ export function SettingsDialog() {
           {category === 'about' && (
             <div className="settings-about">
               <section className="settings-about-intro">
-                <img className="settings-about-mark" src="/ink-icon.svg" alt="" draggable={false} />
+                <img className="settings-about-mark" src="/icon.svg" alt="" draggable={false} />
                 <div>
                   <h3 className="settings-about-title">WebGAL Ink</h3>
                   <p className="settings-about-description">WebGAL 视觉小说代码编辑器</p>

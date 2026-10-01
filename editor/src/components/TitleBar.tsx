@@ -61,7 +61,7 @@ export function TitleBar() {
     <header className="title-bar" data-tauri-drag-region>
       <div className="title-bar-brand" data-tauri-drag-region>
         {/* 应用自己的图标 (与任务栏/安装包同一个), 不用图标字体凑一个 */}
-        <img className="title-bar-mark" src="/ink-icon.svg" alt="" draggable={false} />
+        <img className="title-bar-mark" src="/icon.svg" alt="" draggable={false} />
         <span className="title-bar-name">WebGAL Ink</span>
       </div>
 

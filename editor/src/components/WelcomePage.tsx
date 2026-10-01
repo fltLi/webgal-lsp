@@ -171,7 +171,7 @@ export function WelcomePage() {
     <div className="welcome">
       <header className="welcome-head">
         <div className="welcome-brand">
-          <img className="welcome-mark" src="/ink-icon.svg" alt="" draggable={false} />
+          <img className="welcome-mark" src="/icon.svg" alt="" draggable={false} />
           <div className="welcome-brand-text">
             <h1 className="welcome-title">WebGAL Ink</h1>
             <p className="welcome-subtitle">WebGAL 视觉小说代码编辑器</p>
