@@ -11,50 +11,20 @@ import { describe, expect, it } from 'vitest';
 import {
   gameConfigSummary,
   gameConfigValue,
-  parseGameConfigText,
   setGameConfigValue,
   setGameConfigValues,
 } from '../src/lib/gameConfig';
 
-describe('parseGameConfigText', () => {
-  it('按行解析键值, 跳过空行与纯注释行', () => {
-    const entries = parseGameConfigText('Game_name:星海叙事;\n\n; 这是注释\nGame_key:abc;\n');
-    expect(entries).toEqual([
-      { name: 'Game_name', value: '星海叙事', comment: '' },
-      { name: 'Game_key', value: 'abc', comment: '' },
-    ]);
-  });
-
-  it('保留行内注释', () => {
-    const entries = parseGameConfigText('Title_img:title.png; 标题背景图\n');
-    expect(entries[0]).toEqual({ name: 'Title_img', value: 'title.png', comment: '标题背景图' });
-  });
-
-  it('缺少结尾分号也能解析, 缺少冒号则整行忽略', () => {
-    const entries = parseGameConfigText('Game_name:Demo\n没有冒号的一行\n');
-    expect(entries).toEqual([{ name: 'Game_name', value: 'Demo', comment: '' }]);
-  });
-
-  it('值为空的配置不算配置项 (与 is_config 一致)', () => {
-    expect(parseGameConfigText('Game_name:;\n')).toEqual([]);
-  });
-
-  it('CRLF 换行同样解析', () => {
-    expect(parseGameConfigText('Game_name:A;\r\nGame_key:B;\r\n')).toHaveLength(2);
-  });
-
-  it('同名配置保留两条 (取值时后者胜)', () => {
-    const entries = parseGameConfigText('Game_name:旧;\nGame_name:新;\n');
-    expect(entries).toHaveLength(2);
-    expect(gameConfigValue(entries, 'Game_name')).toBe('新');
-  });
-});
-
 describe('gameConfigSummary', () => {
   it('汇总侧栏需要的字段', () => {
-    const entries = parseGameConfigText(
-      'Game_name:星海叙事;\nGame_key:key-1;\nDescription:一个测试项目;\nTitle_img:cover.png;\nTitle_bgm:bgm.ogg;\nGame_Logo:logo.png;\n'
-    );
+    const entries = [
+      { name: 'Game_name', value: '星海叙事', comment: '' },
+      { name: 'Game_key', value: 'key-1', comment: '' },
+      { name: 'Description', value: '一个测试项目', comment: '' },
+      { name: 'Title_img', value: 'cover.png', comment: '' },
+      { name: 'Title_bgm', value: 'bgm.ogg', comment: '' },
+      { name: 'Game_Logo', value: 'logo.png', comment: '' },
+    ];
     expect(gameConfigSummary(entries)).toEqual({
       name: '星海叙事',
       gameKey: 'key-1',
@@ -100,6 +70,11 @@ describe('setGameConfigValue', () => {
   it('只改写最后一条同名配置', () => {
     const next = setGameConfigValue('Game_name:一;\nGame_name:二;\n', 'Game_name', '三');
     expect(next).toBe('Game_name:一;\nGame_name:三;\n');
+  });
+
+  it('空值行不算已有配置, 改写时追加有效配置', () => {
+    const next = setGameConfigValue('Game_key:;\n', 'Game_key', 'key-1');
+    expect(next).toBe('Game_key:;\nGame_key:key-1;\n');
   });
 
   it('一次改写多条 (新建项目写名称与识别码)', () => {

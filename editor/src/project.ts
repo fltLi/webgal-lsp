@@ -2,11 +2,11 @@
 
 // 项目打开/关闭/创建控制器。
 
-import { readGameConfig } from './commands/gameConfig';
+import { parseGameConfigText, readGameConfig } from './commands/gameConfig';
 import { copyDirectory } from './commands/server';
 import { findBinding } from './lib/bindings';
 import { fs } from './lib/fs';
-import { gameConfigSummary, parseGameConfigText, setGameConfigValues, type GameConfigSummary } from './lib/gameConfig';
+import { gameConfigSummary, setGameConfigValues, type GameConfigSummary } from './lib/gameConfig';
 import { joinPath, sanitizeFolderName, stripTrailingSeparator } from './lib/paths';
 import { upsertRecentProject } from './lib/recentProjects';
 import { loadSession, saveSession, sessionFromTabs } from './lib/session';
@@ -117,7 +117,13 @@ export async function readProjectConfigSummary(projectPath: string): Promise<Gam
       (doc) => doc.path.replace(/\\/g, '/').toLowerCase() === configPath.replace(/\\/g, '/').toLowerCase()
     );
 
-  if (opened) return gameConfigSummary(parseGameConfigText(opened.content));
+  if (opened) {
+    try {
+      return gameConfigSummary(await parseGameConfigText(opened.content));
+    } catch {
+      return gameConfigSummary([]);
+    }
+  }
 
   try {
     const result = await readGameConfig(projectPath);

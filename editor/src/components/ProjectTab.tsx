@@ -11,7 +11,7 @@ import { findBinding } from '../lib/bindings';
 import { engineLabel, resolveProjectEngine } from '../lib/engine';
 import { resolveProjectTemplate, type ProjectTemplateResolution } from '../lib/engineTemplate';
 import { fs } from '../lib/fs';
-import { gameConfigSummary, parseGameConfigText, type GameConfigSummary } from '../lib/gameConfig';
+import type { GameConfigSummary } from '../lib/gameConfig';
 import { useImageUrl } from '../lib/localImage';
 import { joinPath } from '../lib/paths';
 import {
@@ -57,10 +57,6 @@ export function ProjectTab() {
   useEffect(() => {
     if (!projectPath) {
       setSummary(null);
-      return;
-    }
-    if (configContent !== undefined) {
-      setSummary(gameConfigSummary(parseGameConfigText(configContent)));
       return;
     }
     let cancelled = false;

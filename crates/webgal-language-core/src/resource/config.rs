@@ -21,8 +21,8 @@ impl ConfigItem {
         let (config, comment) = line.split_once(';').unwrap_or((line, ""));
         let (name, value) = config.split_once(':').unwrap_or((config, ""));
         Self {
-            name: name.to_string(),
-            value: value.trim_end().to_string(),
+            name: name.trim().to_string(),
+            value: value.trim().to_string(),
             comment: comment.trim_start().to_string(),
         }
     }
@@ -147,6 +147,10 @@ mod tests {
         assert_eq!(item.value, "value");
         assert_eq!(item.comment, "");
         assert_eq!(item.to_string(), "key:value;");
+
+        let item = ConfigItem::from_str(" Title_img : ext/cover-16x9.png; cover");
+        assert_eq!(item.name, "Title_img");
+        assert_eq!(item.value, "ext/cover-16x9.png");
     }
 
     #[test]

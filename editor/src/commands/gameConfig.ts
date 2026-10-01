@@ -23,3 +23,8 @@ export interface GameConfigReadResult {
 export function readGameConfig(projectPath: string): Promise<GameConfigReadResult> {
   return invoke<GameConfigReadResult>('read_game_config', { projectPath });
 }
+
+/** 使用后端 Config 解析器解析编辑器中的文本 (包括尚未保存的内容)。 */
+export function parseGameConfigText(text: string): Promise<GameConfigEntry[]> {
+  return invoke<GameConfigEntry[]>('parse_game_config_text', { text });
+}

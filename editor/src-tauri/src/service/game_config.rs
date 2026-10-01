@@ -46,8 +46,14 @@ pub(crate) fn read_game_config_at(project_path: &Path) -> Result<GameConfigReadR
 
     let text =
         fs::read_to_string(&path).map_err(|error| format!("读取 config.txt 失败: {error}"))?;
-    let config = Config::from_str(&text);
-    let entries = config
+    Ok(GameConfigReadResult {
+        exists: true,
+        entries: parse_config_entries(&text),
+    })
+}
+
+fn parse_config_entries(text: &str) -> Vec<GameConfigEntry> {
+    Config::from_str(text)
         .iter()
         .filter(|item| item.is_config())
         .map(|item| GameConfigEntry {
@@ -55,12 +61,13 @@ pub(crate) fn read_game_config_at(project_path: &Path) -> Result<GameConfigReadR
             value: item.value.clone(),
             comment: item.comment.clone(),
         })
-        .collect();
+        .collect()
+}
 
-    Ok(GameConfigReadResult {
-        exists: true,
-        entries,
-    })
+/// 解析前端传入的 config.txt 文本, 包括尚未保存的编辑内容。
+#[tauri::command]
+pub fn parse_game_config_text(text: String) -> Vec<GameConfigEntry> {
+    parse_config_entries(&text)
 }
 
 /// 读取并解析 `<project_path>/game/config.txt`。
@@ -129,6 +136,7 @@ Game_name:test;
 
 Game_key:abc; inline comment
 Game_language:zh_CN;
+ Title_img : ext/cover-16x9.png;
 ",
         );
 
@@ -150,6 +158,11 @@ Game_language:zh_CN;
                 GameConfigEntry {
                     name: "Game_language".to_string(),
                     value: "zh_CN".to_string(),
+                    comment: String::new(),
+                },
+                GameConfigEntry {
+                    name: "Title_img".to_string(),
+                    value: "ext/cover-16x9.png".to_string(),
                     comment: String::new(),
                 },
             ]
@@ -184,6 +197,14 @@ key1:3;
         assert_eq!(item.value, "3");
 
         fs::remove_dir_all(&root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_unsaved_text_with_the_core_config_parser() {
+        let entries = parse_game_config_text(" Title_img : ext/cover-16x9.png;\n".to_string());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Title_img");
+        assert_eq!(entries[0].value, "ext/cover-16x9.png");
     }
 
     #[test]

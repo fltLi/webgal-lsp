@@ -40,18 +40,8 @@ const EMPTY_SUMMARY: GameConfigSummary = {
   logo: '',
 };
 
-/** 解析 config.txt 全文。 */
-export function parseGameConfigText(text: string): GameConfigEntry[] {
-  const entries: GameConfigEntry[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const entry = parseLine(line);
-    if (entry) entries.push(entry);
-  }
-  return entries;
-}
-
-/** 解析单行; 不是配置项时返回 null。 */
-function parseLine(line: string): GameConfigEntry | null {
+/** 为改写操作读取单行配置及注释; 不负责配置展示或项目摘要。 */
+function parseLineForEdit(line: string): Pick<GameConfigEntry, 'name' | 'comment'> | null {
   const trimmed = line.trim();
   if (trimmed === '' || trimmed.startsWith(';')) return null;
 
@@ -62,10 +52,9 @@ function parseLine(line: string): GameConfigEntry | null {
   const colon = content.indexOf(':');
   if (colon === -1) return null;
   const name = content.slice(0, colon).trim();
-  const value = content.slice(colon + 1).trimEnd();
+  const value = content.slice(colon + 1).trim();
   if (!name || !value) return null;
-
-  return { name, value, comment };
+  return { name, comment };
 }
 
 /** 取值: 同名配置取**最后**一次出现 (与 `Config::get_config` 一致)。 */
@@ -110,12 +99,12 @@ export function setGameConfigValues(text: string, values: Record<string, string>
   for (const [name, value] of Object.entries(values)) {
     let target = -1;
     for (let index = lines.length - 1; index >= 0; index -= 1) {
-      if (parseLine(lines[index])?.name === name) {
+      if (parseLineForEdit(lines[index])?.name === name) {
         target = index;
         break;
       }
     }
-    const comment = target === -1 ? '' : (parseLine(lines[target])?.comment ?? '');
+    const comment = target === -1 ? '' : (parseLineForEdit(lines[target])?.comment ?? '');
     const line = comment ? `${name}:${value}; ${comment}` : `${name}:${value};`;
     if (target === -1) lines.push(line);
     else lines[target] = line;
