@@ -35,12 +35,20 @@ import { openFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
-import { FileTree, type FileNode } from './FileTree';
+import { FileTree, type FileNode, type FileTreeViewStateCache } from './FileTree';
 import { NameInputDialog } from './SceneFileDialogs';
 
 type PromptState = { mode: 'newFile' | 'newFolder'; dir: string } | { mode: 'rename'; node: FileNode };
 
-export function SceneBrowser() {
+const isSceneFile = (node: FileNode) => node.name.toLowerCase().endsWith('.txt');
+
+export function SceneBrowser({
+  viewStateCache,
+  viewStateKey,
+}: {
+  viewStateCache: FileTreeViewStateCache;
+  viewStateKey: string;
+}) {
   const projectPath = useAppStore((s) => s.projectPath);
   const gitStatus = useAppStore((s) => s.gitStatus);
   // 场景浏览器高亮"当前正在编辑的场景": 即活动选项卡为场景类时对应的路径
@@ -224,9 +232,13 @@ export function SceneBrowser() {
   return (
     <div className="scene-browser">
       <FileTree
+        key={viewStateKey}
         rootPath={`${projectPath}\\game\\scene`}
         selectedPath={activePath}
         refreshKey={refreshKey}
+        includeFile={isSceneFile}
+        viewStateCache={viewStateCache}
+        viewStateKey={viewStateKey}
         onItemContextMenu={openMenu}
         badge={(node) => <FileBadges path={node.path} />}
         menu={buildBlankMenu}

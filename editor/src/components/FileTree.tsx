@@ -7,7 +7,14 @@
 // 资源目录动辄上千个文件, 一次性渲染出来会卡住整个界面 —— 磁盘读取其实很快,
 // 卡的是几千个 DOM 节点加同样多的缩略图请求。
 
-import { ChevronRightRegular, FolderRegular, MoreVerticalRegular, ArrowUpRegular } from '@fluentui/react-icons';
+import {
+  ChevronDownRegular,
+  ChevronRightRegular,
+  FolderRegular,
+  HomeRegular,
+  MoreVerticalRegular,
+  ArrowUpRegular,
+} from '@fluentui/react-icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
@@ -24,6 +31,16 @@ export interface FileNode {
   isDirectory: boolean;
   kind: FileKind;
 }
+
+export interface FileTreeViewState {
+  currentRel: string;
+  query: string;
+  flat: boolean;
+  visibleCount: number;
+  scrollTop: number;
+}
+
+export type FileTreeViewStateCache = Map<string, FileTreeViewState>;
 
 /** 长名称中间省略: 保留开头与扩展名后缀。 */
 export function middleEllipsis(text: string, maxLen: number): string {
@@ -89,6 +106,11 @@ interface FileTreeProps {
   assetUrl?: (rel: string) => string | undefined;
   /** 内容变更 (新建/重命名/删除) 后递增, 强制重新加载当前目录 */
   refreshKey?: number;
+  /** 可选文件过滤器 (目录始终保留) */
+  includeFile?: (node: FileNode) => boolean;
+  /** 编辑页生命周期内的视图状态缓存 */
+  viewStateCache?: FileTreeViewStateCache;
+  viewStateKey?: string;
   /** 工具栏右侧下拉菜单项 (返回上级按钮与展平按钮独立保留在工具栏上) */
   menu?: (currentDir: string) => ContextMenuItem[];
   /** 列表项右键菜单回调 (文件与文件夹均触发) */
@@ -112,6 +134,9 @@ export function FileTree({
   excludeTop,
   assetUrl,
   refreshKey = 0,
+  includeFile,
+  viewStateCache,
+  viewStateKey,
   menu,
   onItemContextMenu,
   badge,
@@ -119,15 +144,22 @@ export function FileTree({
   onBlankContextMenu,
   onDropFiles,
 }: FileTreeProps) {
-  const [currentRel, setCurrentRel] = useState('');
+  const initialView = useRef(
+    viewStateCache && viewStateKey ? viewStateCache.get(viewStateKey) : undefined
+  );
+  const [currentRel, setCurrentRel] = useState(initialView.current?.currentRel ?? '');
   const [dirEntries, setDirEntries] = useState<FileNode[]>([]);
-  const [query, setQuery] = useState('');
-  const [flat, setFlat] = useState(false);
+  const [loadedDirectory, setLoadedDirectory] = useState<string | null>(null);
+  const [query, setQuery] = useState(initialView.current?.query ?? '');
+  const [flat, setFlat] = useState(initialView.current?.flat ?? false);
   const [flatEntries, setFlatEntries] = useState<FileNode[] | null>(null);
   const [searchResults, setSearchResults] = useState<FileNode[] | null>(null);
   const [localRefreshKey, setLocalRefreshKey] = useState(0);
   /** 当前渲染了多少行 (分页渲染, 见 FILE_TREE_PAGE_SIZE) */
-  const [visibleCount, setVisibleCount] = useState(FILE_TREE_PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState(initialView.current?.visibleCount ?? FILE_TREE_PAGE_SIZE);
+  const listRef = useRef<HTMLDivElement>(null);
+  const restoredScroll = useRef(false);
+  const previousView = useRef<{ currentAbs: string; query: string; flat: boolean } | null>(null);
 
   const currentAbs = currentRel ? `${rootPath}\\${currentRel.replace(/\//g, '\\')}` : rootPath;
   const refreshVersion = refreshKey + localRefreshKey;
@@ -145,7 +177,7 @@ export function FileTree({
    * 需要递归。递归监听会把整棵子树的监视器都挂上 —— 资源目录动辄上千文件, 每进一次目录
    * 都要重挂一遍, 正是"进目录卡一下"的来源。
    */
-  const watchRecursively = flat || query.trim() !== '';
+  const watchRecursively = flat;
   useEffect(() => {
     let cancelled = false;
     let unwatch: (() => void) | null = null;
@@ -220,12 +252,14 @@ export function FileTree({
             isDirectory: e.isDirectory,
             kind: e.isDirectory ? 'other' : kindFor(e.name),
           }))
+          .filter((node) => node.isDirectory || !includeFile || includeFile(node))
       );
+      setLoadedDirectory(currentAbs);
     })();
     return () => {
       cancelled = true;
     };
-  }, [currentAbs, excludeTop, refreshVersion]);
+  }, [currentAbs, excludeTop, includeFile, refreshVersion]);
 
   // 展平: 递归列出当前目录下所有文件
   useEffect(() => {
@@ -235,12 +269,20 @@ export function FileTree({
     }
     let cancelled = false;
     void recursiveFiles(currentAbs, currentRel).then((files) => {
-      if (!cancelled) setFlatEntries(files);
+      if (!cancelled) {
+        setFlatEntries(
+          files.filter(
+            (file) =>
+              (!includeFile || includeFile(file)) &&
+              !(currentRel === '' && excludeTop && excludeTop(file.rel.split('/')[0]))
+          )
+        );
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [flat, currentAbs, currentRel, refreshVersion]);
+  }, [flat, currentAbs, currentRel, excludeTop, includeFile, refreshVersion]);
 
   // 搜索: 在当前目录内递归过滤文件
   useEffect(() => {
@@ -249,26 +291,49 @@ export function FileTree({
       setSearchResults(null);
       return;
     }
-    let cancelled = false;
-    void recursiveFiles(currentAbs, currentRel).then((files) => {
-      if (!cancelled) {
-        setSearchResults(files.filter((f) => f.name.toLowerCase().includes(q) || f.rel.toLowerCase().includes(q)));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [query, currentAbs, currentRel, refreshVersion]);
+    const source = flat ? flatEntries : dirEntries.filter((entry) => !entry.isDirectory);
+    if (!source) {
+      setSearchResults(null);
+      return;
+    }
+    setSearchResults(source.filter((file) => file.name.toLowerCase().includes(q) || file.rel.toLowerCase().includes(q)));
+  }, [query, flat, flatEntries, dirEntries]);
 
   const resetView = () => {
     setQuery('');
     setFlat(false);
   };
 
-  // 换目录 / 换视图 / 改搜索词时回到第一页 (内容刷新不重置, 见 onListScroll)
   useEffect(() => {
-    setVisibleCount(FILE_TREE_PAGE_SIZE);
+    if (!viewStateCache || !viewStateKey) return;
+    const previous = viewStateCache.get(viewStateKey);
+    viewStateCache.set(viewStateKey, {
+      currentRel,
+      query,
+      flat,
+      visibleCount,
+      scrollTop: listRef.current?.scrollTop ?? previous?.scrollTop ?? 0,
+    });
+  }, [viewStateCache, viewStateKey, currentRel, query, flat, visibleCount]);
+
+  useEffect(() => {
+    const previous = previousView.current;
+    if (previous && (previous.currentAbs !== currentAbs || previous.query !== query || previous.flat !== flat)) {
+      if (listRef.current) listRef.current.scrollTop = 0;
+      setVisibleCount(FILE_TREE_PAGE_SIZE);
+    }
+    previousView.current = { currentAbs, query, flat };
   }, [currentAbs, query, flat]);
+
+  const viewReady =
+    loadedDirectory === currentAbs &&
+    (!flat || flatEntries !== null) &&
+    (!query.trim() || searchResults !== null);
+  useEffect(() => {
+    if (!viewReady || restoredScroll.current) return;
+    if (listRef.current) listRef.current.scrollTop = initialView.current?.scrollTop ?? 0;
+    restoredScroll.current = true;
+  }, [viewReady]);
 
   const enterDir = (name: string) => {
     setCurrentRel((prev) => (prev ? `${prev}/${name}` : name));
@@ -277,6 +342,11 @@ export function FileTree({
 
   const goUp = () => {
     setCurrentRel((prev) => (prev.includes('/') ? prev.slice(0, prev.lastIndexOf('/')) : ''));
+    resetView();
+  };
+
+  const goToRoot = () => {
+    setCurrentRel('');
     resetView();
   };
 
@@ -306,9 +376,17 @@ export function FileTree({
    * "加载更多"按钮兜底。
    */
   const onListScroll = (event: React.UIEvent<HTMLDivElement>) => {
-    if (!hasMore) return;
     const el = event.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore();
+    if (viewStateCache && viewStateKey) {
+      viewStateCache.set(viewStateKey, {
+        currentRel,
+        query,
+        flat,
+        visibleCount,
+        scrollTop: el.scrollTop,
+      });
+    }
+    if (hasMore && el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore();
   };
 
   // 展平/搜索时展示"从当前位置出发"的相对路径 (去掉从根到当前目录的前缀)
@@ -347,6 +425,7 @@ export function FileTree({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [pathMenuPos, setPathMenuPos] = useState<{ x: number; y: number } | null>(null);
 
   // 关闭下拉菜单: 点击遮罩 / Esc / 窗口变化
   useEffect(() => {
@@ -375,18 +454,63 @@ export function FileTree({
     setMenuOpen(true);
   };
 
+  const openPathMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setPathMenuPos({ x: rect.left, y: rect.bottom + 4 });
+  };
+
+  const navigateTo = (rel: string) => {
+    setCurrentRel(rel);
+    resetView();
+  };
+
+  const pathSegments = currentRel ? currentRel.split('/') : [];
+  const pathMenuItems: ContextMenuItem[] = [
+    {
+      key: 'root',
+      label: '根目录',
+      title: rootPath,
+      onClick: () => navigateTo(''),
+    },
+    ...pathSegments.map((segment, index) => {
+      const rel = pathSegments.slice(0, index + 1).join('/');
+      return {
+        key: `directory-${index}`,
+        label: segment,
+        title: rel,
+        onClick: () => navigateTo(rel),
+      };
+    }),
+  ];
+
   const toolbar = (
     <div className="file-tree-toolbar">
-      <button className="file-tree-icon-btn" title="返回上级" disabled={currentRel === ''} onClick={goUp}>
-        <ArrowUpRegular />
+      <button className="file-tree-icon-btn" title="返回根目录" disabled={currentRel === ''} onClick={goToRoot}>
+        <HomeRegular />
       </button>
-      <span className="file-tree-path" title={currentRel || '/'}>
-        {currentRel || '根目录'}
-      </span>
+      <button
+        type="button"
+        className="file-tree-path"
+        title={currentRel || '根目录'}
+        aria-haspopup="menu"
+        aria-expanded={pathMenuPos !== null}
+        onClick={openPathMenu}
+      >
+        <span className="file-tree-path-label">{pathSegments.at(-1) || '根目录'}</span>
+        <ChevronDownRegular />
+      </button>
+      {pathMenuPos ? (
+        <ContextMenu
+          x={pathMenuPos.x}
+          y={pathMenuPos.y}
+          items={pathMenuItems}
+          onClose={() => setPathMenuPos(null)}
+        />
+      ) : null}
       <input
         className="file-tree-search"
         type="text"
-        placeholder="搜索当前目录…"
+        placeholder={flat ? '在当前目录中递归搜索...' : '在当前目录中搜索...'}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
@@ -421,6 +545,7 @@ export function FileTree({
 
   const listNode = (
     <div
+      ref={listRef}
       className="file-tree-list"
       onScroll={onListScroll}
       onContextMenu={(event) => {
@@ -440,6 +565,12 @@ export function FileTree({
         }
       }}
     >
+      {currentRel ? (
+        <button type="button" className="file-tree-parent" onClick={goUp} title="返回上一级目录">
+          <ArrowUpRegular />
+          <span>返回上一级</span>
+        </button>
+      ) : null}
       {list.length === 0 ? (
         <span className="muted">{searchResults || flatEntries ? '无匹配项' : '空目录'}</span>
       ) : searchResults || flatEntries ? (

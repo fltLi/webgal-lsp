@@ -49,6 +49,7 @@ import { ResourceTab } from './ResourceTab';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
 import { StatusBar } from './StatusBar';
+import type { FileTreeViewStateCache } from './FileTree';
 
 export function EditorPage() {
   const projectPath = useAppStore((s) => s.projectPath);
@@ -70,6 +71,11 @@ export function EditorPage() {
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
   const novelSeq = useRef(0);
+  const fileTreeViewStateCache = useRef<FileTreeViewStateCache>(new Map());
+
+  useEffect(() => {
+    fileTreeViewStateCache.current.clear();
+  }, [projectPath]);
 
   // 项目打开时: 拉取 git 状态并监听文件变化防抖刷新
   useEffect(() => {
@@ -254,9 +260,15 @@ export function EditorPage() {
               </div>
               <div className="sidebar-content">
                 {sidebarTab === 'scenes' ? (
-                  <SceneBrowser />
+                  <SceneBrowser
+                    viewStateCache={fileTreeViewStateCache.current}
+                    viewStateKey={`scenes:${projectPath ?? ''}`}
+                  />
                 ) : sidebarTab === 'resources' ? (
-                  <ResourceBrowser />
+                  <ResourceBrowser
+                    viewStateCache={fileTreeViewStateCache.current}
+                    viewStateKey={`resources:${projectPath ?? ''}`}
+                  />
                 ) : sidebarTab === 'repository' ? (
                   <RepositoryTab />
                 ) : (

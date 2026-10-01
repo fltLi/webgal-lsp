@@ -34,11 +34,19 @@ import { configPathOf, openProjectConfig, openResourceFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
-import { FileTree, type FileNode } from './FileTree';
+import { FileTree, type FileNode, type FileTreeViewStateCache } from './FileTree';
 import { NameInputDialog } from './SceneFileDialogs';
 import type { FileKind } from '../lib/fileKind';
 
-export function ResourceBrowser() {
+const isSceneDirectory = (name: string) => name === 'scene';
+
+export function ResourceBrowser({
+  viewStateCache,
+  viewStateKey,
+}: {
+  viewStateCache: FileTreeViewStateCache;
+  viewStateKey: string;
+}) {
   const projectPath = useAppStore((s) => s.projectPath);
   const enginePath = useAppStore((s) => resolveProjectEngine(s.settings, s.projectBindings, s.projectPath)?.path);
   const activeResourcePath = useAppStore((s) => {
@@ -168,6 +176,11 @@ export function ResourceBrowser() {
 
   const selectResource = (file: FileNode) => {
     if (selectTimer.current) clearTimeout(selectTimer.current);
+    if (selected?.path === file.path) {
+      setSelected(null);
+      selectTimer.current = null;
+      return;
+    }
     selectTimer.current = setTimeout(() => {
       setSelected(file);
       selectTimer.current = null;
@@ -299,11 +312,14 @@ export function ResourceBrowser() {
   return (
     <div className="resource-browser">
       <FileTree
+        key={viewStateKey}
         rootPath={`${projectPath}\\game`}
-        excludeTop={(name) => name === 'scene'}
+        excludeTop={isSceneDirectory}
         selectedPath={selected?.path ?? null}
         assetUrl={assetUrl}
         refreshKey={refreshKey}
+        viewStateCache={viewStateCache}
+        viewStateKey={viewStateKey}
         onOpen={selectResource}
         onDoubleClick={(file) => void openResource(file)}
         onDirectoryChange={clearPreview}
