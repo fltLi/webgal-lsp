@@ -138,7 +138,7 @@ export function ListImportDialog({ onClose, onImported }: Props) {
       }
     >
       <Field label="清单文件（.list）">
-        <div className="workbench-input-row">
+        <div className="input-row">
           <Input
             value={listPath}
             readOnly
@@ -156,7 +156,7 @@ export function ListImportDialog({ onClose, onImported }: Props) {
       </Field>
 
       <Field label="音频目录">
-        <div className="workbench-input-row">
+        <div className="input-row">
           <Input value={audioDir} readOnly placeholder="选择存放切分音频的目录（可嵌套子目录）" title={audioDir} />
           <Button
             appearance="secondary"

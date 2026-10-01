@@ -8,7 +8,7 @@
 
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button, Input, Switch } from '@fluentui/react-components';
-import { DocumentRegular, GlobeRegular, PersonRegular } from '@fluentui/react-icons';
+import { DocumentRegular, GlobeRegular } from '@fluentui/react-icons';
 import { useEffect, useState } from 'react';
 
 import { useAppStore, type SettingsCategory } from '../state/store';
@@ -24,11 +24,10 @@ const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'about', label: '关于' },
 ];
 
-// 关于页链接 (仓库 / 作者 / 许可证)
+// 关于页链接 (仓库 / 许可证): 配文本身就是"这一栏是什么", 链接地址另起一行小字
 const ABOUT_LINKS: { label: string; icon: JSX.Element; url: string }[] = [
-  { label: 'GitHub 仓库', icon: <GlobeRegular />, url: 'https://github.com/fltLi/webgal-lsp' },
-  { label: '作者 fltLi', icon: <PersonRegular />, url: 'https://github.com/fltLi' },
-  { label: '许可证 MPL-2.0', icon: <DocumentRegular />, url: 'https://www.mozilla.org/MPL/2.0/' },
+  { label: '仓库：WebGAL LSP', icon: <GlobeRegular />, url: 'https://github.com/fltLi/webgal-lsp' },
+  { label: '许可：MPL-2.0', icon: <DocumentRegular />, url: 'https://www.mozilla.org/MPL/2.0/' },
 ];
 
 export function SettingsDialog() {
@@ -55,6 +54,7 @@ export function SettingsDialog() {
   return (
     <AppDialog
       title="设置"
+      icon={<img src="/icon.svg" alt="" draggable={false} />}
       size="medium"
       height={560}
       flush
@@ -92,9 +92,10 @@ export function SettingsDialog() {
                 />
               </div>
 
-              <div className="settings-field">
+              <div className="settings-field settings-field-inline">
                 <span className="settings-label">字体</span>
                 <Input
+                  className="settings-input-grow"
                   value={settings.editorFontFamily}
                   placeholder="FiraCode, SourceHanSans, Consolas, monospace"
                   onChange={(_, data) => updateSettings({ editorFontFamily: data.value })}
@@ -158,7 +159,7 @@ export function SettingsDialog() {
                     <button key={link.label} className="settings-link-item" onClick={() => void openUrl(link.url)}>
                       <span className="settings-link-icon">{link.icon}</span>
                       <span className="settings-link-copy">
-                        <strong>{link.label}</strong>
+                        <span>{link.label}</span>
                         <small>{link.url.replace('https://', '')}</small>
                       </span>
                     </button>

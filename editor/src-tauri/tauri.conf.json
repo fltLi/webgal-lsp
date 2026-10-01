@@ -24,8 +24,8 @@
       {
         "label": "splashscreen",
         "title": "WebGAL Ink",
-        "width": 360,
-        "height": 130,
+        "width": 420,
+        "height": 150,
         "resizable": false,
         "center": true,
         "decorations": false,

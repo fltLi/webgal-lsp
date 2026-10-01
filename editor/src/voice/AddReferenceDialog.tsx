@@ -109,7 +109,7 @@ export function AddReferenceDialog({ character, onClose, onAdded }: Props) {
       <AppDialog
         title={`添加参考音频 · ${character.name}`}
         description="参考文本必须与音频逐字一致；时长须在 3~10 秒之间。"
-        size="medium"
+        size="form"
         height={360}
         onClose={onClose}
         footer={
@@ -126,7 +126,7 @@ export function AddReferenceDialog({ character, onClose, onAdded }: Props) {
         <div className="reference-add-form">
           <div className="voice-field">
             <span className="voice-label">音频文件</span>
-            <div className="workbench-input-row">
+            <div className="input-row">
               <Input value={source} readOnly placeholder="选择一段 3~10 秒的清晰人声" title={source} />
               <Button
                 appearance="secondary"

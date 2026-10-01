@@ -17,7 +17,7 @@ export function UnsavedDialog() {
     <AppDialog
       title="有未保存的更改"
       size="small"
-      height={220}
+      height={192}
       closeOnBackdrop
       onClose={() => resolveUnsaved('cancel')}
       footer={

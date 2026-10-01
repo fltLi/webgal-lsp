@@ -173,8 +173,7 @@ export function GitHistoryDialog({ onClose }: Props) {
   return (
     <AppDialog
       title="提交历史"
-      className="history-surface"
-      size="large"
+      size="medium"
       height={620}
       compact
       onClose={onClose}

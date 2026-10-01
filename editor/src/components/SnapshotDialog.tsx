@@ -144,7 +144,6 @@ export function SnapshotDialog({ source, destination, onClose }: SnapshotDialogP
       size="medium"
       height={340}
       compact
-      className="snapshot-surface"
       closeOnBackdrop={phase === 'done'}
       onClose={onClose}
       footer={

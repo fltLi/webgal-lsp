@@ -6,7 +6,6 @@
 // 因此不会出现"选项卡同时选中"或"切走就自动关闭"这类问题。
 
 import { Button, Spinner } from '@fluentui/react-components';
-import { save } from '@tauri-apps/plugin-dialog';
 import {
   ArchiveRegular,
   ArrowLeftRegular,
@@ -48,6 +47,7 @@ import { ResourceBrowser } from './ResourceBrowser';
 import { ResourceTab } from './ResourceTab';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
+import { SnapshotSetupDialog } from './SnapshotSetupDialog';
 import { StatusBar } from './StatusBar';
 import type { FileTreeRevealRequest, FileTreeViewStateCache } from './FileTree';
 
@@ -68,6 +68,8 @@ export function EditorPage() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project' | 'repository'>('scenes');
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
+  /** 非 null 时显示"生成快照"的前置对话框, 内容为默认输出路径 */
+  const [snapshotSetup, setSnapshotSetup] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
   const [fileTreeLocateRequest, setFileTreeLocateRequest] = useState<
@@ -128,28 +130,16 @@ export function EditorPage() {
     toggleVoiceWorkbench();
   };
 
-  /** 生成快照: 先处理未保存更改, 再选择输出位置。 */
+  /** 生成快照: 先让用户确认打包规则与输出路径, 再处理未保存更改并开始打包。 */
   const startSnapshot = () => {
-    if (!projectPath) return;
-    confirmClose(() => void pickSnapshotLocation(), undefined, '生成快照前是否保存未保存的更改？');
+    if (!projectPath || !projectName) return;
+    setSnapshotSetup(`${projectPath.replace(/[\\/]+$/, '')}/${projectName}.zip`);
   };
 
   /** 打开一个新的文本预处理选项卡 (非单例; id 全局唯一)。 */
   const startNovelPreprocess = () => {
     novelSeq.current += 1;
     useAppStore.getState().addNovelTab(makeNovelTab(novelSeq.current));
-  };
-
-  /** 选择输出压缩包位置 (默认: 项目目录/<项目名>.zip)。 */
-  const pickSnapshotLocation = async () => {
-    if (!projectPath || !projectName) return;
-    const defaultPath = `${projectPath.replace(/[\\/]+$/, '')}/${projectName}.zip`;
-    const destination = await save({
-      defaultPath,
-      filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
-    });
-    if (typeof destination !== 'string') return;
-    setSnapshot({ source: projectPath, destination });
   };
 
   /**
@@ -339,6 +329,23 @@ export function EditorPage() {
           <StatusBar />
         </div>
       </div>
+
+      {snapshotSetup ? (
+        <SnapshotSetupDialog
+          defaultPath={snapshotSetup}
+          onClose={() => setSnapshotSetup(null)}
+          onStart={(destination) => {
+            setSnapshotSetup(null);
+            if (!projectPath) return;
+            // 未保存的更改要先进包: 打包读的是磁盘上的文件
+            confirmClose(
+              () => setSnapshot({ source: projectPath, destination }),
+              undefined,
+              '生成快照前是否保存未保存的更改？'
+            );
+          }}
+        />
+      ) : null}
 
       {snapshot && (
         <SnapshotDialog source={snapshot.source} destination={snapshot.destination} onClose={() => setSnapshot(null)} />

@@ -7,17 +7,38 @@
 // 对话框里的交互都不一样。这里把结构定死: 遮罩 + 固定尺寸的面板 + 标题栏 + 可滚动
 // 主体 + 底部操作栏。所有对话框只提供内容, 不再各自决定外观。
 //
-// 尺寸**固定**(不随内容自动缩放): `size` 决定宽高, 内容超出时由主体内部滚动。
-// 这一点是刻意的 —— 弹窗随内容忽大忽小会让人每次都要重新找按钮在哪里。
+// 尺寸**固定**(不随内容自动缩放): `size` 决定默认宽度, `height` 可按需覆盖,
+// 内容超出时由主体内部滚动。这一点是刻意的 —— 弹窗随内容忽大忽小会让人每次都要重新
+// 找按钮在哪里。宽度只由 `size` 的四档决定 (见 `DialogSize`), 不在个别对话框上单独调。
+//
+// 版式与开始界面同源: 标题 18px/600 + 其下一行 12px 弱化说明 (与 `.welcome-title` /
+// `.welcome-subtitle` 一致), 左右留白 24px, 分隔线用 1px 发丝线, 强调色只在"当前项"
+// 与主按钮上出现。弹窗是盖在应用上的一层, 不该长成另一套设计。
 //
 // 不使用 portal: 与项目其余弹层一致, 避免 WebView 中的定位/动画异常。
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
-export type DialogSize = 'small' | 'medium' | 'large';
+/**
+ * 宽度档位 —— 按**内容形态**选, 不要按"感觉"选。
+ *
+ * | 档位 | 宽度 | 内容形态 |
+ * | --- | --- | --- |
+ * | `small` | 440 | 没有输入控件: 一句提示、确认、报错 |
+ * | `form` | 560 | 有输入控件: 单列表单 (字段不多), 或"说明 + 表单" |
+ * | `medium` | 720 | 可滚动列表、长文本/报错详情、表单 + 预览 |
+ * | `large` | 880 | 工作台级: 角色网格、参考音频列表、波形 |
+ *
+ * 之所以定成固定的四档: 之前同一类对话框能差出 300px ("新建项目" 440 / "添加参考音频"
+ * 720, 前者还带四个字段), 看起来像两套东西。档位少而明确, 才能让"同类对话框长一个样"
+ * 变成一件不用想的事 —— 需要第五档时先加档位, 不要在个别对话框上写死宽度。
+ */
+export type DialogSize = 'small' | 'form' | 'medium' | 'large';
 
 interface Props {
   title: string;
+  /** 标题左侧的品牌图标 (可选, 传 <img src="/icon.svg" /> 之类); 只在应用级对话框上用 */
+  icon?: ReactNode;
   /** 标题下方的一行说明 (可选) */
   description?: ReactNode;
   size?: DialogSize;
@@ -43,6 +64,7 @@ interface Props {
 
 export function AppDialog({
   title,
+  icon,
   description,
   size = 'medium',
   height,
@@ -91,9 +113,16 @@ export function AppDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <header className="dialog-head">
-          <h2 className="dialog-title">{title}</h2>
+          {icon ? (
+            <span className="dialog-head-icon" aria-hidden="true">
+              {icon}
+            </span>
+          ) : null}
+          <div className="dialog-head-text">
+            <h2 className="dialog-title">{title}</h2>
+            {description ? <p className="dialog-description">{description}</p> : null}
+          </div>
           {titleExtra ? <div className="dialog-title-extra">{titleExtra}</div> : null}
-          {description ? <p className="dialog-description">{description}</p> : null}
         </header>
 
         <div className="dialog-body">{children}</div>

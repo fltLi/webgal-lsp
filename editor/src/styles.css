@@ -11,6 +11,8 @@
   --app-border-strong: rgba(0, 0, 0, 0.2);
   --app-panel: #ffffff;
   --app-hover: rgba(0, 0, 0, 0.06);
+  /* 选中项底色 (比 hover 深一档): 设置左侧导航"当前在哪一页" */
+  --app-selected: rgba(0, 0, 0, 0.12);
   --app-accent: #005caf;
   --app-accent-hover: #004b8f;
   --app-muted: #666666;
@@ -27,6 +29,7 @@
   --app-border-strong: rgba(255, 255, 255, 0.22);
   --app-panel: #1e1e1e;
   --app-hover: rgba(255, 255, 255, 0.06);
+  --app-selected: rgba(255, 255, 255, 0.12);
   --app-accent: #59b2ff;
   --app-accent-hover: #7cc2ff;
   --app-muted: #969696;
@@ -1344,11 +1347,6 @@ body.resizing {
 }
 
 /* -------- 场景操作对话框 -------- */
-.small-surface {
-  min-width: 380px;
-  max-width: 440px;
-}
-
 .prompt-field {
   display: flex;
   flex-direction: column;
@@ -1445,9 +1443,9 @@ body.resizing {
 
 .settings-about-intro {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
-  padding: 0 0 16px;
+  padding: 0 0 18px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -1493,7 +1491,7 @@ body.resizing {
 .settings-about-section-head h4 {
   margin: 0;
   color: var(--app-fg);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1862,27 +1860,82 @@ body.resizing {
 }
 
 /* -------- 设置 -------- */
+/*
+ * 遮罩是一层"淡烟"而不是黑幕: 应用内容要能透出来被人认出来 (我关的到底是哪一屏),
+ * 0.4 的黑在浅色主题下会把整个编辑器压成灰色, 看起来像换了套皮。轻微模糊用来把下面的
+ * 文字从"可读"降为"可辨认", 不抢弹窗的注意力。
+ */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: rgba(0, 0, 0, 0.4);
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.28);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+[data-theme='dark'] .modal-backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/*
+ * 面板: 1px 描边 + 两层投影 (贴边的一层定轮廓, 远的一层给高度)。
+ * 单层 `0 8px 24px rgba(0,0,0,.3)` 会在浅色主题下把弹窗四周糊成一圈黑边。
+ */
 .modal-surface {
   background: var(--app-panel);
   color: var(--app-fg);
   border: 1px solid var(--app-border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 12px 32px rgba(0, 0, 0, 0.16);
   padding: 20px 24px;
   min-width: 380px;
   max-width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
+}
+
+[data-theme='dark'] .modal-surface {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* 入场: 淡入 + 轻微上浮 (纯装饰, 跟随系统的"减少动画"设置) */
+@media (prefers-reduced-motion: no-preference) {
+  .modal-backdrop {
+    animation: modal-fade 140ms ease-out both;
+  }
+
+  .modal-surface {
+    animation: modal-rise 160ms cubic-bezier(0.2, 0, 0, 1) both;
+  }
+}
+
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .modal-title {
@@ -1907,8 +1960,17 @@ body.resizing {
   overflow: hidden;
 }
 
+/*
+ * 宽度只有这四档 (与 `DialogSize` 一一对应)。刻意不做"每个对话框各自一个宽度":
+ * 宽度能一处一处地调, 同一类对话框就会各长各的 —— 之前"新建项目" 440、"添加参考音频"
+ * 720, 两个都是表单, 并排放着像两套 UI。
+ */
 .dialog-small {
   width: 440px;
+}
+
+.dialog-form {
+  width: 560px;
 }
 
 .dialog-medium {
@@ -1919,32 +1981,63 @@ body.resizing {
   width: 880px;
 }
 
+/*
+ * 标题栏: 图标 + (标题 / 说明) + 右侧补充信息, 与开始界面同一套排法。
+ * 说明文字从"和标题同一行的右半截"挪到标题正下方 —— 它解释的是标题, 不是标题栏里的第二条信息。
+ */
 .dialog-head {
   flex: none;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 16px 20px 10px;
+  padding: 18px 24px 16px;
   border-bottom: 1px solid var(--app-border);
+}
+
+.dialog-head-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.dialog-head-icon img,
+.dialog-head-icon svg {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
+  display: block;
+}
+
+.dialog-head-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .dialog-title-extra {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
   font-size: 12px;
   color: var(--app-muted);
 }
 
+/* 与开始界面的标题同字号, 弹窗标题不该比页面标题小一号 */
 .dialog-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
+  line-height: 1.3;
 }
 
+/* 与 `.welcome-subtitle` 一致: 12px 弱化, 紧贴标题 */
 .dialog-description {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: 12px;
   color: var(--app-muted);
 }
@@ -1954,8 +2047,8 @@ body.resizing {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: 12px;
+  padding: 16px 24px 18px;
   overflow: auto;
 }
 
@@ -2003,7 +2096,7 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 20px;
+  padding: 12px 24px;
   border-top: 1px solid var(--app-border);
 }
 
@@ -2047,59 +2140,64 @@ body.resizing {
   color: var(--app-muted);
 }
 
-.settings-surface {
-  width: 720px;
-  height: 560px;
-  max-width: 90vw;
-  max-height: 85vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
+/*
+ * 设置: 左侧分类 = 一条通到底的导航栏, 右侧内容各自带留白。
+ *
+ * 之前把内边距加在 `.settings-layout` 上, 于是导航栏那条右分隔线被上下各截掉 16px,
+ * 看着像一条画歪的短线; 现在留白下放到 nav / content 自己身上, 分隔线从标题栏一直连到
+ * 底部操作栏。
+ */
 .settings-layout {
   display: flex;
-  gap: 16px;
+  gap: 0;
   flex: 1;
   min-height: 0;
   width: 100%;
-  padding: 16px 20px;
 }
 
 .settings-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 0 0 110px;
+  flex: 0 0 116px;
   border-right: 1px solid var(--app-border);
-  padding-right: 12px;
+  padding: 16px 12px;
   overflow-y: auto;
 }
 
+/*
+ * 选中态: 一块中性浅底 + 正文色, 仅此而已。
+ *
+ * 之前是"左侧强调色短线 + 浅底 + 加粗" —— 在一个通篇说明性的面板里插一根彩色钉子和
+ * 一处加粗, 视线会先被它抓住; 而"当前在哪一页"本来就该是安静的信息。现在去掉强调色与
+ * 加粗, 靠明度差说话: 未选中是弱化文字色, 选中加一块比 hover 略深的底。
+ */
 .settings-nav-item {
   text-align: left;
   padding: 8px 12px;
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--app-fg);
+  color: var(--app-muted);
   font-size: 13px;
   cursor: pointer;
 }
 
 .settings-nav-item:hover {
   background: var(--app-hover);
+  color: var(--app-fg);
 }
 
 .settings-nav-item.active {
-  background: var(--app-accent);
-  color: #fff;
+  background: var(--app-selected);
+  color: var(--app-fg);
 }
 
 .settings-content {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  padding: 18px 24px 20px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -2118,9 +2216,12 @@ body.resizing {
   gap: 16px;
 }
 
+/* 分组标题带一条发丝线, 与开始界面的"最近项目"分节头同款 */
 .settings-group-title {
   margin: 0;
-  font-size: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--app-border);
+  font-size: 13px;
   font-weight: 600;
   color: var(--app-fg);
 }
@@ -2131,6 +2232,7 @@ body.resizing {
   gap: 6px;
 }
 
+/* 行内字段: 标签固定成一列, 控件紧接其后 */
 .settings-field-inline {
   flex-direction: row;
   align-items: center;
@@ -2141,32 +2243,21 @@ body.resizing {
   min-width: 76px;
 }
 
+/* 短值 (字号这类) 固定宽度, 不跟着面板一起变宽 */
 .settings-field-inline .fui-Input {
   width: 110px;
+}
+
+/* 长值 (字体这类) 撑满剩余宽度, 但仍与上一种共用同一列的起点 */
+.settings-field-inline .fui-Input.settings-input-grow {
+  flex: 1;
+  width: auto;
+  min-width: 0;
 }
 
 .settings-label {
   font-size: 13px;
   color: var(--app-muted);
-}
-
-.engine-path-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-/* 引擎目录输入框占满剩余宽度 (不再被按钮挤窄) */
-.engine-path-row .fui-Input {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 选择按钮保持合适宽度, 不随内容过窄 */
-.engine-path-row .fui-Button {
-  flex: 0 0 auto;
-  min-width: 92px;
-  justify-content: center;
 }
 
 /* 按钮等不随纵向 field 拉伸 (如"清除最近项目"不再占满整行) */
@@ -2181,9 +2272,55 @@ body.resizing {
   margin-top: 4px;
 }
 
+/*
+ * 路径行: 一个占满宽度的输入框 + 一个单图标按钮。
+ *
+ * 按钮**只有图标** —— 一个竖排的表单里, 每多两个汉字就多一份横向噪音, 而"选路径"这个
+ * 动作的行内按钮位置是固定的, 图标足够说明问题 (完整含义放 title / aria-label)。
+ * 全局唯一的行内行样式: 对话框与配音工作台共用。
+ */
+.input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.input-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 行内按钮是图标按钮, 固定宽度, 不随内容缩放 */
+.input-row > .fui-Button {
+  flex: none;
+}
+
 /* -------- 快照打包 -------- */
-.snapshot-surface {
-  min-width: 460px;
+/* 前置对话框: 打包规则说明 + 局限提示 (正常文字, 不是错误) */
+.snapshot-intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/*
+ * 已知局限提示: 左侧强调色细线 + 浅底, 与正文区分开但不用警告色 ——
+ * 它是一条"你需要知道"的说明, 不是错误, 弹窗里也不该出现第二种强调色。
+ */
+.snapshot-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--app-accent);
+  border-radius: 0 4px 4px 0;
+  background: var(--app-hover);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--app-fg);
+}
+
+.snapshot-note strong {
+  color: var(--app-accent);
+  font-weight: 600;
 }
 
 .snapshot-destination {
@@ -2223,10 +2360,6 @@ body.resizing {
   border-radius: 4px;
   font-size: 12px;
   color: #d13438;
-}
-
-.snapshot-surface .dialog-body {
-  overflow: hidden;
 }
 
 [data-theme='dark'] .snapshot-errors {
@@ -2726,16 +2859,6 @@ body.resizing {
 }
 
 /* 历史对话框 */
-.history-surface {
-  width: 720px;
-  height: 560px;
-  max-width: 90vw;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .history-header {
   display: flex;
   align-items: center;
@@ -4521,22 +4644,6 @@ input[type='number'].voice-control {
 .workbench-grid .fui-Input,
 .workbench-grid .select {
   min-width: 0;
-}
-
-.workbench-input-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.workbench-input-row > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 行内按钮是图标按钮, 固定宽度, 不随内容缩放 */
-.workbench-input-row > .fui-Button {
-  flex: none;
 }
 
 /* 队列 / 日志切换 */

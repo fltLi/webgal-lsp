@@ -83,8 +83,8 @@ export function NameInputDialog({
   return (
     <AppDialog
       title={title}
-      size="small"
-      height={300}
+      size="form"
+      height={244}
       onClose={onClose}
       footer={
         <>
@@ -154,7 +154,7 @@ export function ConfirmDialog({
     <AppDialog
       title={title}
       size="small"
-      height={info ? 220 : 260}
+      height={info ? 220 : 224}
       onClose={onClose}
       footer={
         <>

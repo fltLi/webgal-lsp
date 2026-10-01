@@ -224,7 +224,7 @@ export function VoiceWorkbench() {
           {configPage === 'service' ? (
             <>
               <Field label="GPT-SoVITS 整合包目录">
-                <div className="workbench-input-row">
+                <div className="input-row">
                   <Input value={rootPath} readOnly placeholder="选择包含 api_v2.py 的整合包目录" />
                   <Button
                     appearance="secondary"
@@ -286,7 +286,7 @@ export function VoiceWorkbench() {
 
                   {launch.mode.kind === 'python' && (
                     <Field label="Python 解释器">
-                      <div className="workbench-input-row">
+                      <div className="input-row">
                         <Input
                           value={launch.mode.program}
                           disabled={running}

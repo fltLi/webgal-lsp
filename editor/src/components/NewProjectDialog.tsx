@@ -76,8 +76,9 @@ export function NewProjectDialog({ onClose, onOpenEngineSettings }: Props) {
   return (
     <AppDialog
       title="新建项目"
+      icon={<img src="/icon.svg" alt="" draggable={false} />}
       description="由引擎复制出一份完整的项目骨架，可再套用模板。"
-      size="small"
+      size="form"
       height="auto"
       closeOnBackdrop={!busy}
       onClose={onClose}
@@ -99,11 +100,16 @@ export function NewProjectDialog({ onClose, onOpenEngineSettings }: Props) {
 
       <div className="settings-field">
         <span className="settings-label">存放位置</span>
-        <div className="engine-path-row">
+        <div className="input-row">
           <Input value={directory} readOnly placeholder="选择项目存放的父目录" />
-          <Button icon={<FolderOpenRegular />} onClick={() => void pickDirectory()} disabled={busy}>
-            选择…
-          </Button>
+          <Button
+            appearance="secondary"
+            icon={<FolderOpenRegular />}
+            aria-label="选择项目存放位置"
+            title="选择项目存放位置"
+            onClick={() => void pickDirectory()}
+            disabled={busy}
+          />
         </div>
       </div>
 

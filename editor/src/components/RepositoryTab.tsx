@@ -365,7 +365,7 @@ export function RepositoryTab() {
       {identityOpen ? (
         <AppDialog
           title="设置提交身份"
-          size="small"
+          size="form"
           height={360}
           onClose={() => setIdentityOpen(false)}
           footer={
