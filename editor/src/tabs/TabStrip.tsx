@@ -8,12 +8,26 @@
 //
 // 拖拽基于 Pointer 事件 (HTML5 DnD 在部分 WebView 中不可靠)。
 
-import { useRef, useState } from 'react';
+import {
+  AppsListRegular,
+  ArrowSortRegular,
+  ArrowRightRegular,
+  DocumentDismissRegular,
+  DocumentMultipleRegular,
+  DocumentRegular,
+  DismissRegular,
+  FolderOpenRegular,
+  TabDesktopRegular,
+} from '@fluentui/react-icons';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { useEffect, useRef, useState } from 'react';
 
+import { ContextMenu, type ContextMenuEntry } from '../components/ContextMenu';
+import { FileBadges } from '../components/FileBadges';
 import { useAppStore, type WorkbenchTabItem } from '../state/store';
 import { dropIndicator, dropSlot, slotToIndex, type TabBox } from './dnd';
+import { cycleTabLeft, cycleTabRight, orderTabs } from './order';
 import type { ConfigTab, ResourceTab, SceneTab } from './model';
-import { FileBadges } from '../components/FileBadges';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
 const DRAG_THRESHOLD = 6;
@@ -23,18 +37,44 @@ interface Props {
   renderLeadingAction?: (tab: WorkbenchTabItem) => React.ReactNode;
   /** 请求关闭: 调用方需自行处理未保存确认等前置逻辑 */
   onRequestClose: (tab: WorkbenchTabItem) => void;
+  /** 定位到浏览器页签 */
+  onLocateTab?: (tab: WorkbenchTabItem) => void;
 }
 
-export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
+export function TabStrip({ renderLeadingAction, onRequestClose, onLocateTab }: Props) {
   const tabs = useAppStore((s) => s.tabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
   const activateTab = useAppStore((s) => s.activateTab);
   const moveTab = useAppStore((s) => s.moveTab);
-
   const containerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ id: string; startX: number; active: boolean } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [indicator, setIndicator] = useState<{ id: string; side: 'before' | 'after' } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tab: WorkbenchTabItem } | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const commandKey = event.ctrlKey || event.metaKey;
+      if (!commandKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'w' || key === 'f4') {
+        event.preventDefault();
+        if (!activeTabId) return;
+        const activeTab = tabs.find((tab) => tab.id === activeTabId);
+        if (activeTab) onRequestClose(activeTab);
+        return;
+      }
+      if (key === 'tab') {
+        if (tabs.length <= 1) return;
+        event.preventDefault();
+        if (!activeTabId) return;
+        const nextId = event.shiftKey ? cycleTabLeft(tabs, activeTabId) : cycleTabRight(tabs, activeTabId);
+        if (nextId && nextId !== activeTabId) activateTab(nextId);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activateTab, activeTabId, onRequestClose, tabs]);
 
   /** 测量各选项卡的位置 (相对滚动内容, 因此横向滚动时仍然正确) */
   const measure = (): TabBox[] => {
@@ -90,59 +130,170 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
     if (target !== null) moveTab(state.id, target);
   };
 
+  const closeMany = (list: WorkbenchTabItem[]) => {
+    list.forEach((tab) => onRequestClose(tab));
+  };
+
+  const buildMenu = (tab: WorkbenchTabItem): ContextMenuEntry[] => {
+    const currentIndex = tabs.findIndex((item) => item.id === tab.id);
+    const sameKind = tabs.filter((item) => item.kind === tab.kind);
+    const differentKind = tabs.filter((item) => item.kind !== tab.kind);
+    const savedTabs = tabs.filter((item) => !isDirtyTab(item));
+    const rightTabs = tabs.slice(currentIndex + 1);
+    const sortedTabs = orderTabs(tabs);
+    const isAlreadySorted = tabs.every((item, index) => item.id === sortedTabs[index]?.id);
+    const items: ContextMenuEntry[] = [
+      { key: 'close-tab', label: '关闭', icon: <DismissRegular />, onClick: () => onRequestClose(tab) },
+      {
+        key: 'close-right',
+        label: '关闭右侧',
+        icon: <ArrowRightRegular />,
+        disabled: rightTabs.length === 0,
+        onClick: () => closeMany(rightTabs),
+      },
+    ];
+    if (tabs.length > 1) {
+      items.push(
+        {
+          key: 'close-others',
+          label: '关闭其它',
+          icon: <DocumentMultipleRegular />,
+          onClick: () => closeMany(tabs.filter((item) => item.id !== tab.id)),
+        },
+        {
+          key: 'close-same-kind',
+          label: '关闭同类型',
+          icon: tab.icon ?? <DocumentRegular />,
+          onClick: () => closeMany(sameKind),
+        },
+        ...(differentKind.length > 0
+          ? [
+              {
+                key: 'close-different-kind',
+                label: '关闭其它类型',
+                icon: <AppsListRegular />,
+                onClick: () => closeMany(differentKind),
+              },
+            ]
+          : []),
+        {
+          key: 'close-saved',
+          label: '关闭已保存',
+          icon: <DocumentRegular />,
+          disabled: savedTabs.length === 0,
+          onClick: () => closeMany(savedTabs),
+        },
+        { key: 'close-all', label: '关闭全部', icon: <DocumentDismissRegular />, onClick: () => closeMany([...tabs]) },
+        { key: 'separator-close', separator: true }
+      );
+    }
+    items.push(
+      {
+        key: 'sort-tabs',
+        label: '整理标签页',
+        icon: <ArrowSortRegular />,
+        disabled: isAlreadySorted,
+        onClick: () => useAppStore.setState((state) => ({ tabs: sortedTabs, activeTabId: state.activeTabId })),
+      },
+      { key: 'separator-files', separator: true }
+    );
+    const filePath = hasLocalEntity(tab) ? tab.path : undefined;
+    if (filePath) {
+      items.push({
+        key: 'reveal-file',
+        label: '在文件管理器中打开',
+        icon: <FolderOpenRegular />,
+        onClick: () => void revealItemInDir(filePath),
+      });
+    }
+    if (onLocateTab && hasLocalEntity(tab)) {
+      items.push({
+        key: 'locate-browser',
+        label:
+          tab.kind === 'resource' ? '定位到资源浏览器' : tab.kind === 'config' ? '定位到项目配置' : '定位到场景浏览器',
+        icon: <TabDesktopRegular />,
+        onClick: () => onLocateTab(tab),
+      });
+    }
+    return items.filter((item, index) => {
+      if (!('separator' in item)) return true;
+      return (
+        index > 0 &&
+        index < items.length - 1 &&
+        !('separator' in items[index - 1]!) &&
+        !('separator' in items[index + 1]!)
+      );
+    });
+  };
+
   if (tabs.length === 0) return null;
 
   return (
-    <div className="tab-strip" role="tablist" ref={containerRef}>
-      {tabs.map((tab) => {
-        const active = tab.id === activeTabId;
-        const dragging = draggingId === tab.id;
-        const mark = indicator?.id === tab.id ? indicator.side : null;
-        return (
-          <div
-            key={tab.id}
-            role="tab"
-            data-tab-id={tab.id}
-            data-kind={tab.kind}
-            aria-selected={active}
-            className={`tab-strip-item${active ? ' active' : ''}${dragging ? ' dragging' : ''}${
-              mark ? ` drop-${mark}` : ''
-            }`}
-            title={tab.tooltip}
-            onClick={() => activateTab(tab.id)}
-            onAuxClick={(event) => {
-              if (event.button === 1) onRequestClose(tab);
-            }}
-            onPointerDown={(event) => onPointerDown(event, tab)}
-            onPointerMove={onPointerMove}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-          >
-            {renderLeadingAction?.(tab)}
-
-            <span className="tab-strip-title">
-              {isDocumentTab(tab) && <DocumentDirtyDot path={tab.path} />}
-              {tab.icon && <span className="tab-strip-icon">{tab.icon}</span>}
-              {tab.title}
-              {tab.kind === 'voice-workbench' && <QueueBadge />}
-            </span>
-            {isDocumentTab(tab) ? <FileBadges path={tab.path} /> : null}
-
-            <button
-              type="button"
-              className="tab-strip-close"
-              title="关闭"
-              onClick={(event) => {
+    <>
+      <div className="tab-strip" role="tablist" ref={containerRef}>
+        {tabs.map((tab) => {
+          const active = tab.id === activeTabId;
+          const dragging = draggingId === tab.id;
+          const mark = indicator?.id === tab.id ? indicator.side : null;
+          return (
+            <div
+              key={tab.id}
+              role="tab"
+              data-tab-id={tab.id}
+              data-kind={tab.kind}
+              aria-selected={active}
+              className={`tab-strip-item${active ? ' active' : ''}${dragging ? ' dragging' : ''}${
+                mark ? ` drop-${mark}` : ''
+              }`}
+              title={tab.tooltip}
+              onClick={() => activateTab(tab.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
                 event.stopPropagation();
-                onRequestClose(tab);
+                setContextMenu({ x: event.clientX, y: event.clientY, tab });
               }}
+              onAuxClick={(event) => {
+                if (event.button === 1) onRequestClose(tab);
+              }}
+              onPointerDown={(event) => onPointerDown(event, tab)}
+              onPointerMove={onPointerMove}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
             >
-              ×
-            </button>
-          </div>
-        );
-      })}
-    </div>
+              {renderLeadingAction?.(tab)}
+
+              <span className="tab-strip-title">
+                {isDocumentTab(tab) && <DocumentDirtyDot path={tab.path} />}
+                {tab.icon && <span className="tab-strip-icon">{tab.icon}</span>}
+                {tab.title}
+                {tab.kind === 'voice-workbench' && <QueueBadge />}
+              </span>
+              {isDocumentTab(tab) ? <FileBadges path={tab.path} /> : null}
+
+              <button
+                type="button"
+                className="tab-strip-close"
+                title="关闭"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRequestClose(tab);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {contextMenu ? (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMenu(contextMenu.tab)}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -154,6 +305,16 @@ export function TabStrip({ renderLeadingAction, onRequestClose }: Props) {
  */
 function isDocumentTab(tab: WorkbenchTabItem): tab is SceneTab | ConfigTab | (ResourceTab & { resourceKind: 'text' }) {
   return tab.kind === 'scene' || tab.kind === 'config' || (tab.kind === 'resource' && tab.resourceKind === 'text');
+}
+
+function hasLocalEntity(tab: WorkbenchTabItem): tab is SceneTab | ConfigTab | ResourceTab {
+  return tab.kind === 'scene' || tab.kind === 'config' || tab.kind === 'resource';
+}
+
+function isDirtyTab(tab: WorkbenchTabItem): boolean {
+  if (!hasLocalEntity(tab)) return false;
+  const path = tab.path;
+  return useAppStore.getState().documents.some((doc) => doc.path === path && doc.dirty);
 }
 
 /** 可编辑文档选项卡的未保存标记 */

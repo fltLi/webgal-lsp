@@ -30,7 +30,7 @@ import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
 import { useAppStore } from '../state/store';
 import { AppDialog } from './AppDialog';
-import { ContextMenu } from './ContextMenu';
+import { ContextMenu, type ContextMenuEntry } from './ContextMenu';
 import { middleEllipsis } from './FileTree';
 import { GitHistoryDialog } from './GitHistoryDialog';
 
@@ -185,20 +185,23 @@ export function RepositoryTab() {
     );
   };
 
-  const menuItems = menu
+  const menuItems: ContextMenuEntry[] = menu
     ? menu.section === 'staged'
       ? [
           {
+            key: 'stage-all',
             label: '暂存全部',
             icon: <SelectAllOnRegular />,
             onClick: () => run(() => gitStageAll(projectPath)),
           },
           {
+            key: 'unstage-one',
             label: '放弃',
             icon: <ArrowUndoRegular />,
             onClick: () => run(() => gitUnstage(projectPath, [menu.file.path])),
           },
           {
+            key: 'unstage-all',
             label: '放弃全部',
             icon: <ArrowUndoRegular />,
             onClick: () => run(() => gitUnstageAll(projectPath)),
@@ -206,22 +209,27 @@ export function RepositoryTab() {
         ]
       : [
           {
+            key: 'stage-one',
             label: '暂存',
             icon: <AddRegular />,
             onClick: () => run(() => gitStage(projectPath, [menu.file.path])),
           },
           {
+            key: 'stage-all',
             label: '暂存全部',
             icon: <SelectAllOnRegular />,
             onClick: () => run(() => gitStageAll(projectPath)),
           },
+          { key: 'separator-discard', separator: true },
           {
+            key: 'discard-one',
             label: '放弃',
             icon: <ArrowUndoRegular />,
             danger: true,
             onClick: () => run(() => gitDiscard(projectPath, [menu.file.path])),
           },
           {
+            key: 'discard-all',
             label: '放弃全部',
             icon: <ArrowUndoRegular />,
             danger: true,
@@ -352,14 +360,7 @@ export function RepositoryTab() {
         </div>
       </div>
 
-      {menu ? (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          items={menuItems.map((item) => ({ ...item, key: item.label }))}
-          onClose={() => setMenu(null)}
-        />
-      ) : null}
+      {menu ? <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} /> : null}
 
       {identityOpen ? (
         <AppDialog

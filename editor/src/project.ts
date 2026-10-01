@@ -192,11 +192,17 @@ export async function restoreSession(projectPath: string): Promise<void> {
   const session = loadSession(projectPath);
   if (!session || session.tabs.length === 0) return;
 
-  for (const tabPath of session.tabs) {
-    const exists = await fs.exists(tabPath);
+  for (const entry of session.tabs) {
+    const exists = await fs.exists(entry.path);
     if (!exists.exists || exists.isDirectory) continue;
     try {
-      await openFile(tabPath);
+      if (entry.kind === 'scene') {
+        await openFile(entry.path);
+      } else if (entry.kind === 'config') {
+        await openProjectConfig(projectPath);
+      } else {
+        await openResourceFile(entry.path, entry.resourceKind ?? inferResourceKind(entry.path));
+      }
     } catch {
       // 读不出来 (编码/权限) 就跳过这一个
     }
@@ -205,8 +211,22 @@ export async function restoreSession(projectPath: string): Promise<void> {
   const active = session.activeTab;
   if (!active) return;
   const store = useAppStore.getState();
-  const activeId = sceneTabId(active);
-  if (store.tabs.some((tab) => tab.id === activeId)) store.activateTab(activeId);
+  const tabId =
+    store.tabs.find((tab) => tab.kind === 'scene' && tab.path === active)?.id ??
+    store.tabs.find((tab) => tab.kind === 'resource' && tab.path === active)?.id ??
+    store.tabs.find((tab) => tab.kind === 'config' && tab.path === active)?.id ??
+    sceneTabId(active);
+  if (store.tabs.some((tab) => tab.id === tabId)) store.activateTab(tabId);
+}
+
+function inferResourceKind(path: string): ResourceKind {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp'))
+    return 'image';
+  if (lower.endsWith('.mp3') || lower.endsWith('.wav') || lower.endsWith('.ogg') || lower.endsWith('.aac'))
+    return 'audio';
+  if (lower.endsWith('.mp4') || lower.endsWith('.webm') || lower.endsWith('.mov')) return 'video';
+  return 'text';
 }
 
 let sessionTrackingStarted = false;

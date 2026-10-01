@@ -360,6 +360,9 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
                 onChanged();
               },
             },
+            ...(menu.entry.status === 'pending' || menu.entry.status === 'running'
+              ? [{ key: 'separator-queue', separator: true as const }]
+              : []),
             // 排队中才有的两项: 未完成时"隐藏"而不是"禁用" —— 禁用项读起来像功能坏了
             ...(menu.entry.status === 'pending'
               ? [
@@ -385,6 +388,7 @@ export function VoiceTakeList({ cardId, line, onChanged, onApplied }: Props) {
                   },
                 ]
               : []),
+            { key: 'separator-destructive', separator: true },
             {
               key: 'drop',
               label: '删除',

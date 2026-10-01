@@ -16,7 +16,7 @@ import {
   PanelLeftContractRegular,
   PanelLeftExpandRegular,
 } from '@fluentui/react-icons';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
 import { closeProject } from '../project';
@@ -49,7 +49,7 @@ import { ResourceTab } from './ResourceTab';
 import { SceneBrowser } from './SceneBrowser';
 import { SnapshotDialog } from './SnapshotDialog';
 import { StatusBar } from './StatusBar';
-import type { FileTreeViewStateCache } from './FileTree';
+import type { FileTreeRevealRequest, FileTreeViewStateCache } from './FileTree';
 
 export function EditorPage() {
   const projectPath = useAppStore((s) => s.projectPath);
@@ -70,12 +70,21 @@ export function EditorPage() {
   const [snapshot, setSnapshot] = useState<{ source: string; destination: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(480);
   const [resizing, setResizing] = useState(false);
+  const [fileTreeLocateRequest, setFileTreeLocateRequest] = useState<
+    (FileTreeRevealRequest & { kind: 'scene' | 'resource' }) | null
+  >(null);
   const novelSeq = useRef(0);
+  const fileTreeLocateSequence = useRef(0);
   const fileTreeViewStateCache = useRef<FileTreeViewStateCache>(new Map());
 
   useEffect(() => {
     fileTreeViewStateCache.current.clear();
+    setFileTreeLocateRequest(null);
   }, [projectPath]);
+
+  const completeFileTreeLocate = useCallback((id: number) => {
+    setFileTreeLocateRequest((request) => (request?.id === id ? null : request));
+  }, []);
 
   // 项目打开时: 拉取 git 状态并监听文件变化防抖刷新
   useEffect(() => {
@@ -171,6 +180,25 @@ export function EditorPage() {
     );
   };
 
+  const locateTabInBrowser = (tab: WorkbenchTabItem) => {
+    if (tab.kind === 'scene') {
+      setFileTreeLocateRequest({ id: ++fileTreeLocateSequence.current, path: tab.path, kind: 'scene' });
+      setSidebarVisible(true);
+      setSidebarTab('scenes');
+      return;
+    }
+    if (tab.kind === 'resource') {
+      setFileTreeLocateRequest({ id: ++fileTreeLocateSequence.current, path: tab.path, kind: 'resource' });
+      setSidebarVisible(true);
+      setSidebarTab('resources');
+      return;
+    }
+    if (tab.kind === 'config') {
+      setSidebarVisible(true);
+      setSidebarTab('project');
+    }
+  };
+
   const renderActivePane = () => {
     if (!activeTab) {
       return <div className="editor-empty">从左侧选择或打开一个场景开始编辑</div>;
@@ -263,11 +291,15 @@ export function EditorPage() {
                   <SceneBrowser
                     viewStateCache={fileTreeViewStateCache.current}
                     viewStateKey={`scenes:${projectPath ?? ''}`}
+                    revealRequest={fileTreeLocateRequest?.kind === 'scene' ? fileTreeLocateRequest : null}
+                    onRevealComplete={completeFileTreeLocate}
                   />
                 ) : sidebarTab === 'resources' ? (
                   <ResourceBrowser
                     viewStateCache={fileTreeViewStateCache.current}
                     viewStateKey={`resources:${projectPath ?? ''}`}
+                    revealRequest={fileTreeLocateRequest?.kind === 'resource' ? fileTreeLocateRequest : null}
+                    onRevealComplete={completeFileTreeLocate}
                   />
                 ) : sidebarTab === 'repository' ? (
                   <RepositoryTab />
@@ -298,7 +330,11 @@ export function EditorPage() {
           状态栏由两个页面共用: GSOV 状态就显示在这里。
         */}
         <div className="editor-workspace">
-          <TabStrip renderLeadingAction={renderTabLeadingAction} onRequestClose={requestCloseTab} />
+          <TabStrip
+            renderLeadingAction={renderTabLeadingAction}
+            onRequestClose={requestCloseTab}
+            onLocateTab={locateTabInBrowser}
+          />
           <div className="editor-area">{renderActivePane()}</div>
           <StatusBar />
         </div>

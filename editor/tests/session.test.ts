@@ -12,7 +12,18 @@ import {
   type ProjectSession,
 } from '../src/lib/session';
 
-const tab = (id: string, kind: string, path: string) => ({ id, kind, path });
+const tab = (id: string, kind: string, path: string, resourceKind?: 'image' | 'audio' | 'video' | 'text') => ({
+  id,
+  kind,
+  path,
+  ...(resourceKind ? { resourceKind } : {}),
+});
+
+const sessionEntry = (kind: 'scene' | 'resource' | 'config', path: string, resourceKind?: 'image' | 'audio' | 'video' | 'text') => ({
+  kind,
+  path,
+  ...(resourceKind ? { resourceKind } : {}),
+});
 
 describe('collectSceneTabs', () => {
   it('只取场景卡, 按顺序去重', () => {
@@ -41,8 +52,24 @@ describe('sessionFromTabs', () => {
   it('记下激活的场景卡', () => {
     const tabs = [tab('scene:a', 'scene', 'C:\\p\\a.txt'), tab('scene:b', 'scene', 'C:\\p\\b.txt')];
     const session = sessionFromTabs(tabs, 'scene:b');
-    expect(session.tabs).toEqual(['C:\\p\\a.txt', 'C:\\p\\b.txt']);
+    expect(session.tabs).toEqual([
+      sessionEntry('scene', 'C:\\p\\a.txt'),
+      sessionEntry('scene', 'C:\\p\\b.txt'),
+    ]);
     expect(session.activeTab).toBe('C:\\p\\b.txt');
+  });
+
+  it('记录资源卡和配置卡', () => {
+    const tabs = [
+      tab('config:project', 'config', 'C:\\p\\game\\config.txt'),
+      tab('scene:a', 'scene', 'C:\\p\\a.txt'),
+      tab('resource:image', 'resource', 'C:\\p\\img\\cover.png', 'image'),
+    ];
+    expect(sessionFromTabs(tabs, 'scene:a').tabs).toEqual([
+      sessionEntry('config', 'C:\\p\\game\\config.txt'),
+      sessionEntry('scene', 'C:\\p\\a.txt'),
+      sessionEntry('resource', 'C:\\p\\img\\cover.png', 'image'),
+    ]);
   });
 
   it('激活的不是场景卡时不记激活项', () => {
@@ -54,7 +81,11 @@ describe('sessionFromTabs', () => {
 describe('normalizeSession', () => {
   it('丢弃损坏的条目并补默认值', () => {
     const session = normalizeSession({ tabs: ['C:\\a.txt', 42, '', 'c:\\A.txt'], activeTab: '  ' });
-    expect(session).toEqual({ tabs: ['C:\\a.txt'], activeTab: null, updatedAt: 0 } satisfies ProjectSession);
+    expect(session).toEqual({
+      tabs: [sessionEntry('scene', 'C:\\a.txt')],
+      activeTab: null,
+      updatedAt: 0,
+    } satisfies ProjectSession);
   });
 
   it('结构不对时返回 null', () => {

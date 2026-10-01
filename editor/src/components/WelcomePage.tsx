@@ -245,6 +245,7 @@ export function WelcomePage() {
               icon: <OpenFolderRegular />,
               onClick: () => void revealItemInDir(menuProject.path),
             },
+            { key: 'separator-remove', separator: true },
             {
               key: 'remove',
               label: '从列表移除',

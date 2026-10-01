@@ -35,7 +35,7 @@ import { openFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
-import { FileTree, type FileNode, type FileTreeViewStateCache } from './FileTree';
+import { FileTree, type FileNode, type FileTreeRevealRequest, type FileTreeViewStateCache } from './FileTree';
 import { NameInputDialog } from './SceneFileDialogs';
 
 type PromptState = { mode: 'newFile' | 'newFolder'; dir: string } | { mode: 'rename'; node: FileNode };
@@ -45,9 +45,13 @@ const isSceneFile = (node: FileNode) => node.name.toLowerCase().endsWith('.txt')
 export function SceneBrowser({
   viewStateCache,
   viewStateKey,
+  revealRequest,
+  onRevealComplete,
 }: {
   viewStateCache: FileTreeViewStateCache;
   viewStateKey: string;
+  revealRequest?: FileTreeRevealRequest | null;
+  onRevealComplete?: (id: number) => void;
 }) {
   const projectPath = useAppStore((s) => s.projectPath);
   const gitStatus = useAppStore((s) => s.gitStatus);
@@ -235,6 +239,8 @@ export function SceneBrowser({
         key={viewStateKey}
         rootPath={`${projectPath}\\game\\scene`}
         selectedPath={activePath}
+        revealRequest={revealRequest}
+        onRevealComplete={onRevealComplete}
         refreshKey={refreshKey}
         includeFile={isSceneFile}
         viewStateCache={viewStateCache}
@@ -293,6 +299,7 @@ export function SceneBrowser({
                           onClick: () =>
                             void gitStage(projectPath, [stageTarget]).then(() => refreshGitStatus(projectPath)),
                         },
+                        { key: 'separator-stage', separator: true as const },
                       ]
                     : []),
                   {
@@ -310,6 +317,7 @@ export function SceneBrowser({
                     icon: <OpenFolderRegular />,
                     onClick: () => void revealItemInDir(menu.node.path),
                   },
+                  { key: 'separator-manage', separator: true },
                   {
                     key: 'rename',
                     label: '重命名',

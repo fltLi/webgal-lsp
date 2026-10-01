@@ -4,7 +4,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { baseName, joinPath, samePath, sanitizeFolderName, stripTrailingSeparator, toPosix } from '../src/lib/paths';
+import {
+  baseName,
+  joinPath,
+  relativeDirectoryPath,
+  samePath,
+  sanitizeFolderName,
+  stripTrailingSeparator,
+  toPosix,
+} from '../src/lib/paths';
 
 describe('路径工具', () => {
   it('取最后一段并忽略结尾分隔符', () => {
@@ -30,6 +38,12 @@ describe('路径工具', () => {
 
   it('转换成正斜杠', () => {
     expect(toPosix('C:\\a\\b')).toBe('C:/a/b');
+  });
+
+  it('计算文件相对根目录的父目录并拒绝根目录外路径', () => {
+    expect(relativeDirectoryPath('C:\\p\\game\\scene', 'c:/P/game/scene/chapter/start.txt')).toBe('chapter');
+    expect(relativeDirectoryPath('C:\\p\\game\\scene', 'C:\\p\\game\\scene\\start.txt')).toBe('');
+    expect(relativeDirectoryPath('C:\\p\\game\\scene', 'C:\\p\\game\\resource\\image.png')).toBeNull();
   });
 });
 

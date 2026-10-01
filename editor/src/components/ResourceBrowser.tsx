@@ -34,7 +34,7 @@ import { configPathOf, openProjectConfig, openResourceFile } from '../project';
 import { useAppStore } from '../state/store';
 import { ContextMenu } from './ContextMenu';
 import { FileBadges } from './FileBadges';
-import { FileTree, type FileNode, type FileTreeViewStateCache } from './FileTree';
+import { FileTree, type FileNode, type FileTreeRevealRequest, type FileTreeViewStateCache } from './FileTree';
 import { NameInputDialog } from './SceneFileDialogs';
 import type { FileKind } from '../lib/fileKind';
 
@@ -43,9 +43,13 @@ const isSceneDirectory = (name: string) => name === 'scene';
 export function ResourceBrowser({
   viewStateCache,
   viewStateKey,
+  revealRequest,
+  onRevealComplete,
 }: {
   viewStateCache: FileTreeViewStateCache;
   viewStateKey: string;
+  revealRequest?: FileTreeRevealRequest | null;
+  onRevealComplete?: (id: number) => void;
 }) {
   const projectPath = useAppStore((s) => s.projectPath);
   const enginePath = useAppStore((s) => resolveProjectEngine(s.settings, s.projectBindings, s.projectPath)?.path);
@@ -315,7 +319,9 @@ export function ResourceBrowser({
         key={viewStateKey}
         rootPath={`${projectPath}\\game`}
         excludeTop={isSceneDirectory}
-        selectedPath={selected?.path ?? null}
+        selectedPath={selected?.path ?? activeResourcePath}
+        revealRequest={revealRequest}
+        onRevealComplete={onRevealComplete}
         assetUrl={assetUrl}
         refreshKey={refreshKey}
         viewStateCache={viewStateCache}
@@ -384,6 +390,7 @@ export function ResourceBrowser({
                     icon: <OpenFolderRegular />,
                     onClick: () => void revealItemInDir(menu.node.path),
                   },
+                  { key: 'separator-manage', separator: true },
                   {
                     key: 'rename',
                     label: '重命名',

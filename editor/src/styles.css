@@ -1303,6 +1303,12 @@ body.resizing {
   white-space: nowrap;
 }
 
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--app-border);
+}
+
 .context-menu-item svg {
   width: 15px;
   height: 15px;

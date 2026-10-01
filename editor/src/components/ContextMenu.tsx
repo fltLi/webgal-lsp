@@ -30,11 +30,18 @@ export interface ContextMenuItem {
   onClick: () => void;
 }
 
+export interface ContextMenuSeparator {
+  key: string;
+  separator: true;
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+
 interface Props {
   /** 指针位置 (菜单左上角的目标点) */
   x: number;
   y: number;
-  items: ContextMenuItem[];
+  items: ContextMenuEntry[];
   onClose: () => void;
 }
 
@@ -81,24 +88,28 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         }}
       />
       <div ref={ref} className="context-menu" style={{ left: x, top: y }} role="menu">
-        {items.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            role="menuitem"
-            className={`context-menu-item${item.danger ? ' danger' : ''}`}
-            disabled={item.disabled}
-            title={item.title}
-            onClick={() => {
-              // 先关菜单再执行: 动作可能会打开对话框/改状态, 菜单不该留在上面
-              onClose();
-              item.onClick();
-            }}
-          >
-            {item.icon}
-            {item.label}
-          </button>
-        ))}
+        {items.map((item) =>
+          'separator' in item ? (
+            <div key={item.key} className="context-menu-separator" role="separator" />
+          ) : (
+            <button
+              key={item.key}
+              type="button"
+              role="menuitem"
+              className={`context-menu-item${item.danger ? ' danger' : ''}`}
+              disabled={item.disabled}
+              title={item.title}
+              onClick={() => {
+                // 先关菜单再执行: 动作可能会打开对话框/改状态, 菜单不该留在上面
+                onClose();
+                item.onClick();
+              }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          )
+        )}
       </div>
     </>
   );

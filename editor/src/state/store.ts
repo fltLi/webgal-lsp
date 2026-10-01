@@ -20,7 +20,7 @@ import {
   type SceneTab,
   type WorkbenchTabItem,
 } from '../tabs/model';
-import { closeTab, insertTab, moveTab, removeTabsByKind } from '../tabs/order';
+import { closeTab, insertTab, moveTab, rememberTabActivation, removeTabsByKind } from '../tabs/order';
 import type { SceneVoiceState } from '../voice/types';
 
 export interface OpenDocument {
@@ -66,6 +66,8 @@ interface AppStore {
   tabs: WorkbenchTabItem[];
   /** 当前活动选项卡 id; `null` 表示没有打开任何选项卡 */
   activeTabId: string | null;
+  /** 最近使用过的 tab 历史，用于 ctrl+tab / 前后切换 */
+  tabHistory: string[];
   /** 已打开文档 (按路径索引; 仅场景/文件选项卡有对应文档) */
   documents: OpenDocument[];
   /** 文本预处理选项卡的编辑器统计 (供状态栏显示)。 */
@@ -241,6 +243,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   tabs: [],
   activeTabId: null,
+  tabHistory: [],
   documents: [],
   novelStats: null,
 
@@ -304,6 +307,7 @@ export const useAppStore = create<AppStore>((set) => ({
         projectName: null,
         tabs: [],
         activeTabId: null,
+        tabHistory: [],
         documents: [],
         novelStats: null,
         gitStatus: null,
@@ -337,9 +341,11 @@ export const useAppStore = create<AppStore>((set) => ({
       const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
       // 注意: 打开场景卡**不会**自动进入配音编辑模式。进入与否完全由用户点麦克风决定,
       // 否则"切到的每个场景都变成配音卡"。
+      const tabHistory = rememberTabActivation(s.tabHistory, activeId);
       return {
         tabs,
         activeTabId: activeId,
+        tabHistory,
         currentSceneTabId: tab.kind === 'scene' ? tab.id : s.currentSceneTabId,
       };
     }),
@@ -348,6 +354,8 @@ export const useAppStore = create<AppStore>((set) => ({
       const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId);
       const diagnostics = { ...s.diagnostics };
       const closed = s.tabs.find((tab) => tab.id === id);
+      const nextHistory = s.tabHistory.filter((tabId) => tabId !== id && tabs.some((tab) => tab.id === tabId));
+      const tabHistory = activeId ? rememberTabActivation(nextHistory, activeId) : nextHistory;
       if (closed?.kind === 'scene') delete diagnostics[closed.path];
       const closingWorkbench = closed?.kind === 'voice-workbench';
       // 关闭场景卡时顺带清掉它的配音编辑模式, 避免残留到下次打开
@@ -367,6 +375,7 @@ export const useAppStore = create<AppStore>((set) => ({
       return {
         tabs,
         activeTabId: activeId,
+        tabHistory,
         diagnostics,
         voiceModePaths,
         currentSceneTabId,
@@ -392,7 +401,12 @@ export const useAppStore = create<AppStore>((set) => ({
       // 回到场景卡时仍然知道"当前场景"是哪一张。
       const currentSceneTabId = tab?.kind === 'scene' ? tab.id : s.currentSceneTabId;
       if (s.activeTabId === id && s.currentSceneTabId === currentSceneTabId) return {};
-      return { activeTabId: id, currentSceneTabId, cursor: null };
+      return {
+        activeTabId: id,
+        tabHistory: rememberTabActivation(s.tabHistory, id),
+        currentSceneTabId,
+        cursor: null,
+      };
     }),
   moveTab: (id, toIndex) => set((s) => ({ tabs: moveTab(s.tabs, id, toIndex) })),
   retargetSceneTabs: (oldPath, newPath) =>
@@ -424,17 +438,25 @@ export const useAppStore = create<AppStore>((set) => ({
   openVoiceWorkbench: () =>
     set((s) => {
       const { tabs, activeId } = insertTab(s.tabs, makeWorkbenchTab(), s.activeTabId);
-      return { tabs, activeTabId: activeId };
+      return { tabs, activeTabId: activeId, tabHistory: rememberTabActivation(s.tabHistory, activeId) };
     }),
   closeVoiceWorkbench: () =>
     set((s) => {
       const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
-      return { tabs, activeTabId: activeId, voiceModePaths: [] };
+      const nextHistory = s.tabHistory.filter(
+        (tabId) => tabId !== WORKBENCH_TAB_ID && tabs.some((tab) => tab.id === tabId)
+      );
+      return {
+        tabs,
+        activeTabId: activeId,
+        tabHistory: activeId ? rememberTabActivation(nextHistory, activeId) : nextHistory,
+        voiceModePaths: [],
+      };
     }),
   openVoiceGuide: () =>
     set((s) => {
       const { tabs, activeId } = insertTab(s.tabs, makeVoiceGuideTab(), s.activeTabId);
-      return { tabs, activeTabId: activeId };
+      return { tabs, activeTabId: activeId, tabHistory: rememberTabActivation(s.tabHistory, activeId) };
     }),
 
   // -------- 文档 --------
@@ -459,7 +481,7 @@ export const useAppStore = create<AppStore>((set) => ({
   addNovelTab: (tab) =>
     set((s) => {
       const { tabs, activeId } = insertTab(s.tabs, tab, s.activeTabId);
-      return { tabs, activeTabId: activeId };
+      return { tabs, activeTabId: activeId, tabHistory: rememberTabActivation(s.tabHistory, activeId) };
     }),
 
   setGitStatus: (status) => set({ gitStatus: status }),

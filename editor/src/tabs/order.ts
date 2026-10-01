@@ -7,6 +7,73 @@
 
 import type { WorkbenchTabItem } from './model';
 
+/** 记住最近激活的 tab id，保证历史不重复且最新项在末尾 */
+export function rememberTabActivation(history: string[], id: string): string[] {
+  if (!id) return history;
+  const next = [...new Set(history.filter((item) => item !== id))];
+  next.push(id);
+  return next;
+}
+
+/** 以右侧环形顺序返回下一个 tab id */
+export function cycleTabRight(tabs: WorkbenchTabItem[], activeId: string | null): string | null {
+  if (tabs.length === 0 || activeId === null) return null;
+  const index = tabs.findIndex((tab) => tab.id === activeId);
+  if (index < 0) return tabs[0]?.id ?? null;
+  return tabs[(index + 1) % tabs.length]?.id ?? null;
+}
+
+/** 以左侧环形顺序返回上一个 tab id */
+export function cycleTabLeft(tabs: WorkbenchTabItem[], activeId: string | null): string | null {
+  if (tabs.length === 0 || activeId === null) return null;
+  const index = tabs.findIndex((tab) => tab.id === activeId);
+  if (index < 0) return tabs[tabs.length - 1]?.id ?? null;
+  return tabs[(index - 1 + tabs.length) % tabs.length]?.id ?? null;
+}
+
+/** 按类型和标题整理标签顺序 */
+export function orderTabs(tabs: WorkbenchTabItem[]): WorkbenchTabItem[] {
+  const kindRank: Record<WorkbenchTabItem['kind'], number> = {
+    'voice-workbench': 0,
+    scene: 1,
+    config: 2,
+    resource: 3,
+    novel: 4,
+    diff: 5,
+    guidance: 6,
+  };
+  const resourceRank: Record<Extract<WorkbenchTabItem, { kind: 'resource' }>['resourceKind'], number> = {
+    image: 0,
+    audio: 1,
+    video: 2,
+    text: 3,
+  };
+  const diffRank: Record<Extract<WorkbenchTabItem, { kind: 'diff' }>['diffKind'], number> = {
+    staged: 0,
+    unstaged: 1,
+    commit: 2,
+  };
+
+  return [...tabs].sort((left, right) => {
+    const kindDelta = (kindRank[left.kind] ?? 99) - (kindRank[right.kind] ?? 99);
+    if (kindDelta !== 0) return kindDelta;
+    if (left.kind === 'scene' && right.kind === 'scene') {
+      const leftIsStart = left.path.replace(/\\/g, '/').split('/').at(-1)?.toLowerCase() === 'start.txt';
+      const rightIsStart = right.path.replace(/\\/g, '/').split('/').at(-1)?.toLowerCase() === 'start.txt';
+      if (leftIsStart !== rightIsStart) return leftIsStart ? -1 : 1;
+    }
+    if (left.kind === 'resource' && right.kind === 'resource') {
+      const resourceDelta = resourceRank[left.resourceKind] - resourceRank[right.resourceKind];
+      if (resourceDelta !== 0) return resourceDelta;
+    }
+    if (left.kind === 'diff' && right.kind === 'diff') {
+      const diffDelta = diffRank[left.diffKind] - diffRank[right.diffKind];
+      if (diffDelta !== 0) return diffDelta;
+    }
+    return (left.title ?? '').localeCompare(right.title ?? '', undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
 /** 把新选项卡插到活动选项卡之后 (与其他编辑器一致); 无活动项则追加到末尾 */
 export function insertTab(
   tabs: WorkbenchTabItem[],

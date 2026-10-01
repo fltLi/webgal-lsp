@@ -20,6 +20,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { fs } from '../lib/fs';
 import { JSON_EXT, kindFor, type FileKind } from '../lib/fileKind';
+import { relativeDirectoryPath, samePath } from '../lib/paths';
 
 /** 一次渲染多少行; 滚到接近底部时再补一页 */
 export const FILE_TREE_PAGE_SIZE = 120;
@@ -41,6 +42,11 @@ export interface FileTreeViewState {
 }
 
 export type FileTreeViewStateCache = Map<string, FileTreeViewState>;
+
+export interface FileTreeRevealRequest {
+  id: number;
+  path: string;
+}
 
 /** 长名称中间省略: 保留开头与扩展名后缀。 */
 export function middleEllipsis(text: string, maxLen: number): string {
@@ -102,6 +108,8 @@ interface FileTreeProps {
   onDoubleClick?: (file: FileNode) => void;
   onDirectoryChange?: (path: string) => void;
   selectedPath?: string | null;
+  revealRequest?: FileTreeRevealRequest | null;
+  onRevealComplete?: (id: number) => void;
   excludeTop?: (name: string) => boolean;
   assetUrl?: (rel: string) => string | undefined;
   /** 内容变更 (新建/重命名/删除) 后递增, 强制重新加载当前目录 */
@@ -131,6 +139,8 @@ export function FileTree({
   onDoubleClick,
   onDirectoryChange,
   selectedPath,
+  revealRequest,
+  onRevealComplete,
   excludeTop,
   assetUrl,
   refreshKey = 0,
@@ -144,9 +154,7 @@ export function FileTree({
   onBlankContextMenu,
   onDropFiles,
 }: FileTreeProps) {
-  const initialView = useRef(
-    viewStateCache && viewStateKey ? viewStateCache.get(viewStateKey) : undefined
-  );
+  const initialView = useRef(viewStateCache && viewStateKey ? viewStateCache.get(viewStateKey) : undefined);
   const [currentRel, setCurrentRel] = useState(initialView.current?.currentRel ?? '');
   const [dirEntries, setDirEntries] = useState<FileNode[]>([]);
   const [loadedDirectory, setLoadedDirectory] = useState<string | null>(null);
@@ -160,9 +168,33 @@ export function FileTree({
   const listRef = useRef<HTMLDivElement>(null);
   const restoredScroll = useRef(false);
   const previousView = useRef<{ currentAbs: string; query: string; flat: boolean } | null>(null);
+  const previousSelectedPath = useRef(selectedPath);
+  const [revealedPath, setRevealedPath] = useState<string | null>(null);
 
   const currentAbs = currentRel ? `${rootPath}\\${currentRel.replace(/\//g, '\\')}` : rootPath;
   const refreshVersion = refreshKey + localRefreshKey;
+
+  useEffect(() => {
+    if (previousSelectedPath.current !== selectedPath) setRevealedPath(null);
+    previousSelectedPath.current = selectedPath;
+  }, [selectedPath]);
+
+  useEffect(() => {
+    if (!revealRequest) return;
+    const directoryRel = relativeDirectoryPath(rootPath, revealRequest.path);
+    if (directoryRel === null) {
+      onRevealComplete?.(revealRequest.id);
+      return;
+    }
+
+    setRevealedPath(revealRequest.path);
+    setQuery('');
+    setFlat(false);
+    setSearchResults(null);
+    setVisibleCount(FILE_TREE_PAGE_SIZE);
+    restoredScroll.current = true;
+    setCurrentRel(directoryRel);
+  }, [onRevealComplete, revealRequest, rootPath]);
 
   useEffect(() => {
     onDirectoryChange?.(currentAbs);
@@ -242,24 +274,25 @@ export function FileTree({
       }
       if (cancelled) return;
       entries.sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
-      setDirEntries(
-        entries
-          .filter((e) => !(currentRel === '' && excludeTop && excludeTop(e.name)))
-          .map((e) => ({
-            name: e.name,
-            path: `${currentAbs}\\${e.name}`,
-            rel: currentRel ? `${currentRel}/${e.name}` : e.name,
-            isDirectory: e.isDirectory,
-            kind: e.isDirectory ? 'other' : kindFor(e.name),
-          }))
-          .filter((node) => node.isDirectory || !includeFile || includeFile(node))
-      );
+      const nodes = entries
+        .filter((e) => !(currentRel === '' && excludeTop && excludeTop(e.name)))
+        .map((e) => ({
+          name: e.name,
+          path: `${currentAbs}\\${e.name}`,
+          rel: currentRel ? `${currentRel}/${e.name}` : e.name,
+          isDirectory: e.isDirectory,
+          kind: e.isDirectory ? 'other' : kindFor(e.name),
+        }))
+        .filter((node) => node.isDirectory || !includeFile || includeFile(node));
+      const revealIndex = revealRequest ? nodes.findIndex((node) => samePath(node.path, revealRequest.path)) : -1;
+      if (revealIndex >= 0) setVisibleCount((count) => Math.max(count, revealIndex + 1));
+      setDirEntries(nodes);
       setLoadedDirectory(currentAbs);
     })();
     return () => {
       cancelled = true;
     };
-  }, [currentAbs, excludeTop, includeFile, refreshVersion]);
+  }, [currentAbs, currentRel, excludeTop, includeFile, refreshVersion, revealRequest]);
 
   // 展平: 递归列出当前目录下所有文件
   useEffect(() => {
@@ -296,7 +329,9 @@ export function FileTree({
       setSearchResults(null);
       return;
     }
-    setSearchResults(source.filter((file) => file.name.toLowerCase().includes(q) || file.rel.toLowerCase().includes(q)));
+    setSearchResults(
+      source.filter((file) => file.name.toLowerCase().includes(q) || file.rel.toLowerCase().includes(q))
+    );
   }, [query, flat, flatEntries, dirEntries]);
 
   const resetView = () => {
@@ -326,9 +361,22 @@ export function FileTree({
   }, [currentAbs, query, flat]);
 
   const viewReady =
-    loadedDirectory === currentAbs &&
-    (!flat || flatEntries !== null) &&
-    (!query.trim() || searchResults !== null);
+    loadedDirectory === currentAbs && (!flat || flatEntries !== null) && (!query.trim() || searchResults !== null);
+
+  useEffect(() => {
+    if (!revealRequest || !viewReady || flat || query.trim()) return;
+    const directoryRel = relativeDirectoryPath(rootPath, revealRequest.path);
+    const expectedAbs = directoryRel ? `${rootPath}\\${directoryRel.replace(/\//g, '\\')}` : rootPath;
+    if (!samePath(currentAbs, expectedAbs)) return;
+
+    const target = [...(listRef.current?.querySelectorAll<HTMLElement>('.file-tree-file[data-file-path]') ?? [])].find(
+      (node) => samePath(node.dataset['filePath'] ?? '', revealRequest.path)
+    );
+    const targetIndex = dirEntries.findIndex((node) => samePath(node.path, revealRequest.path));
+    if (targetIndex >= visibleCount) return;
+    target?.scrollIntoView({ block: 'nearest' });
+    onRevealComplete?.(revealRequest.id);
+  }, [currentAbs, dirEntries, flat, onRevealComplete, query, revealRequest, rootPath, viewReady, visibleCount]);
   useEffect(() => {
     if (!viewReady || restoredScroll.current) return;
     if (listRef.current) listRef.current.scrollTop = initialView.current?.scrollTop ?? 0;
@@ -336,16 +384,19 @@ export function FileTree({
   }, [viewReady]);
 
   const enterDir = (name: string) => {
+    setRevealedPath(null);
     setCurrentRel((prev) => (prev ? `${prev}/${name}` : name));
     resetView();
   };
 
   const goUp = () => {
+    setRevealedPath(null);
     setCurrentRel((prev) => (prev.includes('/') ? prev.slice(0, prev.lastIndexOf('/')) : ''));
     resetView();
   };
 
   const goToRoot = () => {
+    setRevealedPath(null);
     setCurrentRel('');
     resetView();
   };
@@ -400,8 +451,12 @@ export function FileTree({
     return (
       <button
         key={node.path}
-        className={`file-tree-file${node.path === selectedPath ? ' active' : ''}`}
-        onClick={() => onOpen(node)}
+        data-file-path={node.path}
+        className={`file-tree-file${samePath(node.path, revealedPath ?? selectedPath ?? '') ? ' active' : ''}`}
+        onClick={() => {
+          setRevealedPath(null);
+          onOpen(node);
+        }}
         onDoubleClick={() => onDoubleClick?.(node)}
         onContextMenu={(e) => {
           e.stopPropagation();
@@ -460,6 +515,7 @@ export function FileTree({
   };
 
   const navigateTo = (rel: string) => {
+    setRevealedPath(null);
     setCurrentRel(rel);
     resetView();
   };
@@ -500,12 +556,7 @@ export function FileTree({
         <ChevronDownRegular />
       </button>
       {pathMenuPos ? (
-        <ContextMenu
-          x={pathMenuPos.x}
-          y={pathMenuPos.y}
-          items={pathMenuItems}
-          onClose={() => setPathMenuPos(null)}
-        />
+        <ContextMenu x={pathMenuPos.x} y={pathMenuPos.y} items={pathMenuItems} onClose={() => setPathMenuPos(null)} />
       ) : null}
       <input
         className="file-tree-search"

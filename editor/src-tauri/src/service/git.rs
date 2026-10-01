@@ -156,6 +156,14 @@ fn head_tree(repo: &Repository) -> Option<Tree<'_>> {
     repo.head().ok()?.peel_to_tree().ok()
 }
 
+fn is_git_tracked(repo: &Repository, file: &str) -> Result<bool, String> {
+    let index = repo.index().map_err(|e| e.to_string())?;
+    if index.get_path(Path::new(file), 0).is_some() {
+        return Ok(true);
+    }
+    Ok(head_tree(repo).is_some_and(|tree| tree.get_path(Path::new(file)).is_ok()))
+}
+
 /// 从树读取某路径的 blob 内容
 fn tree_blob(repo: &Repository, tree: &Tree<'_>, path: &str) -> Option<Vec<u8>> {
     let entry = tree.get_path(Path::new(path)).ok()?;
@@ -846,6 +854,9 @@ pub async fn git_file_changes(
 ) -> Result<Vec<InlineChange>, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
+        if !is_git_tracked(&repo, &file)? {
+            return Ok(Vec::new());
+        }
         let lines = editor_diff_lines(&repo, &file, content)?;
 
         let mut changes = Vec::new();
@@ -919,6 +930,9 @@ pub async fn git_file_region(
 ) -> Result<Option<InlineRegion>, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
+        if !is_git_tracked(&repo, &file)? {
+            return Ok(None);
+        }
         let flat = editor_diff_lines(&repo, &file, content)?;
 
         // 按连续 "-/+" 运行切分为差异块 (上下文行分隔)
@@ -1003,4 +1017,36 @@ pub async fn git_file_region(
         Ok(best.map(|(_, region)| region))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_git_tracked;
+    use git2::Repository;
+    use std::{
+        fs,
+        path::Path,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn ignores_untracked_files_but_accepts_files_in_the_index() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX epoch")
+            .as_nanos();
+        let repo_path = std::env::temp_dir().join(format!("webgal-git-gutter-{unique}"));
+        let repo = Repository::init(&repo_path).expect("temporary repository should initialize");
+
+        assert!(!is_git_tracked(&repo, "untracked.txt").unwrap());
+
+        fs::write(repo_path.join("staged.txt"), "tracked in index\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("staged.txt")).unwrap();
+        index.write().unwrap();
+        assert!(is_git_tracked(&repo, "staged.txt").unwrap());
+
+        drop(repo);
+        fs::remove_dir_all(repo_path).unwrap();
+    }
 }

@@ -18,6 +18,20 @@ export function toPosix(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
+/** 获取文件相对根目录的父目录; 文件不在根目录内时返回 null。 */
+export function relativeDirectoryPath(rootPath: string, filePath: string): string | null {
+  const root = toPosix(stripTrailingSeparator(rootPath));
+  const file = toPosix(stripTrailingSeparator(filePath));
+  const prefix = `${root.toLowerCase()}/`;
+  if (!file.toLowerCase().startsWith(prefix)) return null;
+
+  const relativeFile = file.slice(root.length + 1);
+  const segments = relativeFile.split('/').filter(Boolean);
+  if (segments.length === 0) return null;
+  segments.pop();
+  return segments.join('/');
+}
+
 /** 两个路径是否指向同一个位置 (Windows 大小写不敏感)。 */
 export function samePath(a: string, b: string): boolean {
   return toPosix(a).toLowerCase() === toPosix(b).toLowerCase();
