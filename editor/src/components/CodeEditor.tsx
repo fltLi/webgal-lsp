@@ -262,6 +262,14 @@ export function CodeEditor({
       unsubscribeDiagnostics = useAppStore.subscribe((state, prev) => {
         if (state.diagnostics[path] !== prev.diagnostics[path]) applyDiagnostics(model, path);
       });
+    } else {
+      const contentSub = model.onDidChangeContent(() => {
+        if (pushingExternal.current) return;
+        const store = useAppStore.getState();
+        store.updateDocument(path, { content: model.getValue(), dirty: true });
+        if (store.settings.autoSave) scheduleAutoSave();
+      });
+      unbindModel = () => contentSub.dispose();
     }
 
     // -------- git 行号旁色块 + 就地内联差异 (view zone) --------

@@ -52,8 +52,12 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
 
   if (tab.kind === 'resource') {
     if (tab.resourceKind === 'text') {
-      disposeModel(tab.path);
-      store.closeDocument(tab.path);
+      confirmClose(() => {
+        disposeModel(tab.path);
+        useAppStore.getState().closeDocument(tab.path);
+        useAppStore.getState().closeTab(tab.id);
+      }, tab.path);
+      return;
     }
     store.closeTab(tab.id);
     return;
@@ -61,9 +65,11 @@ export function requestCloseTab(tab: WorkbenchTabItem): void {
 
   if (tab.kind === 'config') {
     // 与文本资源一样: 文档与 Monaco model 都要一并销毁, 否则文档会留在 store 里
-    disposeModel(tab.path);
-    store.closeDocument(tab.path);
-    store.closeTab(tab.id);
+    confirmClose(() => {
+      disposeModel(tab.path);
+      useAppStore.getState().closeDocument(tab.path);
+      useAppStore.getState().closeTab(tab.id);
+    }, tab.path);
     return;
   }
 
