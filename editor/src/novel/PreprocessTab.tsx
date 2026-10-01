@@ -84,6 +84,7 @@ export function PreprocessTab({ id }: { id: string }) {
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
+      fixedOverflowWidgets: true,
       fontFamily: settings.editorFontFamily,
       fontSize: settings.editorFontSize,
       wordWrap: 'on',

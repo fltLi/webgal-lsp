@@ -57,6 +57,7 @@ export function GitDiffEditor({ tab }: { tab: DiffTab }) {
       diffEditor = monaco.editor.createDiffEditor(container, {
         readOnly: true,
         automaticLayout: true,
+        fixedOverflowWidgets: true,
         renderSideBySide: true,
         // 空间不足时不折叠为内联, 固定左右分栏
         useInlineViewWhenSpaceIsLimited: false,

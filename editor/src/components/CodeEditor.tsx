@@ -68,6 +68,7 @@ export function CodeEditor({
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
+      fixedOverflowWidgets: true,
       readOnly,
       // 只读时不显示光标插入符, 避免误以为可以编辑
       domReadOnly: readOnly,

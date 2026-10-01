@@ -319,6 +319,7 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
       options={{
         minimap: { enabled: false },
         automaticLayout: true,
+        fixedOverflowWidgets: true,
         fontSize: 14,
         wordWrap: 'on',
       }}
