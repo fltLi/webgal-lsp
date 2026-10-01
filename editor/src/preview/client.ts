@@ -106,6 +106,7 @@ class PreviewClient {
     const request = createRequestEnvelope('preview.command.sync-scene', createId(), {
       sceneName: marker.sceneName,
       sentenceId: lineNumber,
+      settleMode: 'immediate',
     });
     try {
       await sendPreviewCommand(JSON.stringify(request));
