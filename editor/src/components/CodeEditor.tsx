@@ -500,6 +500,31 @@ export function CodeEditor({
   }, [previewReplay, doc.path]);
 
   /*
+   * 诊断列表点击某一条 -> 跳到那一处。
+   *
+   * 目标文件很可能**已经**是当前文档 (正在改它, 又回头去看列表), 那时编辑器不会重新
+   * 挂载 —— 只把位置写进 `cursors` 留档是跳不动的。因此这里认的是 store 里的一次显式
+   * 请求 (令牌式), 与"挂载时恢复光标"是两条路。
+   *
+   * 列号也要夹: 诊断来自语言服务, 而用户手上这份文本可能已经比它新。
+   */
+  const revealRequest = useAppStore((s) => s.revealRequest);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !revealRequest || editorPathRef.current !== doc.path || revealRequest.path !== doc.path) return;
+    const model = editor.getModel();
+    const maxLine = Math.max(1, model?.getLineCount() ?? 1);
+    const line = Math.min(Math.max(1, revealRequest.line), maxLine);
+    const maxColumn = Math.max(1, model?.getLineMaxColumn(line) ?? 1);
+    const column = Math.min(Math.max(1, revealRequest.column), maxColumn);
+    editor.setPosition({ lineNumber: line, column });
+    editor.revealLineInCenterIfOutsideViewport(line);
+    editor.focus();
+    // 一次性动作: 用完就撤, 否则切走再切回本文档会又跳一次
+    useAppStore.getState().clearReveal();
+  }, [revealRequest, doc.path]);
+
+  /*
    * 当前语句整行高亮: 只更新装饰集合, 不重建编辑器 (否则会丢失光标与滚动位置)。
    *
    * `highlightLine.line` 是**后端给的 0 起算行号**, 而 `monaco.Range` 收的是

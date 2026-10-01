@@ -64,4 +64,11 @@ describe('normalizeSettings', () => {
     expect(settings.editorFontSize).toBe(18);
     expect(settings.templates.map((template) => template.id)).toEqual(['tpl-1']);
   });
+
+  it('诊断列表形式只认两个合法值', () => {
+    expect(normalizeSettings({ diagnosticsView: 'modal' }).diagnosticsView).toBe('modal');
+    expect(normalizeSettings({}).diagnosticsView).toBe('dock');
+    // 老数据里没有这个字段时, 展开任意字符串不该被当成合法形式
+    expect(normalizeSettings({ diagnosticsView: 'drawer' as never }).diagnosticsView).toBe('dock');
+  });
 });

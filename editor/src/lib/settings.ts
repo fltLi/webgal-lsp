@@ -7,6 +7,14 @@ import { normalizeRecentProjects, type RecentProject } from './recentProjects';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
+/**
+ * 诊断列表的打开形式。
+ *
+ * `modal` 是弹窗 (盖住编辑区, 与其它对话框一致), `dock` 是从编辑区底部升起的托盘
+ * (不遮挡代码, 适合"点一条改一条"的连续修复)。两种形式共用同一份列表与筛选。
+ */
+export type DiagnosticsView = 'modal' | 'dock';
+
 /** 已添加的 WebGAL 模板 (引用式: 记录磁盘路径, 不复制)。 */
 export interface TemplateEntry {
   id: string;
@@ -55,6 +63,8 @@ export interface Settings {
   editorFontSize: number;
   editorWordWrap: boolean;
   editorMinimap: boolean;
+  /** 诊断列表以弹窗还是底部托盘打开 */
+  diagnosticsView: DiagnosticsView;
 }
 
 /** v0.5.1 及以前的设置形状, 只用于读取老数据。 */
@@ -79,6 +89,7 @@ export const defaultSettings: Settings = {
   editorFontSize: 14,
   editorWordWrap: true,
   editorMinimap: false,
+  diagnosticsView: 'dock',
 };
 
 export function loadSettings(): Settings {
@@ -112,6 +123,8 @@ export function normalizeSettings(raw: Partial<Settings> & LegacySettings): Sett
   return {
     ...defaultSettings,
     ...raw,
+    // 枚举值要显式校验: 老数据里没有这个字段时上面的展开会原样带进来任意字符串
+    diagnosticsView: raw.diagnosticsView === 'modal' ? 'modal' : 'dock',
     engines: engines.length === 0 && legacyPath ? [legacyEngineEntry(legacyPath)] : engines,
     recentProjects: normalizeRecentProjects(raw.recentProjects),
     templates: Array.isArray(raw.templates) ? raw.templates.filter(isTemplateEntry) : [],

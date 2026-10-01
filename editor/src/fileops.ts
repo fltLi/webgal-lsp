@@ -125,7 +125,6 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
     const newDocPath = `${newPath.replace(/\\/g, '/')}${suffix}`.replace(/\//g, '\\');
     disposeModel(doc.path);
     lspClient.closeDocument(doc.path);
-    store.setDiagnostics(doc.path, []);
     store.updateDocument(doc.path, {
       path: newDocPath,
       name: newDocPath.split(/[\\/]/).pop() ?? newDocPath,
@@ -137,6 +136,14 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
     // 若该文档是当前活动文档, CodeEditor 会以新路径重建并重新向 LSP 注册;
     // 此处对非活动文档不做额外处理 (LSP 仅跟踪活动文档)。
   }
+
+  /*
+   * 诊断同样按路径存放, 也要跟着挪。
+   *
+   * 不挪的话, 项目诊断列表里会留下指向旧路径的条目 —— 语言服务只为**新**路径推诊断,
+   * 旧路径那一条永远等不到更新, 于是"改好了"的问题一直挂在列表上, 点它还跳不过去。
+   */
+  store.retargetDiagnostics(oldPath, newPath);
 }
 
 /** 删除文件/文件夹 (移动至系统回收站), 并关闭受影响的开场景选项卡。 */
@@ -153,4 +160,6 @@ export async function deletePath(path: string): Promise<void> {
     store.closeDocument(doc.path);
     store.closeTab(sceneTabId(doc.path));
   }
+  // 磁盘上已经没有这个文件了, 语言服务不会再为它推诊断 —— 不清就是列表里的幽灵条目
+  store.clearDiagnostics(path);
 }

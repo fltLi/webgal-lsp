@@ -17,6 +17,8 @@ import {
 } from '@fluentui/react-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { DiagnosticsDialog } from '../diagnostics/DiagnosticsDialog';
+import { DiagnosticsTray } from '../diagnostics/DiagnosticsTray';
 import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
 import { closeProject } from '../project';
 import { PreprocessTab } from '../novel/PreprocessTab';
@@ -64,6 +66,10 @@ export function EditorPage() {
   const activeTabId = useAppStore((s) => s.activeTabId);
   const voiceModePaths = useAppStore((s) => s.voiceModePaths);
   const voiceStatus = useAppStore((s) => s.voiceStatus);
+  /** 诊断列表的打开形式 (设置里选): 弹窗或底部托盘 */
+  const diagnosticsView = useAppStore((s) => s.settings.diagnosticsView);
+  const diagnosticsOpen = useAppStore((s) => s.diagnosticsOpen);
+  const setDiagnosticsOpen = useAppStore((s) => s.setDiagnosticsOpen);
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'scenes' | 'resources' | 'project' | 'repository'>('scenes');
@@ -82,7 +88,9 @@ export function EditorPage() {
   useEffect(() => {
     fileTreeViewStateCache.current.clear();
     setFileTreeLocateRequest(null);
-  }, [projectPath]);
+    // 换项目后列表里的路径全都失效了, 收起来比让人看一堆过期条目强
+    setDiagnosticsOpen(false);
+  }, [projectPath, setDiagnosticsOpen]);
 
   const completeFileTreeLocate = useCallback((id: number) => {
     setFileTreeLocateRequest((request) => (request?.id === id ? null : request));
@@ -326,6 +334,15 @@ export function EditorPage() {
             onLocateTab={locateTabInBrowser}
           />
           <div className="editor-area">{renderActivePane()}</div>
+
+          {/*
+            诊断的托盘形式: 它是编辑区里的一个普通 flex 子项 —— 把编辑区顶矮而不是盖住它,
+            因此代码始终看得见 (弹窗形式见文件末尾)。
+          */}
+          {diagnosticsView === 'dock' && diagnosticsOpen ? (
+            <DiagnosticsTray onClose={() => setDiagnosticsOpen(false)} />
+          ) : null}
+
           <StatusBar />
         </div>
       </div>
@@ -350,6 +367,10 @@ export function EditorPage() {
       {snapshot && (
         <SnapshotDialog source={snapshot.source} destination={snapshot.destination} onClose={() => setSnapshot(null)} />
       )}
+
+      {diagnosticsView === 'modal' && diagnosticsOpen ? (
+        <DiagnosticsDialog onClose={() => setDiagnosticsOpen(false)} />
+      ) : null}
     </div>
   );
 }

@@ -82,6 +82,21 @@ interface AppStore {
   lspActivity: string | null;
 
   diagnostics: Record<string, LspDiagnostic[]>;
+  /**
+   * 诊断列表 (弹窗或底部托盘) 是否打开。
+   *
+   * 放在 store 而不是 `EditorPage` 的局部 state: 打开它的入口在状态栏 (`StatusBar`),
+   * 而渲染它的地方在 `EditorPage` —— 两者不在同一棵子树里。
+   */
+  diagnosticsOpen: boolean;
+  /**
+   * 一次"跳到某条诊断"的请求 (诊断列表点击行发起)。
+   *
+   * 与 `previewReplay` 同样的令牌式请求: 目标文件可能**已经**在编辑器里打开着,
+   * 那时编辑器不会重新挂载, 只改 `cursors` 留档是跳不动的 —— 必须以一次显式请求
+   * 通知持有编辑器的那个组件 (见 `CodeEditor`)。
+   */
+  revealRequest: { path: string; line: number; column: number; token: number } | null;
 
   previewServerUrl: string | null;
   previewSiteId: string | null;
@@ -211,6 +226,20 @@ interface AppStore {
    */
   setLspActivity: (activity: string | null) => void;
   setDiagnostics: (path: string, diagnostics: LspDiagnostic[]) => void;
+  /** 清掉某个路径 (若为目录, 含其下所有文件) 的诊断 —— 文件被删除时调用 */
+  clearDiagnostics: (path: string) => void;
+  /** 文件/目录被重命名后, 把诊断挪到新路径 (键是路径, 不挪就会留下指向旧路径的幽灵条目) */
+  retargetDiagnostics: (oldPath: string, newPath: string) => void;
+  setDiagnosticsOpen: (open: boolean) => void;
+  /** 请求跳到某条诊断所在的位置 (由 `CodeEditor` 消费) */
+  requestReveal: (path: string, line: number, column: number) => void;
+  /**
+   * 消费掉那次跳转请求。
+   *
+   * 请求是"一次性动作"而不是"当前状态": 不清掉的话, 跳到别处再切回这个文件时会又跳一次
+   * (那时用户想回到的是自己上次的光标, 不是刚才看的那条诊断)。
+   */
+  clearReveal: () => void;
   setPreview: (patch: Partial<Pick<AppStore, 'previewServerUrl' | 'previewSiteId' | 'previewReady'>>) => void;
   /**
    * 预览把光标行同步给引擎时记下这一行 (指示器立即进入"执行中")。
@@ -254,6 +283,8 @@ export const useAppStore = create<AppStore>((set) => ({
   lspActivity: null,
 
   diagnostics: {},
+  diagnosticsOpen: false,
+  revealRequest: null,
 
   previewServerUrl: null,
   previewSiteId: null,
@@ -312,6 +343,9 @@ export const useAppStore = create<AppStore>((set) => ({
         novelStats: null,
         gitStatus: null,
         diagnostics: {},
+        // 诊断列表显示的是"当前项目的问题", 项目都关了就没有可看的东西
+        diagnosticsOpen: false,
+        revealRequest: null,
         previewSiteId: null,
         previewReady: false,
         livePreviewMarker: null,
@@ -352,11 +386,16 @@ export const useAppStore = create<AppStore>((set) => ({
   closeTab: (id) =>
     set((s) => {
       const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId);
-      const diagnostics = { ...s.diagnostics };
       const closed = s.tabs.find((tab) => tab.id === id);
       const nextHistory = s.tabHistory.filter((tabId) => tabId !== id && tabs.some((tab) => tab.id === tabId));
       const tabHistory = activeId ? rememberTabActivation(nextHistory, activeId) : nextHistory;
-      if (closed?.kind === 'scene') delete diagnostics[closed.path];
+      /*
+       * 关掉场景卡**不清理**它的诊断。
+       *
+       * 诊断是按项目整体推送的 (没有问题的场景也推空数组), 因此这份表一直是"整个项目的
+       * 现状", 与某个文件此刻是否开着无关。早先这里会顺手删掉被关文件的诊断, 于是
+       * "项目诊断列表"会随着开关标签页而时有时无 —— 那正是最需要它准确的时候。
+       */
       const closingWorkbench = closed?.kind === 'voice-workbench';
       // 关闭场景卡时顺带清掉它的配音编辑模式, 避免残留到下次打开
       const voiceModePaths =
@@ -376,7 +415,6 @@ export const useAppStore = create<AppStore>((set) => ({
         tabs,
         activeTabId: activeId,
         tabHistory,
-        diagnostics,
         voiceModePaths,
         currentSceneTabId,
         // 关闭工作台即退出配音功能
@@ -488,6 +526,41 @@ export const useAppStore = create<AppStore>((set) => ({
   setLspStatus: (status, error) => set({ lspStatus: status, lspError: error ?? null }),
   setLspActivity: (activity) => set({ lspActivity: activity }),
   setDiagnostics: (path, diagnostics) => set((s) => ({ diagnostics: { ...s.diagnostics, [path]: diagnostics } })),
+  clearDiagnostics: (path) =>
+    set((s) => {
+      // 目录也走这里: 删掉整个场景文件夹时, 底下的文件都要一起清掉
+      const prefix = `${path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()}/`;
+      const entries = Object.entries(s.diagnostics).filter(([key]) => {
+        const normalized = key.replace(/\\/g, '/').toLowerCase();
+        return normalized !== prefix.slice(0, -1) && !normalized.startsWith(prefix);
+      });
+      if (entries.length === Object.keys(s.diagnostics).length) return {};
+      return { diagnostics: Object.fromEntries(entries) };
+    }),
+  retargetDiagnostics: (oldPath, newPath) =>
+    set((s) => {
+      const oldNorm = oldPath.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      const oldPosix = oldPath.replace(/\\/g, '/').replace(/\/+$/, '');
+      const newPosix = newPath.replace(/\\/g, '/').replace(/\/+$/, '');
+      let changed = false;
+      const diagnostics: Record<string, LspDiagnostic[]> = {};
+      for (const [key, value] of Object.entries(s.diagnostics)) {
+        const posix = key.replace(/\\/g, '/');
+        const normalized = posix.toLowerCase();
+        if (normalized !== oldNorm && !normalized.startsWith(`${oldNorm}/`)) {
+          diagnostics[key] = value;
+          continue;
+        }
+        changed = true;
+        const suffix = posix.slice(oldPosix.length);
+        diagnostics[`${newPosix}${suffix}`.replace(/\//g, '\\')] = value;
+      }
+      return changed ? { diagnostics } : {};
+    }),
+  setDiagnosticsOpen: (open) => set({ diagnosticsOpen: open }),
+  requestReveal: (path, line, column) =>
+    set((s) => ({ revealRequest: { path, line, column, token: (s.revealRequest?.token ?? 0) + 1 } })),
+  clearReveal: () => set({ revealRequest: null }),
   setPreview: (patch) => set((s) => ({ ...s, ...patch })),
   beginLivePreview: (marker) =>
     set((s) => ({

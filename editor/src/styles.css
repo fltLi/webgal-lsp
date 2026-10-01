@@ -768,6 +768,36 @@ body.resizing {
   color: var(--app-fg);
 }
 
+/*
+ * 状态栏里的「诊断」是打开项目诊断列表的入口。
+ *
+ * 它长得仍然是一段文字 (静止时不加任何装饰), 只是多了可点性: 悬停给一层淡底,
+ * 列表开着时保留底色 —— 状态栏里已经有一个 LSP 状态项了, 再加一个常亮的按钮
+ * 会让这一条读起来像工具栏。
+ */
+.status-diag {
+  display: inline-flex;
+  align-items: center;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-diag:hover {
+  background: var(--app-hover);
+  color: var(--app-fg);
+}
+
+.status-diag.open {
+  background: var(--app-selected);
+  color: var(--app-fg);
+}
+
 .lsp-status.lsp-ready {
   color: #107c10;
 }
@@ -2214,6 +2244,11 @@ body.resizing {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 同一大板块下的多个小板块之间留出分段距离 (小板块本身只有一条发丝线做标题) */
+.settings-group + .settings-group {
+  margin-top: 28px;
 }
 
 /* 分组标题带一条发丝线, 与开始界面的"最近项目"分节头同款 */
@@ -4906,4 +4941,415 @@ input[type='number'].voice-control {
 
 [data-theme='dark'] .rendered-markdown div[data-alert='caution'] {
   --doc-alert-color: #f85149;
+}
+
+/* ==================== 诊断列表 (弹窗 / 底部托盘共用) ==================== */
+/*
+ * 列表本体与筛选条是同一份, 弹窗与托盘只是外壳不同 (见 `diagnostics/` 目录)。
+ * 颜色沿用文件树里的徽标色: 同一个级别在侧栏和这里必须是同一个颜色。
+ */
+.diag-sev-1 {
+  color: #d1242f;
+}
+
+.diag-sev-2 {
+  color: #bc4c00;
+}
+
+.diag-sev-3 {
+  color: #0a6cbd;
+}
+
+.diag-sev-4 {
+  color: var(--app-muted);
+}
+
+[data-theme='dark'] .diag-sev-1 {
+  color: #f85149;
+}
+
+[data-theme='dark'] .diag-sev-2 {
+  color: #d29922;
+}
+
+[data-theme='dark'] .diag-sev-3 {
+  color: #58a6ff;
+}
+
+.diag-badge.diag-info {
+  color: #0a6cbd;
+}
+
+[data-theme='dark'] .diag-badge.diag-info {
+  color: #58a6ff;
+}
+
+/* -------- 筛选条 (一行) -------- */
+/*
+ * 级别是**可任意组合的开关**, 不是单选分段: "只看错误"和"错误+警告"都是常见诉求,
+ * 互斥的选择器表达不了后者。关掉的级别用弱化文字 + 空心点, 不用删除线 ——
+ * 那会让一排里出现划掉的字, 比"没选中"更像"出错了"。
+ */
+.diag-bar {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 24px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.diag-severity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--app-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diag-severity:hover {
+  border-color: var(--app-border-strong);
+  color: var(--app-fg);
+}
+
+.diag-severity.on {
+  border-color: transparent;
+  background: var(--app-selected);
+  color: var(--app-fg);
+}
+
+.diag-severity-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.diag-severity.on .diag-severity-dot {
+  opacity: 1;
+}
+
+.diag-severity-count {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.diag-bar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--app-border);
+}
+
+.diag-search {
+  margin-left: auto;
+  width: 200px;
+}
+
+/* -------- 诊断码浮层 -------- */
+/* 就地展开, 不用 portal (与项目里的自绘 Select 同款做法, 见 Select.tsx 的说明) */
+.diag-codes {
+  position: relative;
+}
+
+.diag-codes-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diag-codes-trigger:hover,
+.diag-codes-trigger.open {
+  border-color: var(--app-border-strong);
+}
+
+.diag-codes-trigger.open {
+  background: var(--app-selected);
+}
+
+.diag-codes-trigger-count {
+  color: var(--app-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.diag-codes-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 3;
+  width: 236px;
+  max-height: 268px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 6px;
+  background: var(--app-panel);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+[data-theme='dark'] .diag-codes-panel {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.diag-codes-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 6px 6px;
+  border-bottom: 1px solid var(--app-border);
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.diag-codes-panel-head > span:first-child {
+  flex: 1;
+}
+
+.diag-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--app-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diag-link:hover {
+  text-decoration: underline;
+}
+
+.diag-codes-panel-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.diag-code-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.diag-code-item:hover {
+  background: var(--app-hover);
+}
+
+.diag-code-name {
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12px;
+}
+
+.diag-code-count {
+  margin-left: auto;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------- 列表 -------- */
+.diag-list {
+  padding: 2px 0 8px;
+}
+
+.diag-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 16px;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diag-group:first-child .diag-group-head {
+  border-top: 0;
+}
+
+.diag-group-head:hover {
+  background: var(--app-hover);
+}
+
+.diag-group-path {
+  font-weight: 600;
+}
+
+.diag-group-dir {
+  font-weight: 400;
+  color: var(--app-muted);
+}
+
+.diag-group-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diag-group-copy {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.diag-group-copy:hover {
+  background: var(--app-selected);
+  color: var(--app-fg);
+}
+
+.diag-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 16px 5px 30px;
+  border: 0;
+  background: transparent;
+  color: var(--app-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diag-row:hover {
+  background: var(--app-hover);
+}
+
+.diag-row-icon {
+  flex: none;
+  display: inline-flex;
+}
+
+.diag-pos {
+  flex: none;
+  width: 52px;
+  color: var(--app-muted);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diag-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diag-code {
+  flex: none;
+  color: var(--app-muted);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 11px;
+}
+
+.diag-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 120px;
+  color: var(--app-muted);
+  font-size: 13px;
+}
+
+.diag-empty p {
+  margin: 0;
+}
+
+/* -------- 底部托盘 -------- */
+/*
+ * 托盘是编辑区里的一个普通 flex 子项 (不是浮层): 它把编辑区顶矮, 代码始终看得见。
+ * 高度固定 —— 拖拽改高需要一套新的交互, 而这里"看两条就回去改"的用法占绝大多数。
+ */
+.diag-dock {
+  flex: 0 0 auto;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--app-border-strong);
+  background: var(--app-panel);
+}
+
+.diag-dock-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 24px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.diag-dock-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.diag-dock-description {
+  font-size: 12px;
+  color: var(--app-muted);
+}
+
+.diag-dock-spacer {
+  flex: 1;
+}
+
+/* 托盘比弹窗宽得多, 筛选条的左右留白跟着缩一点 */
+.diag-dock .diag-bar {
+  padding: 8px 24px;
+}
+
+/*
+ * 托盘只有 320px 高, 诊断码浮层要按它自己的高度收一收 —— 否则会从托盘底下探出去,
+ * 盖在状态栏上面。
+ */
+.diag-dock .diag-codes-panel {
+  max-height: 200px;
+}
+
+/* -------- 设置里的下拉 (宽度不能跟着面板走) -------- */
+.settings-select {
+  flex: none;
+  width: 140px;
 }

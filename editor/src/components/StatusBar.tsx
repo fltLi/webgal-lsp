@@ -8,7 +8,14 @@
 // 它和 LSP 那一项是同一种东西: **名称 + 一句话状态**, 不承载计数。待处理的配音任务
 // 数属于"工作台里正在发生什么", 由工作台选项卡的角标负责 —— 状态栏里再放一个
 // `队列 3` 只会让人以为那是常驻指标。
+//
+// 诊断数是**整个项目**的合计 (含未打开的场景), 不是当前这张卡的: 它就是诊断列表的入口,
+// 而那个列表列的是全项目的问题。级别上只统计错误与警告 —— 信息级 (目前只有 WG001 的
+// 格式建议) 数量最多且不代表"坏了", 计进去会让这个数字长期虚高。
 
+import { useMemo } from 'react';
+
+import { collectProjectDiagnostics } from '../diagnostics/model';
 import { isVoiceWorkbenchOpen, useAppStore } from '../state/store';
 
 const GSV_LABELS: Record<string, string> = {
@@ -25,6 +32,9 @@ export function StatusBar() {
   const lspActivity = useAppStore((s) => s.lspActivity);
   const cursor = useAppStore((s) => s.cursor);
   const diagnostics = useAppStore((s) => s.diagnostics);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const diagnosticsOpen = useAppStore((s) => s.diagnosticsOpen);
+  const setDiagnosticsOpen = useAppStore((s) => s.setDiagnosticsOpen);
   const novelStats = useAppStore((s) => s.novelStats);
   // 工作台是普通选项卡: 是否打开由选项卡序列推导
   const workbenchOpen = useAppStore((s) => isVoiceWorkbenchOpen(s.tabs));
@@ -37,8 +47,22 @@ export function StatusBar() {
     active?.kind === 'scene' ? (s.documents.find((doc) => doc.path === active.path) ?? null) : null
   );
 
-  const diagCount = active?.kind === 'scene' ? (diagnostics[active.path]?.length ?? 0) : 0;
-  const errors = active?.kind === 'scene' ? (diagnostics[active.path]?.filter((d) => d.severity === 1).length ?? 0) : 0;
+  const projectDiagnostics = useMemo(() => {
+    const { files } = collectProjectDiagnostics(diagnostics, projectPath);
+    let problems = 0;
+    let errors = 0;
+    for (const file of files) {
+      for (const entry of file.entries) {
+        if (entry.severity === 1) {
+          errors += 1;
+          problems += 1;
+        } else if (entry.severity === 2) {
+          problems += 1;
+        }
+      }
+    }
+    return { problems, errors };
+  }, [diagnostics, projectPath]);
 
   const isNovel = active?.kind === 'novel';
   const charCount = isNovel ? (novelStats?.chars ?? 0) : (activeDoc?.content.length ?? 0);
@@ -75,10 +99,16 @@ export function StatusBar() {
         </span>
       )}
 
-      <span className="status-diag">
-        诊断: {diagCount}
-        {errors > 0 ? ` (错误 ${errors})` : ''}
-      </span>
+      <button
+        type="button"
+        className={`status-diag${diagnosticsOpen ? ' open' : ''}`}
+        title="查看整个项目的诊断（不含信息级与提示）"
+        aria-expanded={diagnosticsOpen}
+        onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}
+      >
+        诊断: {projectDiagnostics.problems}
+        {projectDiagnostics.errors > 0 ? ` (错误 ${projectDiagnostics.errors})` : ''}
+      </button>
       <span className="status-spacer" />
       {cursor ? (
         <span className="status-cursor">
