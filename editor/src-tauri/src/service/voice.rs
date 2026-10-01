@@ -189,6 +189,7 @@ pub async fn voice_launch(
     }
 
     let mut process = Command::new(&command.program);
+    launcher::hide_console_window(process.as_std_mut());
     process
         .args(&command.args)
         .current_dir(&command.cwd)

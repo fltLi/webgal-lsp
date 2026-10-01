@@ -70,6 +70,17 @@ pub struct CondaEnv {
     pub program: String,
 }
 
+#[cfg(windows)]
+pub(crate) fn hide_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hide_console_window(_command: &mut Command) {}
+
 /// 在常见位置寻找 conda 环境。
 ///
 /// 刻意不依赖 PATH 上的 `conda`: 图形界面进程未必继承 shell 的初始化脚本。
@@ -80,7 +91,9 @@ pub fn list_conda_envs() -> Vec<CondaEnv> {
 
     // 1) `conda env list` 里登记的环境 (包含 `envs_dirs` 指向的自定义目录)
     let exe = conda_executable().unwrap_or_else(|| "conda".into());
-    if let Ok(output) = Command::new(exe).args(["env", "list"]).output() {
+    let mut command = Command::new(exe);
+    hide_console_window(&mut command);
+    if let Ok(output) = command.args(["env", "list"]).output() {
         let text = String::from_utf8_lossy(&output.stdout).into_owned();
         for line in text.lines() {
             collect_env_line(&mut envs, line);
