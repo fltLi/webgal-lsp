@@ -26,12 +26,16 @@ pub const MAX_CHECKPOINT_VISITS: usize = 32;
 pub const MAX_CALL_STACK_DEPTH: usize = 64;
 
 /// 模拟执行 WebGAL 项目, 提供诊断信息
+///
+/// # Behavior
+/// * 对于没有诊断的场景, 仍返回一个空诊断数组占位 (见 [`Project::into_diagnostics`]).
+/// * 缺少入口场景 [`START_SCENE`] 时没有语句可执行, 但同样按场景补齐占位.
+///   同时此路径不执行死代码检查: 一条语句都没跑过, 检查结果全是误报.
 pub fn simulate<'a, P: ProjectView<'a>>(project_view: P) -> DiagnosticList {
     // 初始化项目和执行器
     let project = Project::new(project_view);
-    let simulator = match Simulator::new(&project) {
-        Some(v) => v,
-        None => return DiagnosticList::default(),
+    let Some(simulator) = Simulator::new(&project) else {
+        return project.into_diagnostics();
     };
 
     // 模拟执行循环 (BFS 分支处理)
