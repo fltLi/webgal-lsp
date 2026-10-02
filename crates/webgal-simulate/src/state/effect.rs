@@ -936,9 +936,8 @@ impl ToEffects for SetAnimationSentence {
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        let id = match &self.target {
-            Some(v) => v,
-            None => return,
+        let Some(id) = &self.target else {
+            return;
         };
 
         // let transform = match project.view().get_animation(&self.animation) {
@@ -969,9 +968,8 @@ impl ToEffects for SetTransformSentence {
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        let id = match &self.target {
-            Some(v) => v,
-            None => return,
+        let Some(id) = &self.target else {
+            return;
         };
 
         // let mut transform = Box::new(self.transform.clone());
@@ -1000,9 +998,8 @@ impl ToEffects for SetTempAnimationSentence {
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        let id = match &self.target {
-            Some(v) => v,
-            None => return,
+        let Some(id) = &self.target else {
+            return;
         };
 
         // let transform = Box::new(merge_animations(&self.animation, self.write_default));
@@ -1028,9 +1025,8 @@ impl ToEffects for SetTransitionSentence {
         effects: &mut Vec<(DiagnosticLocation, StageEffect)>,
         diagnostics: &mut Vec<PrimaryDiagnostic>,
     ) {
-        let id = match &self.target {
-            Some(v) => v,
-            None => return,
+        let Some(id) = &self.target else {
+            return;
         };
 
         if let Some(exit) = &self.exit {

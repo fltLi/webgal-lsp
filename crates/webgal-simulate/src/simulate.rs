@@ -88,9 +88,8 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
 
     fn next(mut self) -> StepOutcome<'a, 'b, P> {
         // 读取语句 (读完场景时尝试弹出调用栈)
-        let sentence = match self.scene.get(self.location.line) {
-            Some(v) => v,
-            None => return self.pop_call_stack().into(),
+        let Some(sentence) = self.scene.get(self.location.line) else {
+            return self.pop_call_stack().into();
         };
         self.location.line += 1; // 移动到下一条语句
 
@@ -230,9 +229,8 @@ impl<'a, 'b, P: ProjectView<'a>> Simulator<'a, 'b, P> {
                 s.choices
                     .iter()
                     .filter_map(|choice| {
-                        let target = match &choice.target {
-                            Some(v) => v,
-                            None => return None,
+                        let Some(target) = &choice.target else {
+                            return None;
                         };
 
                         // 检查选项是否启用

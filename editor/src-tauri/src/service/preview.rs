@@ -365,10 +365,9 @@ async fn handle_static_request(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let logical_path = match sanitize_request_path(request_path.as_deref().unwrap_or("index.html"))
-    {
-        Some(path) => path,
-        None => return StatusCode::BAD_REQUEST.into_response(),
+    let Some(logical_path) = sanitize_request_path(request_path.as_deref().unwrap_or("index.html"))
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
     };
 
     let resolved = resolve_file(&site.project, site.engine.as_deref(), &logical_path).await;

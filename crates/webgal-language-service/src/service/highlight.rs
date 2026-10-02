@@ -516,9 +516,8 @@ fn highlight_set_variable_content<F>(content: &str, mut f: F)
 where
     F: FnMut(PrimaryToken),
 {
-    let (variable, expression) = match content.split_once('=') {
-        Some(v) => v,
-        None => return,
+    let Some((variable, expression)) = content.split_once('=') else {
+        return;
     };
 
     // 变量

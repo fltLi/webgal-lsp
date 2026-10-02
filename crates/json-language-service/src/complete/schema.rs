@@ -103,11 +103,11 @@ impl Schema {
     /// 依据 JSON 位置信息提供补全
     pub fn complete_by_location(&self, location: &Location) -> Vec<Completion> {
         let Location { path, ident } = location;
-        let FieldView {
+        let Some(FieldView {
             value, description, ..
-        } = match self.get_at_path(path) {
-            Some(field) => field,
-            None => return Vec::default(),
+        }) = self.get_at_path(path)
+        else {
+            return Vec::default();
         };
 
         match *ident {

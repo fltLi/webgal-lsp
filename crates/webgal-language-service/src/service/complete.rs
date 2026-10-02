@@ -31,11 +31,11 @@ pub fn complete_capability() -> CompletionOptions {
 /// 语句补全
 pub fn complete(scene: &Scene, position: Position, project: &Project) -> Vec<CompletionItem> {
     // 定位输入
-    let SentenceInfo {
+    let Some(SentenceInfo {
         primary, sentence, ..
-    } = match scene.sentences().get(position.line as usize) {
-        Some(sentence) => sentence,
-        None => return Vec::default(),
+    }) = scene.sentences().get(position.line as usize)
+    else {
+        return Vec::default();
     };
 
     // 转发补全

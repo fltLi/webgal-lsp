@@ -484,9 +484,10 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
         let path = params.text_document.uri.to_string();
-        let content = match params.content_changes.pop() {
-            Some(TextDocumentContentChangeEvent { text, .. }) => text,
-            None => return,
+        let Some(TextDocumentContentChangeEvent { text: content, .. }) =
+            params.content_changes.pop()
+        else {
+            return;
         };
 
         // 查找项目
