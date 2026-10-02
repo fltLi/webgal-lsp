@@ -158,6 +158,43 @@ pub fn document_link_utf8_to_utf16(scene: &Scene, link: DocumentLink) -> Documen
     }
 }
 
+pub fn document_colors_utf8_to_utf16(scene: &Scene, colors: &mut [ColorInformation]) {
+    colors.par_iter_mut().for_each(|color| {
+        *color = document_color_utf8_to_utf16(scene, color.clone());
+    });
+}
+
+pub fn document_color_utf8_to_utf16(scene: &Scene, color: ColorInformation) -> ColorInformation {
+    ColorInformation {
+        range: range_utf8_to_utf16(scene, color.range),
+        ..color
+    }
+}
+
+pub fn color_presentations_utf8_to_utf16(scene: &Scene, presentations: &mut [ColorPresentation]) {
+    presentations.par_iter_mut().for_each(|presentation| {
+        *presentation = color_presentation_utf8_to_utf16(scene, presentation.clone());
+    });
+}
+
+pub fn color_presentation_utf8_to_utf16(
+    scene: &Scene,
+    presentation: ColorPresentation,
+) -> ColorPresentation {
+    ColorPresentation {
+        text_edit: presentation
+            .text_edit
+            .map(|edit| text_edit_utf8_to_utf16(scene, edit)),
+        additional_text_edits: presentation.additional_text_edits.map(|edits| {
+            edits
+                .into_iter()
+                .map(|edit| text_edit_utf8_to_utf16(scene, edit))
+                .collect()
+        }),
+        ..presentation
+    }
+}
+
 pub fn highlights_utf8_to_utf16(scene: &Scene, tokens: &mut [SemanticToken]) {
     let mut current_line = 0;
     let mut current_byte_pos = 0; // 当前行内的字节偏移

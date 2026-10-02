@@ -3,7 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import type { Diagnostic, Hover, InlayHint, Location, Range } from 'vscode-languageserver-types';
+import type {
+  ColorInformation,
+  ColorPresentation,
+  Diagnostic,
+  Hover,
+  InlayHint,
+  Location,
+  Range,
+} from 'vscode-languageserver-types';
 // 与 WebGAL Ink 共用同一套代码块高亮桥接 (后端高亮 -> Monaco tokenizer): Monaco 渲染
 // hover / 补全文档里的 ```webgal 代码块时只认"语言注册的 tokenizer", 它不会自己把 LSP 的
 // semantic tokens 用到代码块上; WebGAL 的高亮只有后端一份, 这里只做转译。
@@ -233,6 +241,46 @@ export function SceneEditor({ value, onChange, onCursorChange, wasm }: EditorPro
         } catch (e) {
           console.error('Inlay hint error:', e);
           return { hints: [], dispose: () => {} };
+        }
+      },
+    });
+
+    // 颜色色块: 语句中的颜色字面量 (参数与文本拓展样式) 由后端勾画, 改写文案也由后端给出。
+    // 两个方法必须成对实现 —— Monaco 拿到色块后会用**产出该颜色的 provider** 取改写方案,
+    // 缺 provideColorPresentations 会在点开色块时抛错。
+    monaco.languages.registerColorProvider(languageId, {
+      provideDocumentColors: () => {
+        if (!wasm) return [];
+        try {
+          return (wasm.documentColor() as ColorInformation[]).map((info) => ({
+            range: toMonacoRange(info.range),
+            color: info.color,
+          }));
+        } catch (e) {
+          console.error('Document color error:', e);
+          return [];
+        }
+      },
+      provideColorPresentations: (_model, colorInfo) => {
+        if (!wasm) return [];
+        try {
+          const range = colorInfo.range;
+          const presentations = wasm.colorPresentation(
+            range.startLineNumber - 1,
+            range.startColumn - 1,
+            range.endLineNumber - 1,
+            range.endColumn - 1,
+            colorInfo.color
+          ) as ColorPresentation[];
+          return presentations.map((presentation) => ({
+            label: presentation.label,
+            textEdit: presentation.textEdit
+              ? { range: toMonacoRange(presentation.textEdit.range), text: presentation.textEdit.newText }
+              : undefined,
+          }));
+        } catch (e) {
+          console.error('Color presentation error:', e);
+          return [];
         }
       },
     });

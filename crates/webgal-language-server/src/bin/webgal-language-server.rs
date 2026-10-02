@@ -18,6 +18,7 @@
 //! * `--disable-definition` - 禁用转到定义 (默认启用).
 //! * `--disable-references` - 禁用查找引用 (默认启用).
 //! * `--disable-document-link` - 禁用文档链接 (默认启用).
+//! * `--disable-color` - 禁用颜色色块 (默认启用).
 //! * `--disable-hover` - 禁用悬停提示 (默认启用).
 //! * `--disable-highlight` - 禁用语义高亮 (默认启用).
 //! * `--disable-inlay-hint` - 禁用内联提示 (默认启用).
@@ -100,6 +101,8 @@ struct Args {
     #[arg(long)]
     disable_document_link: bool,
     #[arg(long)]
+    disable_color: bool,
+    #[arg(long)]
     disable_hover: bool,
     #[arg(long)]
     disable_highlight: bool,
@@ -130,6 +133,7 @@ async fn main() -> Result<()> {
         .with_definition_capability(!args.disable_definition)
         .with_references_capability(!args.disable_references)
         .with_document_link_capability(!args.disable_document_link)
+        .with_color_capability(!args.disable_color)
         .with_hover_capability(!args.disable_hover)
         .with_highlight_capability(!args.disable_highlight)
         .with_inlay_hint_capability(!args.disable_inlay_hint)

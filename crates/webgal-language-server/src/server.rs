@@ -43,6 +43,8 @@ pub struct BackendBuilder {
     #[getset(set_with = "pub")]
     document_link_capability: bool,
     #[getset(set_with = "pub")]
+    color_capability: bool,
+    #[getset(set_with = "pub")]
     hover_capability: bool,
     #[getset(set_with = "pub")]
     highlight_capability: bool,
@@ -76,6 +78,7 @@ impl Default for BackendBuilder {
             definition_capability: true,
             references_capability: true,
             document_link_capability: true,
+            color_capability: true,
             hover_capability: true,
             highlight_capability: true,
             inlay_hint_capability: true,
@@ -371,6 +374,10 @@ impl LanguageServer for Backend {
                 .options
                 .document_link_capability
                 .then(document_link_capability),
+            color_provider: self
+                .options
+                .color_capability
+                .then(document_color_capability),
             hover_provider: self.options.hover_capability.then(document_capability),
             semantic_tokens_provider: self.options.highlight_capability.then(highlight_capability),
             inlay_hint_provider: self
@@ -790,6 +797,115 @@ impl LanguageServer for Backend {
         .unwrap();
 
         Ok(links)
+    }
+
+    async fn document_color(
+        &self,
+        params: DocumentColorParams,
+    ) -> jsonrpc::Result<Vec<ColorInformation>> {
+        if !self.options.color_capability {
+            warn!("Color capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Document colors requested but not in any project");
+                return Ok(Vec::new());
+            }
+        };
+
+        let colors = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Document colors skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for document colors");
+                    return None;
+                }
+            };
+
+            // 收集颜色字面量
+            info!(project = %project_path, %scene_path, "Collecting document colors");
+            let mut colors = document_color(scene_path, &project)?;
+            document_colors_utf8_to_utf16(scene, &mut colors);
+            Some(colors)
+        })
+        .await
+        .unwrap();
+
+        Ok(colors.unwrap_or_default())
+    }
+
+    async fn color_presentation(
+        &self,
+        params: ColorPresentationParams,
+    ) -> jsonrpc::Result<Vec<ColorPresentation>> {
+        if !self.options.color_capability {
+            warn!("Color capability disabled, rejecting request");
+            return Err(jsonrpc::Error::method_not_found());
+        }
+
+        let path = params.text_document.uri.to_string();
+
+        // 查找项目
+        let GetProjectResult {
+            project_path,
+            resource_path,
+            project,
+        } = match self.workspace.read().await.get(&path) {
+            Some(v) => v,
+            None => {
+                debug!(%path, "Color presentation requested but not in any project");
+                return Ok(Vec::new());
+            }
+        };
+
+        let presentations = spawn_blocking(move || {
+            // 校验路径
+            let (kind, scene_path) = ResourceKind::from_path(&resource_path);
+            if kind != ResourceKind::Scene {
+                debug!(project = %project_path, path = %resource_path, "Color presentation skipped: not a scene file");
+                return None;
+            }
+
+            // 查找场景
+            let project = project.read().unwrap();
+            let scene = match project.resource().scene.get(scene_path) {
+                Some(Node::Item(v)) => v,
+                _ => {
+                    debug!(project = %project_path, %scene_path, "Scene not found for color presentation");
+                    return None;
+                }
+            };
+
+            // 生成颜色的规范写法
+            info!(project = %project_path, %scene_path, "Presenting color");
+            let span = range_utf16_to_utf8(scene, params.range);
+            let mut presentations = color_presentation(scene_path, span, params.color, &project)?;
+            color_presentations_utf8_to_utf16(scene, &mut presentations);
+            Some(presentations)
+        })
+        .await
+        .unwrap();
+
+        Ok(presentations.unwrap_or_default())
     }
 
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {

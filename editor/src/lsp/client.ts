@@ -68,6 +68,26 @@ export interface LspDocumentLink {
   tooltip?: string;
 }
 
+/** LSP 颜色: 各分量为 `[0, 1]` 浮点数 (与 Monaco 的 `languages.IColor` 一致) */
+export interface LspColor {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+}
+
+/** `textDocument/documentColor` 的结果项: 颜色字面量所在区间与颜色值 */
+export interface LspColorInformation {
+  range: LspRange;
+  color: LspColor;
+}
+
+/** `textDocument/colorPresentation` 的结果项: 改色时写回的文本 */
+export interface LspColorPresentation {
+  label: string;
+  textEdit?: LspTextEdit;
+}
+
 /** `textDocument/prepareRename` 的结果 (RangeWithPlaceholder) */
 export interface LspRenameLocation {
   range: LspRange;
@@ -704,6 +724,22 @@ export class LspClient {
       textDocument: { uri: toUri(path) },
     });
     return (r as LspDocumentLink[] | null) ?? null;
+  }
+
+  async documentColors(path: string): Promise<LspColorInformation[] | null> {
+    const r = await this.sendRequest('textDocument/documentColor', {
+      textDocument: { uri: toUri(path) },
+    });
+    return (r as LspColorInformation[] | null) ?? null;
+  }
+
+  async colorPresentations(path: string, color: LspColor, range: LspRange): Promise<LspColorPresentation[] | null> {
+    const r = await this.sendRequest('textDocument/colorPresentation', {
+      textDocument: { uri: toUri(path) },
+      color,
+      range,
+    });
+    return (r as LspColorPresentation[] | null) ?? null;
   }
 
   async prepareRename(path: string, position: LspPosition): Promise<LspRenameLocation | null> {

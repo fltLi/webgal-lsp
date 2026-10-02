@@ -642,6 +642,44 @@ export function setupMonaco(): void {
     },
   });
 
+  // 颜色色块: 语句中的颜色字面量 (如 `intro -fontColor=rgba(...)` 与 `[文字](style=color:#FF8800)`)
+  // 由后端 textDocument/documentColor 勾画, 点击色块后的改写由 textDocument/colorPresentation 给出。
+  //
+  // 两个方法必须同时提供: Monaco 拿到色块后会用**产出该颜色的 provider** 取改写方案
+  // (colorHoverParticipant.js `_createColorHover`), 缺 provideColorPresentations 会在点开色块时抛错。
+  monaco.languages.registerColorProvider(LANGUAGE_ID, {
+    provideDocumentColors: async (model) => {
+      const path = pathOfModel(model);
+      if (!path) return [];
+      try {
+        const colors = await lspClient.documentColors(path);
+        return (colors ?? []).map((item) => ({
+          range: toMonacoRange(item.range),
+          color: item.color,
+        }));
+      } catch {
+        return [];
+      }
+    },
+    provideColorPresentations: async (model, colorInfo) => {
+      const path = pathOfModel(model);
+      if (!path) return [];
+      try {
+        const range = colorInfo.range;
+        const presentations = await lspClient.colorPresentations(path, colorInfo.color, {
+          start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+          end: { line: range.endLineNumber - 1, character: range.endColumn - 1 },
+        });
+        return (presentations ?? []).map((presentation) => ({
+          label: presentation.label,
+          textEdit: presentation.textEdit ? toMonacoTextEdit(presentation.textEdit) : undefined,
+        }));
+      } catch {
+        return [];
+      }
+    },
+  });
+
   // 符号重命名: 可用性 (含"此处不支持") 由后端 prepareRename 判定, 待替换位置由后端全项目计算。
   monaco.languages.registerRenameProvider(LANGUAGE_ID, {
     resolveRenameLocation: async (model, position) => {

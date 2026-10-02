@@ -2,6 +2,7 @@ use lsp_types::*;
 
 use crate::project::VariableLocation;
 
+pub use color::*;
 pub use complete::*;
 pub use diagnose::*;
 pub use document::*;
@@ -10,6 +11,7 @@ pub use highlight::*;
 pub use inlay_hint::*;
 pub use references::*;
 
+mod color;
 mod complete;
 mod diagnose;
 mod document;

@@ -63,7 +63,7 @@ cargo build -p webgal-language-server
 日志输出到 `stderr`，所有参数均为可选：
 
 - **日志**：`--log-level <LEVEL>`（`error`/`warn`/`info`/`debug`/`trace`，默认 `error`），`--log-format <FORMAT>`（`plain`/`text`/`json`，默认 `plain`）
-- **功能开关**：`--disable-{diagnose,definition,references,document-link,hover,highlight,inlay-hint,complete,format,rename}` 可分别禁用对应能力（默认全部开启）
+- **功能开关**：`--disable-{diagnose,definition,references,document-link,color,hover,highlight,inlay-hint,complete,format,rename}` 可分别禁用对应能力（默认全部开启）
 - **诊断调优**：`--diagnostic-delay <MS>`（批处理延迟，默认 500ms），`--diagnostic-timeout <MS>`（生成超时，默认 10000ms）
 
 示例：

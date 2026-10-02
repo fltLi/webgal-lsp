@@ -123,6 +123,34 @@ describe('LspClient 握手缓冲', () => {
     await expect(tokens).resolves.toEqual([1, 2, 3]);
   });
 
+  it('颜色能力: 色块查询与改写方案按 LSP 形状收发', async () => {
+    const client = new LspClient();
+    const socket = await connect(client);
+
+    const range = { start: { line: 0, character: 18 }, end: { line: 0, character: 37 } };
+    const color = { red: 1, green: 0.5333333, blue: 0, alpha: 1 };
+
+    // 色块: textDocument/documentColor 只带文档 URI
+    const colors = client.documentColors(SCENE);
+    const colorRequest = socket.messages().find((message) => message.method === 'textDocument/documentColor');
+    expect(colorRequest?.params).toEqual({ textDocument: { uri: 'file:///C:/project/game/scene/start.txt' } });
+    socket.reply({ jsonrpc: '2.0', id: colorRequest?.id, result: [{ range, color }] });
+    await expect(colors).resolves.toEqual([{ range, color }]);
+
+    // 改写: textDocument/colorPresentation 带上新颜色与待替换区间
+    const presentations = client.colorPresentations(SCENE, color, range);
+    const presentationRequest = socket
+      .messages()
+      .find((message) => message.method === 'textDocument/colorPresentation');
+    expect(presentationRequest?.params).toMatchObject({ color, range });
+    socket.reply({
+      jsonrpc: '2.0',
+      id: presentationRequest?.id,
+      result: [{ label: '#FF8800', textEdit: { range, newText: '#FF8800' } }],
+    });
+    await expect(presentations).resolves.toEqual([{ label: '#FF8800', textEdit: { range, newText: '#FF8800' } }]);
+  });
+
   it('握手完成后发出的消息直接送出，不再进缓冲', async () => {
     const client = new LspClient();
     const socket = await connect(client);

@@ -46,6 +46,16 @@ impl Scene {
         diagnostics.into_iter().map(serialize).collect()
     }
 
+    pub fn definition(&self, line: u32, character: u32) -> Vec<JsValue> {
+        let position = position_utf16_to_utf8(&self, Position { line, character });
+        let mut definitions = definition("start.txt", position, &self.0)
+            .unwrap_or_default()
+            .to_locations(Self::project_root());
+        locations_utf8_to_utf16(&self.0, Self::project_root(), &mut definitions);
+
+        definitions.into_iter().map(serialize).collect()
+    }
+
     pub fn reference(&self, line: u32, character: u32) -> Vec<JsValue> {
         let position = position_utf16_to_utf8(&self, Position { line, character });
         let mut references = references("start.txt", position, &self.0)
@@ -56,14 +66,51 @@ impl Scene {
         references.into_iter().map(serialize).collect()
     }
 
-    pub fn definition(&self, line: u32, character: u32) -> Vec<JsValue> {
-        let position = position_utf16_to_utf8(&self, Position { line, character });
-        let mut definitions = definition("start.txt", position, &self.0)
-            .unwrap_or_default()
-            .to_locations(Self::project_root());
-        locations_utf8_to_utf16(&self.0, Self::project_root(), &mut definitions);
+    /// 语句中的颜色字面量
+    ///
+    /// 区间为 UTF-16 行列 (与 Monaco 一致).
+    pub fn document_color(&self) -> Vec<JsValue> {
+        let mut colors = document_color("start.txt", &self.0).unwrap_or_default();
+        document_colors_utf8_to_utf16(&self, &mut colors);
 
-        definitions.into_iter().map(serialize).collect()
+        colors.into_iter().map(serialize).collect()
+    }
+
+    /// 颜色的规范写法 (供编辑器色块改写)
+    ///
+    /// # Arguments
+    /// * 区间为 UTF-16 行列 (与 Monaco 一致).
+    /// * **color** - 形如 `{ red, green, blue, alpha }` 的对象, 分量为 `[0, 1]`
+    ///   (即 [`Color`]).
+    pub fn color_presentation(
+        &self,
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+        color: JsValue,
+    ) -> Vec<JsValue> {
+        let Ok(color) = serde_wasm_bindgen::from_value::<Color>(color) else {
+            return Vec::new();
+        };
+        let span = range_utf16_to_utf8(
+            &self,
+            Range {
+                start: Position {
+                    line: start_line,
+                    character: start_character,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_character,
+                },
+            },
+        );
+        let mut presentations =
+            color_presentation("start.txt", span, color, &self.0).unwrap_or_default();
+        color_presentations_utf8_to_utf16(&self, &mut presentations);
+
+        presentations.into_iter().map(serialize).collect()
     }
 
     /// 悬浮文档

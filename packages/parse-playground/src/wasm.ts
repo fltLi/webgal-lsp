@@ -21,6 +21,14 @@ export interface WasmModule {
   highlight: () => Uint32Array;
   highlightRange: (startLine: number, startCharacter: number, endLine: number, endCharacter: number) => Uint32Array;
   highlightText: (text: string) => Uint32Array;
+  documentColor: () => unknown[];
+  colorPresentation: (
+    startLine: number,
+    startCharacter: number,
+    endLine: number,
+    endCharacter: number,
+    color: { red: number; green: number; blue: number; alpha: number }
+  ) => unknown[];
   complete: (line: number, character: number) => unknown[];
   format: () => unknown[];
 }
@@ -84,6 +92,21 @@ export function loadWasm(): Promise<WasmModule> {
         } finally {
           scene.free();
         }
+      },
+      // 颜色字面量与改色文案 (区间为 UTF-16 行列, 与 Monaco 一致)
+      documentColor: () => {
+        if (!currentScene) return [];
+        return currentScene.document_color();
+      },
+      colorPresentation: (
+        startLine: number,
+        startCharacter: number,
+        endLine: number,
+        endCharacter: number,
+        color: { red: number; green: number; blue: number; alpha: number }
+      ) => {
+        if (!currentScene) return [];
+        return currentScene.color_presentation(startLine, startCharacter, endLine, endCharacter, color);
       },
       complete: (line: number, character: number) => {
         if (!currentScene) return [];
