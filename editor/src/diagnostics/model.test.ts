@@ -9,10 +9,14 @@ import {
   buildDiagnosticsExport,
   codeStats,
   collectProjectDiagnostics,
+  countBySeverity,
   countEntries,
   defaultFilter,
+  describeDiagnostics,
   filterDiagnosticFiles,
+  isFilterPerturbed,
   presentSeverities,
+  type DiagnosticFilter,
 } from './model';
 
 const PROJECT = 'C:\\Game';
@@ -126,6 +130,72 @@ describe('filterDiagnosticFiles', () => {
     expect(countEntries(filterDiagnosticFiles(files, { ...base, severities: [1, 2, 3], query: '不存在的东西' }))).toBe(
       0
     );
+  });
+});
+
+describe('countBySeverity', () => {
+  it('四个级别都数, 包括角标以前漏掉的提示级', () => {
+    const { files } = collectProjectDiagnostics(
+      {
+        [SCENE]: [diag(0, 0, 1, 'WG007', '错误'), diag(1, 0, 4, 'WG009', '提示'), diag(2, 0, 4, 'WG009', '提示')],
+      },
+      PROJECT
+    );
+    expect(countBySeverity(files[0].entries)).toEqual({ 1: 1, 2: 0, 3: 0, 4: 2 });
+  });
+});
+
+describe('isFilterPerturbed', () => {
+  const fallback: DiagnosticFilter = { severities: [1, 2], codes: null, query: '' };
+
+  it('与默认条件一致时不算偏离 (级别的先后顺序不算改动)', () => {
+    expect(isFilterPerturbed({ severities: [1, 2], codes: null, query: '' }, fallback)).toBe(false);
+    expect(isFilterPerturbed({ severities: [2, 1], codes: null, query: '   ' }, fallback)).toBe(false);
+  });
+
+  it('级别 / 诊断码 / 关键词任一被改动就算偏离', () => {
+    expect(isFilterPerturbed({ severities: [1], codes: null, query: '' }, fallback)).toBe(true);
+    expect(isFilterPerturbed({ severities: [1, 2, 3], codes: null, query: '' }, fallback)).toBe(true);
+    expect(isFilterPerturbed({ severities: [1, 2], codes: ['WG007'], query: '' }, fallback)).toBe(true);
+    expect(isFilterPerturbed({ severities: [1, 2], codes: null, query: '教室' }, fallback)).toBe(true);
+  });
+});
+
+describe('describeDiagnostics', () => {
+  const base = { scenes: 3, total: 4, visible: 4, hidden: 0, lspStatus: 'ready' } as const;
+
+  it('一个场景的结果都还没到时是 pending, 不给数字也不说"没有发现问题"', () => {
+    const described = describeDiagnostics({ ...base, scenes: 0, total: 0, visible: 0 });
+    expect(described.standing).toBe('pending');
+    expect(described.emptyText).toBe('还没有收到诊断结果');
+    expect(described.emptyText).not.toBe('没有发现问题');
+    expect(described.description).not.toContain('条问题');
+  });
+
+  it('pending 时按连接状态说明原因', () => {
+    const pending = { ...base, scenes: 0, total: 0, visible: 0 };
+    expect(describeDiagnostics({ ...pending, lspStatus: 'connecting' }).description).toBe('正在连接语言服务…');
+    expect(describeDiagnostics({ ...pending, lspStatus: 'ready' }).description).toBe('尚未收到诊断结果');
+    expect(describeDiagnostics({ ...pending, lspStatus: 'disconnected' }).description).toBe('语言服务未连接');
+    expect(describeDiagnostics({ ...pending, lspStatus: 'error' }).description).toBe('语言服务出错, 暂无诊断结果');
+  });
+
+  it('收到过场景结果 (哪怕全是空数组) 才算 clear', () => {
+    const described = describeDiagnostics({ ...base, total: 0, visible: 0 });
+    expect(described.standing).toBe('clear');
+    expect(described.emptyText).toBe('没有发现问题');
+    expect(described.description).toBe('3 个场景 · 0 条问题');
+  });
+
+  it('已经收到结果后不再参考连接状态 (断线不会让已有结果失效)', () => {
+    expect(describeDiagnostics({ ...base, lspStatus: 'disconnected' }).standing).toBe('problems');
+  });
+
+  it('有问题时报当前显示条数, 被挡掉的另算, 空列表交给筛选去解释', () => {
+    const described = describeDiagnostics({ ...base, total: 9, visible: 4, hidden: 5 });
+    expect(described.standing).toBe('problems');
+    expect(described.description).toBe('3 个场景 · 4 条问题（5 条已隐藏）');
+    expect(described.emptyText).toBeNull();
   });
 });
 

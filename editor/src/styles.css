@@ -4981,6 +4981,15 @@ input[type='number'].voice-control {
   color: #58a6ff;
 }
 
+/*
+ * 提示级 (hint) 的角标只在这个列表里出现 (文件树只标错误与警告), 所以颜色也定在这里:
+ * 弱化色, 对应"可以不管"的那一类。组头角标数的是该组当前列出的每一行, 四个级别都得有,
+ * 否则一开启提示级, 角标的合计就与下面的行数对不上。
+ */
+.diag-badge.diag-hint {
+  color: var(--app-muted);
+}
+
 /* -------- 筛选条 (一行) -------- */
 /*
  * 级别是**可任意组合的开关**, 不是单选分段: "只看错误"和"错误+警告"都是常见诉求,
@@ -5050,6 +5059,11 @@ input[type='number'].voice-control {
 .diag-search {
   margin-left: auto;
   width: 200px;
+}
+
+/* 筛选条最右侧的"清除筛选": 只在条件偏离默认时出现 (见 `view.tsx`) */
+.diag-clear {
+  flex: none;
 }
 
 /* -------- 诊断码浮层 -------- */

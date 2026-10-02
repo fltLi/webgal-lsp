@@ -9,10 +9,13 @@
 // 这里只做三件事: 把那份表整理成按文件分组的列表、按条件筛选、导出 JSON。
 
 import { stripTrailingSeparator, toPosix } from '../lib/paths';
-import type { LspDiagnostic } from '../state/store';
+import type { LspDiagnostic, LspStatus } from '../state/store';
 
 /** LSP 严重级别: 1 错误 / 2 警告 / 3 信息 / 4 提示 */
 export type Severity = 1 | 2 | 3 | 4;
+
+/** 级别的固定展示顺序 (错误 → 警告 → 信息 → 提示), 与 `Severity` 的数值顺序一致 */
+export const SEVERITY_ORDER: Severity[] = [1, 2, 3, 4];
 
 export const SEVERITY_LABELS: Record<Severity, string> = {
   1: '错误',
@@ -170,6 +173,18 @@ export function presentSeverities(files: DiagnosticFile[]): Severity[] {
 }
 
 /**
+ * 按级别统计条数, 四个级别都在结果里 (没有的为 0)。
+ *
+ * 结果按 `SEVERITY_ORDER` 渲染成组头角标, 因此**角标的合计必须等于该组列出的行数** ——
+ * 逐一 filter 数三个级别、漏掉第四个的写法, 一开启提示级就会让数字与行对不上。
+ */
+export function countBySeverity(entries: DiagnosticEntry[]): Record<Severity, number> {
+  const counts: Record<Severity, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  for (const entry of entries) counts[entry.severity] += 1;
+  return counts;
+}
+
+/**
  * 默认筛选: 错误 + 警告。
  *
  * 若项目里压根没有错误和警告 (只有信息级建议), 默认就不能是"什么都不选" —— 那会让人
@@ -212,6 +227,88 @@ export function filterDiagnosticFiles(files: DiagnosticFile[], filter: Diagnosti
 
 export function countEntries(files: DiagnosticFile[]): number {
   return files.reduce((total, file) => total + file.entries.length, 0);
+}
+
+/** 当前筛选是否已偏离默认 (决定要不要给出"清除筛选") */
+export function isFilterPerturbed(filter: DiagnosticFilter, fallback: DiagnosticFilter): boolean {
+  const sameSeverities =
+    filter.severities.length === fallback.severities.length &&
+    filter.severities.every((severity) => fallback.severities.includes(severity));
+  // `codes !== null` 也算偏离: 那表示用户动过诊断码面板, 即使他又把码全勾了回来,
+  // "回到默认视图"仍然是合理的下一步。
+  return filter.query.trim() !== '' || filter.codes !== null || !sameSeverities;
+}
+
+/**
+ * 列表此刻能代表什么。
+ *
+ * - `pending`: 一个场景的结果都还没到, 列表**不能**说"没有问题";
+ * - `clear`: 已经拿到结果, 项目里确实一条问题都没有;
+ * - `problems`: 已经拿到结果, 且有问题 (可能被筛选挡到一条不剩)。
+ */
+export type DiagnosticsStanding = 'pending' | 'clear' | 'problems';
+
+export interface DiagnosticsDescription {
+  standing: DiagnosticsStanding;
+  /** 标题下/旁那行小字: 项目规模与问题数 */
+  description: string;
+  /**
+   * 列表为空时显示的主句。
+   *
+   * `null` 表示"数据里确实有问题, 空是筛选造成的": 那句话与"清除筛选"的入口都属于列表
+   * 自己的行为, 由列表给出 (见 `DiagnosticsList`)。
+   */
+  emptyText: string | null;
+}
+
+/**
+ * 还没收到任何结果时的措辞。
+ *
+ * 连接状态只影响这句话怎么说, 不影响判定: 已经收到过结果的场景不会因为断线就变回
+ * "未诊断" —— 那份结果并没有消失 (见 `describeDiagnostics` 的 `scenes > 0` 分支)。
+ */
+const PENDING_DESCRIPTION: Record<LspStatus, string> = {
+  disconnected: '语言服务未连接',
+  connecting: '正在连接语言服务…',
+  ready: '尚未收到诊断结果',
+  error: '语言服务出错, 暂无诊断结果',
+};
+
+/**
+ * 把"列表现在能说什么"收敛到一处 (弹窗与托盘共用)。
+ *
+ * 关键在于 `0 条问题` 有两种截然不同的原因: **扫过了, 确实没问题** 与 **结果还没来**。
+ * 语言服务是逐个场景推送的 (没有问题的场景推空数组), 所以"已经收到过结果的场景数"
+ * `scenes` 就是判据: 它为 0 时列表对项目一无所知, 那时说"没有发现问题"是在替语言服务
+ * 下结论 —— 打开项目后的头几秒 (全量模拟可能要好几秒) 恰好是这个窗口。
+ *
+ * 反过来说, `scenes > 0` 之后就不再参考连接状态: 断线不会让已经收到的结果失效。
+ * 极端情况是项目里一个场景文件都没有 —— 那时 `scenes` 永远是 0, 列表会一直停在
+ * "尚未收到诊断结果", 这是刻意的: 它比谎称"没问题"要好。
+ */
+export function describeDiagnostics(options: {
+  scenes: number;
+  total: number;
+  visible: number;
+  hidden: number;
+  lspStatus: LspStatus;
+}): DiagnosticsDescription {
+  const { scenes, total, visible, hidden, lspStatus } = options;
+  const standing: DiagnosticsStanding = scenes === 0 ? 'pending' : total === 0 ? 'clear' : 'problems';
+
+  if (standing === 'pending') {
+    return { standing, description: PENDING_DESCRIPTION[lspStatus], emptyText: '还没有收到诊断结果' };
+  }
+  if (standing === 'clear') {
+    return { standing, description: `${scenes} 个场景 · 0 条问题`, emptyText: '没有发现问题' };
+  }
+  const head = `${scenes} 个场景 · ${visible} 条问题`;
+  return {
+    standing,
+    description: hidden > 0 ? `${head}（${hidden} 条已隐藏）` : head,
+    // 有问题却一条都不显示, 只可能是筛选挡掉了
+    emptyText: null,
+  };
 }
 
 /**

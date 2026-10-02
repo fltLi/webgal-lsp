@@ -28,11 +28,15 @@ import {
   buildDiagnosticsExport,
   codeStats,
   collectProjectDiagnostics,
+  countBySeverity,
   countEntries,
   defaultFilter,
+  describeDiagnostics,
   filterDiagnosticFiles,
+  isFilterPerturbed,
   presentSeverities,
   SEVERITY_LABELS,
+  SEVERITY_ORDER,
   type CodeStat,
   type DiagnosticEntry,
   type DiagnosticFile,
@@ -45,6 +49,14 @@ const SEVERITY_ICONS: Record<Severity, ReactNode> = {
   2: <WarningRegular />,
   3: <InfoRegular />,
   4: <LightbulbRegular />,
+};
+
+/** 组头角标的类名后缀 (沿用文件树里同一套颜色: `.diag-badge.diag-error` 等) */
+const BADGE_NAMES: Record<Severity, string> = {
+  1: 'error',
+  2: 'warn',
+  3: 'info',
+  4: 'hint',
 };
 
 /** 复制反馈的停留时长 */
@@ -62,9 +74,9 @@ export interface DiagnosticsViewState {
   visibleCount: number;
   /** 被筛选条件挡掉的条数 */
   hiddenCount: number;
-  /** 项目内是否一条诊断都没有 */
-  empty: boolean;
-  /** 当前是否有任何筛选条件偏离默认 */
+  /** 列表为空时显示的主句; `null` 表示空是筛选造成的, 由列表给出提示 */
+  emptyText: string | null;
+  /** 当前是否有任何筛选条件偏离默认 (决定要不要给出"清除筛选") */
   filtered: boolean;
   /** 刚刚复制成功的目标: 'result' 或某个文件路径 */
   copied: string | null;
@@ -88,6 +100,7 @@ export function useDiagnosticsView(): DiagnosticsViewState {
   const diagnostics = useAppStore((s) => s.diagnostics);
   const projectPath = useAppStore((s) => s.projectPath);
   const projectName = useAppStore((s) => s.projectName);
+  const lspStatus = useAppStore((s) => s.lspStatus);
 
   const collected = useMemo(() => collectProjectDiagnostics(diagnostics, projectPath), [diagnostics, projectPath]);
   const [userFilter, setUserFilter] = useState<DiagnosticFilter | null>(null);
@@ -108,11 +121,7 @@ export function useDiagnosticsView(): DiagnosticsViewState {
   const totalCount = countEntries(collected.files);
   const hiddenCount = totalCount - visibleCount;
 
-  const filtered =
-    filter.query.trim() !== '' ||
-    filter.codes !== null ||
-    filter.severities.length !== fallback.severities.length ||
-    filter.severities.some((severity) => !fallback.severities.includes(severity));
+  const filtered = isFilterPerturbed(filter, fallback);
 
   const patch = (next: Partial<DiagnosticFilter>) => setUserFilter({ ...filter, ...next });
 
@@ -195,26 +204,34 @@ export function useDiagnosticsView(): DiagnosticsViewState {
   }, []);
 
   /*
-   * 标题下那一行小字。
+   * 标题下那一行小字, 外加"列表为空时该说什么"。
    *
    * 不写项目名: 这段文字出现在对话框/托盘的标题正下方, 而它们本来就只可能属于当前这个
    * 项目 —— 同一屏里再说一遍项目叫什么, 只是把最该一眼看到的两个数字挤到后面去。
-   * 条数跟着当前筛选走, 所以"X 条问题（Y 条已隐藏）"永远是真的。
+   * 条数跟着当前筛选走, 所以"X 条问题（Y 条已隐藏）"永远是真的; 而一条结果都还没收到时
+   * 干脆不给数字 (见 `describeDiagnostics`), 免得那个 "0" 被当成"项目没问题"。
    */
-  const description = useMemo(() => {
-    const head = `${collected.scenes} 个场景 · ${visibleCount} 条问题`;
-    return hiddenCount > 0 ? `${head}（${hiddenCount} 条已隐藏）` : head;
-  }, [collected.scenes, visibleCount, hiddenCount]);
+  const described = useMemo(
+    () =>
+      describeDiagnostics({
+        scenes: collected.scenes,
+        total: totalCount,
+        visible: visibleCount,
+        hidden: hiddenCount,
+        lspStatus,
+      }),
+    [collected.scenes, totalCount, visibleCount, hiddenCount, lspStatus]
+  );
 
   return {
-    description,
+    description: described.description,
+    emptyText: described.emptyText,
     severityStats,
     codes,
     filter,
     visibleFiles,
     visibleCount,
     hiddenCount,
-    empty: totalCount === 0,
     filtered,
     copied,
     toggleSeverity,
@@ -326,6 +343,17 @@ export function DiagnosticsFilterBar({ view }: { view: DiagnosticsViewState }) {
         contentBefore={<SearchRegular />}
         onChange={(_, data) => view.setQuery(data.value)}
       />
+
+      {/*
+        条件偏离默认时给一条退路: 描述行会说"X 条已隐藏", 但没有它就只能靠回忆自己关过
+        哪些级别 / 敲过什么关键词。空列表里那个同名按钮够不到这种情况 (列表还剩几条时
+        它根本不显示)。
+      */}
+      {view.filtered ? (
+        <Button className="diag-clear" size="small" appearance="subtle" onClick={view.resetFilter}>
+          清除筛选
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -346,12 +374,16 @@ export function DiagnosticsList({ view, onOpened }: { view: DiagnosticsViewState
     return (
       <div className="diag-list dialog-scroll">
         <div className="diag-empty">
-          <p>{view.empty ? '没有发现问题' : '没有符合当前筛选的诊断'}</p>
-          {view.empty ? null : (
+          {/*
+            主句由 `describeDiagnostics` 给出 ("还没有收到诊断结果" / "没有发现问题")。
+            它返回 null 说明数据里确实有问题, 只是被筛选挡光了 —— 那时才该劝人清除筛选。
+          */}
+          <p>{view.emptyText ?? '没有符合当前筛选的诊断'}</p>
+          {view.emptyText === null ? (
             <Button size="small" appearance="secondary" onClick={view.resetFilter}>
               清除筛选
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
     );
@@ -362,9 +394,8 @@ export function DiagnosticsList({ view, onOpened }: { view: DiagnosticsViewState
       {view.visibleFiles.map((file) => {
         const isCollapsed = collapsed.includes(file.path);
         const index = file.scene.lastIndexOf('/');
-        const errors = file.entries.filter((entry) => entry.severity === 1).length;
-        const warns = file.entries.filter((entry) => entry.severity === 2).length;
-        const infos = file.entries.filter((entry) => entry.severity === 3).length;
+        // 角标与行同源: 数的是这一组**当前列出的**条目, 四个级别一个不落
+        const counts = countBySeverity(file.entries);
         return (
           <div className="diag-group" key={file.path}>
             <div
@@ -386,9 +417,13 @@ export function DiagnosticsList({ view, onOpened }: { view: DiagnosticsViewState
                 {file.scene.slice(index + 1)}
               </span>
               <span className="diag-group-counts">
-                {errors > 0 ? <span className="diag-badge diag-error">{errors}</span> : null}
-                {warns > 0 ? <span className="diag-badge diag-warn">{warns}</span> : null}
-                {infos > 0 ? <span className="diag-badge diag-info">{infos}</span> : null}
+                {SEVERITY_ORDER.map((severity) =>
+                  counts[severity] > 0 ? (
+                    <span key={severity} className={`diag-badge diag-${BADGE_NAMES[severity]}`}>
+                      {counts[severity]}
+                    </span>
+                  ) : null
+                )}
               </span>
               <button
                 type="button"
