@@ -895,7 +895,7 @@ impl Complete for SetAnimationSentence {
         complete_argument_name_collect! {
             ("setAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
-                !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
+                true => ("transformFrom", "transformFrom=", "变换起点"),
                 !self.keep => ("keep", "keep", "跨语句动画"),
                 !self.parallel => ("parallel", "parallel", "并行动画"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
@@ -914,6 +914,12 @@ impl Complete for SetAnimationSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
+            "transformFrom" => complete_enum(
+                [("current", "当前状态"), ("default", "默认状态")],
+                CompletionItemKind::ENUM_MEMBER,
+                input,
+                position,
+            ),
             "when" => {
                 try_complete_expression(input, position, project.variable()).unwrap_or_default()
             }
@@ -949,7 +955,7 @@ impl Complete for SetComplexAnimationSentence {
         complete_argument_name_collect! {
             ("setComplexAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
-                !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
+                true => ("transformFrom", "transformFrom=", "变换起点"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
                 self.forward != Forward::Next => ("next", "next", "连续执行"),
@@ -967,6 +973,12 @@ impl Complete for SetComplexAnimationSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
+            "transformFrom" => complete_enum(
+                [("current", "当前状态"), ("default", "默认状态")],
+                CompletionItemKind::ENUM_MEMBER,
+                input,
+                position,
+            ),
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "when" => {
                 try_complete_expression(input, position, project.variable()).unwrap_or_default()
@@ -999,7 +1011,7 @@ impl Complete for SetTransformSentence {
         complete_argument_name_collect! {
             ("setTransform", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
-                !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
+                true => ("transformFrom", "transformFrom=", "变换起点"),
                 self.ease == Default::default() => ("ease", "ease=", "缓动类型"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
                 !self.keep => ("keep", "keep", "跨语句动画"),
@@ -1020,6 +1032,12 @@ impl Complete for SetTransformSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象 ID", input, position),
+            "transformFrom" => complete_enum(
+                [("current", "当前状态"), ("default", "默认状态")],
+                CompletionItemKind::ENUM_MEMBER,
+                input,
+                position,
+            ),
             "ease" => complete_ease_enum(input, position),
             "duration" => complete_duration_enum("持续时间 (ms)", input, position, project),
             "when" => {
@@ -1053,7 +1071,7 @@ impl Complete for SetTempAnimationSentence {
         complete_argument_name_collect! {
             ("setTempAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
-                !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
+                true => ("transformFrom", "transformFrom=", "变换起点"),
                 !self.keep => ("keep", "keep", "跨语句动画"),
                 !self.parallel => ("parallel", "parallel", "并行动画"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
@@ -1072,6 +1090,12 @@ impl Complete for SetTempAnimationSentence {
     ) -> Vec<PrimaryCompletion> {
         match name {
             "target" => complete_ident_enum(&project.ident().id, "对象", input, position),
+            "transformFrom" => complete_enum(
+                [("current", "当前状态"), ("default", "默认状态")],
+                CompletionItemKind::ENUM_MEMBER,
+                input,
+                position,
+            ),
             "when" => {
                 try_complete_expression(input, position, project.variable()).unwrap_or_default()
             }

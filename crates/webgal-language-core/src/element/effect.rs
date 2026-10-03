@@ -900,6 +900,18 @@ impl ToJsonSchema for AnimationList {
     }
 }
 
+/// 变换起点
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString,
+)]
+#[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
+#[strum(serialize_all = "camelCase")]
+pub enum TransformFrom {
+    #[default]
+    Current,
+    Default,
+}
+
 // -------- 执行 --------
 
 /// 执行时序

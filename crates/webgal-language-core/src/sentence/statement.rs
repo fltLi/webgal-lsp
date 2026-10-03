@@ -214,14 +214,19 @@ pub struct PlayEffectSentence {
 /// 调用动画语句
 #[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
-#[sentence(command = "setAnimation")]
+#[sentence(
+    command = "setAnimation",
+    obsolete = {
+        "writeDefault": "从 WebGAL v4.6.5 起被 `transformFrom` 参数所取代",
+    }
+)]
 pub struct SetAnimationSentence {
     #[sentence(content, resource = non_null_animation_resource_of)]
     pub animation: String,
     pub target: Option<ObjectId>,
     // 效果
-    #[sentence(rename = "writeDefault")]
-    pub write_default: bool,
+    #[sentence(rename = "transformFrom", default)]
+    pub transform_from: TransformFrom,
     // 控制
     pub keep: bool,
     pub parallel: bool,
@@ -234,14 +239,19 @@ pub struct SetAnimationSentence {
 /// 复杂动画语句
 #[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
-#[sentence(command = "setComplexAnimation")]
+#[sentence(
+    command = "setComplexAnimation",
+    obsolete = {
+        "writeDefault": "从 WebGAL v4.6.5 起被 `transformFrom` 参数所取代",
+    }
+)]
 pub struct SetComplexAnimationSentence {
     #[sentence(content)]
     pub animation: String,
     pub target: Option<ObjectId>,
     // 效果
-    #[sentence(rename = "writeDefault")]
-    pub write_default: bool,
+    #[sentence(rename = "transformFrom", default)]
+    pub transform_from: TransformFrom,
     // 控制
     pub duration: Option<u32>,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
@@ -253,14 +263,20 @@ pub struct SetComplexAnimationSentence {
 /// 单段动画语句
 #[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
-#[sentence(command = "setTransform", validate = Self::validate)]
+#[sentence(
+    command = "setTransform",
+    validate = Self::validate,
+    obsolete = {
+        "writeDefault": "从 WebGAL v4.6.5 起被 `transformFrom` 参数所取代",
+    }
+)]
 pub struct SetTransformSentence {
     #[sentence(content)]
     pub transform: Transform,
     pub target: Option<ObjectId>,
     // 效果
-    #[sentence(rename = "writeDefault")]
-    pub write_default: bool,
+    #[sentence(rename = "transformFrom", default)]
+    pub transform_from: TransformFrom,
     #[sentence(default)]
     pub ease: Ease,
     // 控制
@@ -276,14 +292,20 @@ pub struct SetTransformSentence {
 /// 多段动画语句
 #[derive(Debug, Clone, Default, PartialEq, Sentence)]
 #[cfg_attr(feature = "serde", derive(Serialize), serde(rename_all = "camelCase"))]
-#[sentence(command = "setTempAnimation", validate = Self::validate)]
+#[sentence(
+    command = "setTempAnimation",
+    validate = Self::validate,
+    obsolete = {
+        "writeDefault": "从 WebGAL v4.6.5 起被 `transformFrom` 参数所取代",
+    }
+)]
 pub struct SetTempAnimationSentence {
     #[sentence(content)]
     pub animation: AnimationList,
     pub target: Option<ObjectId>,
     // 效果
-    #[sentence(rename = "writeDefault")]
-    pub write_default: bool,
+    #[sentence(rename = "transformFrom", default)]
+    pub transform_from: TransformFrom,
     // 控制
     pub keep: bool,
     pub parallel: bool,

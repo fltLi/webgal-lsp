@@ -707,7 +707,7 @@ impl TokenType {
 
             // 枚举
             "fontSize" => Some(Self::EnumMember),
-            "exit" | "ease" | "animation" => Some(Self::EnumMember),
+            "transformFrom" | "exit" | "ease" | "animation" => Some(Self::EnumMember),
             "enter" if !matches!(sentence, Sentence::Bgm(_)) => Some(Self::EnumMember),
 
             // 文本 / ...

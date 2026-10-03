@@ -259,8 +259,8 @@ const fn default_commands() -> &'static [CommandInfo] {
                 },
                 CommandTemplate {
                     name: "setTransform.clear",
-                    description: "清除",
-                    template: "setTransform:$1 -target=$2 -writeDefault -next;$0",
+                    description: "补充默认值",
+                    template: "setTransform:$1 -target=$2 -transformFrom=default -next;$0",
                 },
             ],
         },
@@ -283,6 +283,11 @@ const fn default_commands() -> &'static [CommandInfo] {
                     name: "setTempAnimation.parallel",
                     description: "同步执行",
                     template: "setTempAnimation:$1 -target=$2 -parallel -next;$0",
+                },
+                CommandTemplate {
+                    name: "setTempAnimation.clear",
+                    description: "补充默认值",
+                    template: "setTempAnimation:$1 -target=$2 -transformFrom=default -next;$0",
                 },
             ],
         },
