@@ -30,6 +30,7 @@ serde.workspace = true
 serde_with.workspace = true
 serde_json.workspace = true
 
+itertools.workspace = true
 rayon.workspace = true
 regex = "1.13"
 

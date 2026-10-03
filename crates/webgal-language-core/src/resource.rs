@@ -1,7 +1,8 @@
-use path_tree::{PATH_SEPARATORS, name_of};
+use path_tree::PATH_SEPARATORS;
 use strum::{Display, EnumString};
 
 pub use crate::element::AnimationList;
+use crate::util::extension_of;
 pub use config::*;
 pub use figure::*; // 重新导出方便使用
 
@@ -111,7 +112,7 @@ impl ResourceKind {
     }
 
     /// 获取资源类型对应的文件后缀 (升序)
-    pub fn extensions(&self) -> &'static [&'static str] {
+    pub const fn extensions(&self) -> &'static [&'static str] {
         match self {
             Self::Config => &["txt"],
             Self::Scene => &["txt"],
@@ -133,12 +134,6 @@ impl ResourceKind {
     pub fn is_extension_relevant(&self, extension: &str) -> bool {
         self.extensions().binary_search(&extension).is_ok()
     }
-}
-
-fn extension_of(path: &str) -> Option<&str> {
-    name_of(path)
-        .rsplit_once('.')
-        .map(|(_, extension)| extension)
 }
 
 #[cfg(test)]

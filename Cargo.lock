@@ -6191,6 +6191,7 @@ dependencies = [
  "criterion",
  "derive_more",
  "expression",
+ "itertools 0.14.0",
  "json-language-service",
  "ouroboros",
  "path-tree",

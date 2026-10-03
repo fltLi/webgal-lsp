@@ -41,11 +41,14 @@ fn pack_mini_project() {
     write(
         &root.join("game/figure/live/model.json"),
         r#"{
-            "model": "model.moc3",
-            "physics": "physics.json",
-            "textures": ["textures/tex.png"],
-            "motions": { "idle": [{ "file": "motions/idle.motion3.json" }] },
-            "expressions": [{ "name": "happy", "file": "expressions/happy.exp3.json" }]
+            "Version": 3,
+            "FileReferences": {
+                "Moc": "model.moc3",
+                "Textures": ["textures/tex.png"],
+                "Physics": "physics.json",
+                "Motions": { "idle": [{ "File": "motions/idle.motion3.json" }] },
+                "Expressions": [{ "Name": "happy", "File": "expressions/happy.exp3.json" }]
+            }
         }"#,
     );
     write(&root.join("game/figure/live/model.moc3"), "moc3");

@@ -1,5 +1,7 @@
 use std::{fmt, ops::Range};
 
+use path_tree::name_of;
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! impl_from_str_for_from {
@@ -260,4 +262,21 @@ pub fn span_of(haystack: &str, needle: &str) -> Range<usize> {
         .checked_sub(haystack.as_ptr() as usize)
         .expect("子串需要在母串的内存内");
     start..start + needle.len()
+}
+
+/// 获取文件后缀名
+///
+/// # Examples
+/// ```
+/// # use webgal_language_core::util::extension_of;
+///
+/// assert_eq!(extension_of("foo.txt"), Some("txt"));
+/// assert_eq!(extension_of("path/to/foo.rs"), Some("rs"));
+/// assert_eq!(extension_of("foo.tar.gz"), Some("gz"));
+/// assert_eq!(extension_of("README"), None);
+/// ```
+pub fn extension_of(path: &str) -> Option<&str> {
+    name_of(path)
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
 }
