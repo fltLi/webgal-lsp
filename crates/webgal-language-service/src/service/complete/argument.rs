@@ -9,8 +9,7 @@ use path_tree::{Folder, Node, PATH_SEPARATORS};
 use webgal_language_core::{
     dispatch_sentence,
     element::{
-        AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Sustain, Transform,
-        VariableKind,
+        AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Transform, VariableKind,
     },
     resource::{FigureInfo, FigureKind},
     sentence::*,
@@ -897,8 +896,8 @@ impl Complete for SetAnimationSentence {
             ("setAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
-                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
-                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                !self.keep => ("keep", "keep", "跨语句动画"),
+                !self.parallel => ("parallel", "parallel", "并行动画"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
                 self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1003,8 +1002,8 @@ impl Complete for SetTransformSentence {
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
                 self.ease == Default::default() => ("ease", "ease=", "缓动类型"),
                 self.duration.is_none() => ("duration", "duration=", "持续时间 (ms)"),
-                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
-                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                !self.keep => ("keep", "keep", "跨语句动画"),
+                !self.parallel => ("parallel", "parallel", "并行动画"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
                 self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),
@@ -1055,8 +1054,8 @@ impl Complete for SetTempAnimationSentence {
             ("setTempAnimation", input, position): {
                 self.target.is_none() => ("target", "target=", "指定目标"),
                 !self.write_default => ("writeDefault", "writeDefault", "补充默认值"),
-                self.sustain != Sustain::Keep => ("keep", "keep", "跨语句动画"),
-                self.sustain != Sustain::Parallel => ("parallel", "parallel", "并行动画"),
+                !self.keep => ("keep", "keep", "跨语句动画"),
+                !self.parallel => ("parallel", "parallel", "并行动画"),
                 self.forward != Forward::Continue => ("continue", "continue", "继续执行"),
                 self.forward != Forward::Next => ("next", "next", "连续执行"),
                 self.when.is_none() => ("when", "when=", "条件执行"),

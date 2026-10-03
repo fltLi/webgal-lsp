@@ -223,8 +223,8 @@ pub struct SetAnimationSentence {
     #[sentence(rename = "writeDefault")]
     pub write_default: bool,
     // 控制
-    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
-    pub sustain: Sustain,
+    pub keep: bool,
+    pub parallel: bool,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     #[sentence(condition, deserialize_with = parse_expression)]
@@ -265,8 +265,8 @@ pub struct SetTransformSentence {
     pub ease: Ease,
     // 控制
     pub duration: Option<u32>,
-    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
-    pub sustain: Sustain,
+    pub keep: bool,
+    pub parallel: bool,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     #[sentence(condition, deserialize_with = parse_expression)]
@@ -285,8 +285,8 @@ pub struct SetTempAnimationSentence {
     #[sentence(rename = "writeDefault")]
     pub write_default: bool,
     // 控制
-    #[sentence(variant = { "keep": Keep, "parallel": Parallel })]
-    pub sustain: Sustain,
+    pub keep: bool,
+    pub parallel: bool,
     #[sentence(forward, variant = { "continue": Continue, "next": Next })]
     pub forward: Forward,
     #[sentence(condition, deserialize_with = parse_expression)]

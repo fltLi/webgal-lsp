@@ -387,4 +387,34 @@ mod tests {
         let output = Sentence::from_str("changeBg:bg.png -unknownArg;");
         assert!(output.ok().is_err());
     }
+
+    #[test]
+    fn keep_and_parallel_can_be_combined() {
+        for input in [
+            "setAnimation:shake -keep -parallel;",
+            "setTransform:{} -keep -parallel;",
+            "setTempAnimation:[] -keep -parallel;",
+        ] {
+            let output = Sentence::from_str(input);
+            assert!(output.errors.is_empty(), "{input}: {:?}", output.errors);
+
+            let sentence = output.ok().unwrap();
+            match &sentence {
+                Sentence::SetAnimation(animation) => {
+                    assert!(animation.keep);
+                    assert!(animation.parallel);
+                }
+                Sentence::SetTransform(transform) => {
+                    assert!(transform.keep);
+                    assert!(transform.parallel);
+                }
+                Sentence::SetTempAnimation(animation) => {
+                    assert!(animation.keep);
+                    assert!(animation.parallel);
+                }
+                _ => panic!("unexpected sentence: {sentence:?}"),
+            }
+            assert_eq!(sentence.to_string(), input);
+        }
+    }
 }
