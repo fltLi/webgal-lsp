@@ -141,6 +141,23 @@ pub fn name_of(path: &str) -> &str {
     }
 }
 
+/// 获取文件后缀名
+///
+/// # Examples
+/// ```
+/// # use path_tree::extension_of;
+///
+/// assert_eq!(extension_of("foo.txt"), Some("txt"));
+/// assert_eq!(extension_of("path/to/foo.rs"), Some("rs"));
+/// assert_eq!(extension_of("foo.tar.gz"), Some("gz"));
+/// assert_eq!(extension_of("README"), None);
+/// ```
+pub fn extension_of(path: &str) -> Option<&str> {
+    name_of(path)
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+}
+
 /// 切分一次路径
 ///
 /// # Behavior

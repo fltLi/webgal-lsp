@@ -5,13 +5,13 @@ use expression::ValueKind;
 use json_language_service::{Schema, ToJsonSchema};
 use lsp_types::*;
 use once_cell::sync::Lazy;
-use path_tree::{Folder, Node, PATH_SEPARATORS};
+use path_tree::{Folder, Node, PATH_SEPARATORS, extension_of};
 use webgal_language_core::{
     dispatch_sentence,
     element::{
         AnimationList, FigureSide, Forward, Live2dBlink, Live2dFocus, Transform, VariableKind,
     },
-    resource::{FigureInfo, FigureKind},
+    resource::{FigureInfo, FigureKind, Live2dModelKind, ResourceKind},
     sentence::*,
     util::{rsplit_once_escaped, split_once_escaped},
 };
@@ -584,17 +584,30 @@ impl Complete for ChangeFigureSentence {
         position: Position,
         project: &Project,
     ) -> Vec<PrimaryCompletion> {
+        fn is_image_figure(name: &str) -> bool {
+            extension_of(name)
+                .is_some_and(|extension| ResourceKind::Background.is_extension_relevant(extension))
+        }
+
         complete_file(
             &project.resource().figure,
-            |_, info| {
+            |name, info| {
                 (
                     CompletionItemKind::FILE,
-                    match info.get_type() {
-                        FigureKind::Image => "图片立绘",
-                        FigureKind::Spine => "Spine 立绘",
-                        FigureKind::Live2d => "Live2D 立绘",
-                        FigureKind::Wmdl => "WMDL 立绘",
-                        FigureKind::Composite => "Composite 立绘",
+                    match info {
+                        FigureInfo::Image if is_image_figure(name) => "图片立绘",
+                        FigureInfo::Image => "",
+                        FigureInfo::Spine => "Spine 立绘",
+                        FigureInfo::Live2d {
+                            kind: Live2dModelKind::Cubism2,
+                            ..
+                        } => "Live2D Cubism2 立绘",
+                        FigureInfo::Live2d {
+                            kind: Live2dModelKind::Cubism3,
+                            ..
+                        } => "Live2D Cubism3 立绘",
+                        FigureInfo::Wmdl { .. } => "WMDL 立绘",
+                        FigureInfo::Composite => "Composite 立绘",
                     }
                     .to_string(),
                 )
