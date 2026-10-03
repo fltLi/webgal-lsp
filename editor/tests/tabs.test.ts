@@ -66,12 +66,17 @@ describe('closeTab', () => {
     expect(result.activeId).toBe(sceneA.id);
   });
 
-  it('关闭活动项后激活右侧邻居', () => {
-    const result = closeTab(tabs, workbench.id, workbench.id);
+  it('关闭活动项后激活最近使用的仍打开项', () => {
+    const result = closeTab(tabs, workbench.id, workbench.id, [sceneA.id, diff.id, workbench.id]);
     expect(result.activeId).toBe(diff.id);
   });
 
-  it('关闭最右侧活动项后回退到左侧邻居', () => {
+  it('关闭活动项后跳过历史中已关闭的标签', () => {
+    const result = closeTab(tabs, sceneB.id, sceneB.id, [sceneA.id, diff.id, sceneB.id, 'closed']);
+    expect(result.activeId).toBe(diff.id);
+  });
+
+  it('没有可用的历史标签时回退到相邻项', () => {
     const result = closeTab(tabs, sceneB.id, sceneB.id);
     expect(result.activeId).toBe(diff.id);
   });

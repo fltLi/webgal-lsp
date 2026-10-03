@@ -26,7 +26,7 @@ import { ContextMenu, type ContextMenuEntry } from '../components/ContextMenu';
 import { FileBadges } from '../components/FileBadges';
 import { useAppStore, type WorkbenchTabItem } from '../state/store';
 import { dropIndicator, dropSlot, slotToIndex, type TabBox } from './dnd';
-import { cycleTabLeft, cycleTabRight, orderTabs } from './order';
+import { cycleRecentTab, orderTabs, recentTabIds } from './order';
 import type { ConfigTab, ResourceTab, SceneTab } from './model';
 
 /** 指针水平位移超过该阈值才判定为拖拽, 避免与点击选中冲突 */
@@ -48,6 +48,7 @@ export function TabStrip({ renderLeadingAction, onRequestClose, onLocateTab }: P
   const moveTab = useAppStore((s) => s.moveTab);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ id: string; startX: number; active: boolean } | null>(null);
+  const tabSwitch = useRef<{ ids: string[]; currentId: string | null } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [indicator, setIndicator] = useState<{ id: string; side: 'before' | 'after' } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tab: WorkbenchTabItem } | null>(null);
@@ -58,6 +59,7 @@ export function TabStrip({ renderLeadingAction, onRequestClose, onLocateTab }: P
       if (!commandKey || event.altKey) return;
       const key = event.key.toLowerCase();
       if (key === 'w' || key === 'f4') {
+        tabSwitch.current = null;
         event.preventDefault();
         if (!activeTabId) return;
         const activeTab = tabs.find((tab) => tab.id === activeTabId);
@@ -65,16 +67,44 @@ export function TabStrip({ renderLeadingAction, onRequestClose, onLocateTab }: P
         return;
       }
       if (key === 'tab') {
-        if (tabs.length <= 1) return;
+        const state = useAppStore.getState();
+        if (state.tabs.length <= 1) {
+          tabSwitch.current = null;
+          return;
+        }
         event.preventDefault();
-        if (!activeTabId) return;
-        const nextId = event.shiftKey ? cycleTabLeft(tabs, activeTabId) : cycleTabRight(tabs, activeTabId);
-        if (nextId && nextId !== activeTabId) activateTab(nextId);
+        if (!tabSwitch.current || state.activeTabId !== tabSwitch.current.currentId) {
+          tabSwitch.current = {
+            ids: recentTabIds(state.tabs, state.tabHistory),
+            currentId: state.activeTabId,
+          };
+        }
+        const current = tabSwitch.current;
+        const availableIdsSet = new Set(state.tabs.map((tab) => tab.id));
+        const availableIds = current.ids.filter((id) => availableIdsSet.has(id));
+        const nextId = cycleRecentTab(availableIds, current.currentId, event.shiftKey ? -1 : 1);
+        if (nextId) {
+          current.ids = availableIds;
+          current.currentId = nextId;
+          state.activateTab(nextId);
+        }
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') tabSwitch.current = null;
+    };
+    const onBlur = () => {
+      tabSwitch.current = null;
+    };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activateTab, activeTabId, onRequestClose, tabs]);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [activeTabId, onRequestClose, tabs]);
 
   /** 测量各选项卡的位置 (相对滚动内容, 因此横向滚动时仍然正确) */
   const measure = (): TabBox[] => {

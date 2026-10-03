@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cycleTabLeft, cycleTabRight, orderTabs, rememberTabActivation } from '../src/tabs/order';
+import { cycleRecentTab, orderTabs, recentTabIds, rememberTabActivation } from '../src/tabs/order';
 import { makeConfigTab, makeResourceTab, makeSceneTab, makeWorkbenchTab } from '../src/tabs/model';
 
 describe('tab navigation helpers', () => {
@@ -9,19 +9,26 @@ describe('tab navigation helpers', () => {
     expect(history).toEqual(['scene:a', 'scene:b']);
   });
 
-  it('在选项卡列表中向右循环切换时会回到起点', () => {
-    const tabs = [
-      makeSceneTab('a', 'A'),
-      makeSceneTab('b', 'B'),
-      makeSceneTab('c', 'C'),
-      makeWorkbenchTab(),
-    ];
+  it('按最近使用顺序切换, 并在边界循环', () => {
+    const tabs = [makeSceneTab('a', 'A'), makeSceneTab('b', 'B'), makeSceneTab('c', 'C'), makeWorkbenchTab()];
+    const recent = recentTabIds(tabs, ['scene:b', 'scene:c', 'scene:a']);
 
-    expect(cycleTabRight(tabs, 'scene:a')).toBe('scene:b');
-    expect(cycleTabRight(tabs, 'scene:c')).toBe('voice-workbench');
-    expect(cycleTabRight(tabs, 'voice-workbench')).toBe('scene:a');
-    expect(cycleTabLeft(tabs, 'scene:a')).toBe('voice-workbench');
-    expect(cycleTabLeft(tabs, 'scene:b')).toBe('scene:a');
+    expect(recent).toEqual(['scene:a', 'scene:c', 'scene:b', 'voice-workbench']);
+    expect(cycleRecentTab(recent, 'scene:a', 1)).toBe('scene:c');
+    expect(cycleRecentTab(recent, 'scene:c', 1)).toBe('scene:b');
+    expect(cycleRecentTab(recent, 'scene:a', -1)).toBe('voice-workbench');
+    expect(cycleRecentTab(recent, 'scene:a', 1)).toBe('scene:c');
+  });
+
+  it('跳过已关闭和重复的历史项, 并把未记录的标签补到末尾', () => {
+    const tabs = [makeSceneTab('a', 'A'), makeSceneTab('b', 'B')];
+    expect(recentTabIds(tabs, ['scene:a', 'scene:closed', 'scene:a'])).toEqual(['scene:a', 'scene:b']);
+  });
+
+  it('没有当前选项卡时从对应方向的边界开始', () => {
+    const ids = ['scene:a', 'scene:b'];
+    expect(cycleRecentTab(ids, null, 1)).toBe('scene:a');
+    expect(cycleRecentTab(ids, null, -1)).toBe('scene:b');
   });
 
   it('整理时工作台优先、start.txt 置于场景首位、配置先于资源', () => {

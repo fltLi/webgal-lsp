@@ -385,7 +385,7 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   closeTab: (id) =>
     set((s) => {
-      const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId);
+      const { tabs, activeId } = closeTab(s.tabs, id, s.activeTabId, s.tabHistory);
       const closed = s.tabs.find((tab) => tab.id === id);
       const nextHistory = s.tabHistory.filter((tabId) => tabId !== id && tabs.some((tab) => tab.id === tabId));
       const tabHistory = activeId ? rememberTabActivation(nextHistory, activeId) : nextHistory;
@@ -480,7 +480,7 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   closeVoiceWorkbench: () =>
     set((s) => {
-      const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId);
+      const { tabs, activeId } = closeTab(s.tabs, WORKBENCH_TAB_ID, s.activeTabId, s.tabHistory);
       const nextHistory = s.tabHistory.filter(
         (tabId) => tabId !== WORKBENCH_TAB_ID && tabs.some((tab) => tab.id === tabId)
       );

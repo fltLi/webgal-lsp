@@ -15,20 +15,37 @@ export function rememberTabActivation(history: string[], id: string): string[] {
   return next;
 }
 
-/** 以右侧环形顺序返回下一个 tab id */
-export function cycleTabRight(tabs: WorkbenchTabItem[], activeId: string | null): string | null {
-  if (tabs.length === 0 || activeId === null) return null;
-  const index = tabs.findIndex((tab) => tab.id === activeId);
-  if (index < 0) return tabs[0]?.id ?? null;
-  return tabs[(index + 1) % tabs.length]?.id ?? null;
+/** 返回最近使用顺序 (最近激活的在前), 并补齐尚未进入历史记录的选项卡 */
+export function recentTabIds(tabs: WorkbenchTabItem[], history: string[]): string[] {
+  const available = new Set(tabs.map((tab) => tab.id));
+  const seen = new Set<string>();
+  const recent: string[] = [];
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const id = history[index];
+    if (id && available.has(id) && !seen.has(id)) {
+      recent.push(id);
+      seen.add(id);
+    }
+  }
+
+  for (const tab of tabs) {
+    if (!seen.has(tab.id)) {
+      recent.push(tab.id);
+      seen.add(tab.id);
+    }
+  }
+
+  return recent;
 }
 
-/** 以左侧环形顺序返回上一个 tab id */
-export function cycleTabLeft(tabs: WorkbenchTabItem[], activeId: string | null): string | null {
-  if (tabs.length === 0 || activeId === null) return null;
-  const index = tabs.findIndex((tab) => tab.id === activeId);
-  if (index < 0) return tabs[tabs.length - 1]?.id ?? null;
-  return tabs[(index - 1 + tabs.length) % tabs.length]?.id ?? null;
+/** 在最近使用顺序中移动一项; direction 为 1 向较旧项移动, -1 向较新项移动 */
+export function cycleRecentTab(ids: string[], currentId: string | null, direction: 1 | -1): string | null {
+  if (ids.length === 0) return null;
+  const currentIndex = currentId === null ? -1 : ids.indexOf(currentId);
+  const nextIndex =
+    currentIndex < 0 ? (direction === 1 ? 0 : ids.length - 1) : (currentIndex + direction + ids.length) % ids.length;
+  return ids[nextIndex] ?? null;
 }
 
 /** 按类型和标题整理标签顺序 */
@@ -105,19 +122,21 @@ export function insertTab(
 /**
  * 关闭选项卡。
  *
- * 关闭活动项时优先激活它**右侧**的邻居 (与浏览器一致), 没有则取左侧。
+ * 关闭活动项时优先激活最近使用的仍打开项; 没有历史记录时回退到相邻项。
  */
 export function closeTab(
   tabs: WorkbenchTabItem[],
   id: string,
-  activeId: string | null
+  activeId: string | null,
+  history: string[] = []
 ): { tabs: WorkbenchTabItem[]; activeId: string | null } {
   const at = tabs.findIndex((item) => item.id === id);
   if (at < 0) return { tabs, activeId };
   const next = tabs.filter((item) => item.id !== id);
   if (activeId !== id) return { tabs: next, activeId };
   if (next.length === 0) return { tabs: next, activeId: null };
-  const fallback = next[Math.min(at, next.length - 1)];
+  const recentId = [...history].reverse().find((tabId) => tabId !== id && next.some((tab) => tab.id === tabId));
+  const fallback = next.find((tab) => tab.id === recentId) ?? next[Math.min(at, next.length - 1)];
   return { tabs: next, activeId: fallback.id };
 }
 
