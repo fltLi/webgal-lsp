@@ -187,6 +187,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
 - **新增后端能力**必须同时改三处：`src-tauri/src/service/*.rs` 里标注 `#[tauri::command]`，
   在 `src-tauri/src/lib.rs` 的 `tauri::generate_handler![...]` 注册，再在前端 `src/commands/*.ts` 封装一层。
   组件不直接 `invoke`——保持「组件 → commands/store → invoke」这条线。
+  Git 历史的本地分支切换也走这条链路；切换后要同步仓库状态，并刷新已打开且干净的文档，避免编辑器仍显示旧分支内容。
 - **调用系统能力**（文件对话框、写文件、打开外链、监听目录）走 `@tauri-apps/plugin-*`，并确认
   `capabilities/default.json` 已放行对应权限，否则运行时被拒。
 - **状态**集中在 `state/store.ts`：跨组件共享的状态与动作都加在这里（含测试需要的纯选择器，

@@ -2732,6 +2732,9 @@ body.resizing {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
   padding: 12px;
   border-bottom: 1px solid var(--app-border);
   flex: 0 0 auto;
@@ -2746,8 +2749,16 @@ body.resizing {
 }
 
 .repository-commit-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
   gap: 8px;
+}
+
+.repository-history-button {
+  grid-column: 4;
 }
 
 .repository-lists {
@@ -2785,11 +2796,12 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: calc(100% - 12px);
+  margin: 2px 6px;
   border: none;
   background: transparent;
   color: var(--app-fg);
-  padding: 5px 12px;
+  padding: 5px 8px;
   font-size: 13px;
   cursor: pointer;
   border-radius: 4px;
@@ -2910,17 +2922,60 @@ body.resizing {
   margin-top: 8px;
 }
 
+.git-history-list {
+  position: relative;
+}
+
+.history-branch-picker {
+  max-width: 180px;
+}
+
 .git-commit {
-  border-bottom: 1px solid var(--app-border);
+  position: relative;
+  margin-bottom: 0;
+}
+
+.git-commit::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 13px;
+  width: 1px;
+  background: var(--app-border);
+  content: '';
+}
+
+.git-commit:last-child::before {
+  bottom: auto;
+  height: 19px;
 }
 
 .git-commit-row {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 132px 88px;
   align-items: center;
   gap: 8px;
-  padding: 8px 4px;
+  min-height: 38px;
+  padding: 8px 4px 8px 30px;
+  border-radius: 4px;
   cursor: pointer;
   user-select: none;
+}
+
+.git-commit-row::before {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--app-accent);
+  border-radius: 50%;
+  background: var(--app-panel);
+  content: '';
+  box-shadow: 0 0 0 2px var(--app-bg);
+  transform: translateY(-50%);
 }
 
 .git-commit-row:hover {
@@ -2935,7 +2990,6 @@ body.resizing {
 }
 
 .git-commit-summary {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2946,12 +3000,21 @@ body.resizing {
   color: var(--app-muted);
   font-size: 12px;
   white-space: nowrap;
+  text-align: right;
+}
+
+.git-commit-row .git-file-stats {
+  width: 88px;
+  justify-content: flex-end;
 }
 
 .git-commit-detail {
   display: flex;
   gap: 12px;
-  padding: 8px 4px 12px 26px;
+  margin: 0 4px 8px 30px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--app-bg);
 }
 
 .git-commit-detail-info {
@@ -2981,7 +3044,7 @@ body.resizing {
   flex: 1;
   min-width: 0;
   border-left: 1px solid var(--app-border);
-  padding-left: 8px;
+  padding-left: 12px;
 }
 
 .history-error {
@@ -3689,13 +3752,6 @@ body.resizing {
 .voice-label-range {
   /* 取值范围跟在标签后面并靠右: 输入框里只留数值和加减按钮 */
   margin-left: auto;
-  font-size: 10px;
-}
-
-.voice-label-tag {
-  border: 1px solid var(--app-border);
-  border-radius: 3px;
-  padding: 0 4px;
   font-size: 10px;
 }
 
@@ -4423,113 +4479,30 @@ input[type='number'].voice-control {
   /* 与目录输入框底对齐 (Field 有 label, 因此由 voice-root-row 的 align-items 处理) */
 }
 
-/* -------- 自绘下拉选择器 (不使用 portal, 规避 WebView 弹层异常) -------- */
+/* -------- Fluent UI 下拉选择器 (inline popup, 规避 WebView portal 异常) -------- */
 .select {
   position: relative;
   width: 100%;
   min-width: 0;
 }
 
-.select-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.select > .select-trigger {
   width: 100%;
   min-width: 0;
-  padding: 5px 10px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--app-fg);
-  background: var(--app-panel);
-  border: 1px solid var(--app-border);
-  border-radius: 4px;
-  cursor: pointer;
-  text-align: left;
 }
 
-.select-trigger:hover:not(:disabled) {
-  border-color: var(--app-accent);
-}
-
-.select-trigger:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.select.open .select-trigger {
-  border-color: var(--app-accent);
-}
-
-.select-label {
+.select-trigger .fui-Dropdown__button {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .select-chevron {
-  flex: none;
-  font-size: 14px;
+  width: 16px;
+  height: 16px;
   color: var(--app-muted);
-}
-
-.select-panel {
-  position: absolute;
-  z-index: 3000;
-  top: calc(100% + 2px);
-  left: 0;
-  min-width: 100%;
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 4px;
-  background: var(--app-panel);
-  border: 1px solid var(--app-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-}
-
-/*
- * 朝上展开: 卡片是滚动容器, 靠近底部的字段朝下展开会被卡片底边切掉。
- * 具体高度由组件按视口可用空间就地计算 (行内 max-height), 这里只负责方向。
- */
-.select-panel-up {
-  top: auto;
-  bottom: calc(100% + 2px);
-  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.18);
-}
-
-.select-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 5px 8px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--app-fg);
-  background: none;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.select-option:hover {
-  background: var(--app-hover);
-}
-
-.select-option.selected {
-  color: var(--app-accent);
-}
-
-.select-option-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  flex: none;
-  font-size: 12px;
 }
 
 /* ==================== 配音工作台布局 ==================== */

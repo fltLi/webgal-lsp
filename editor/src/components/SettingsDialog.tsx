@@ -12,7 +12,7 @@ import { DocumentRegular, GlobeRegular } from '@fluentui/react-icons';
 import { useEffect, useState } from 'react';
 
 import { useAppStore, type SettingsCategory } from '../state/store';
-import type { DiagnosticsView, Settings } from '../lib/settings';
+import type { DiagnosticsView, GitDiffView, Settings } from '../lib/settings';
 import { AppDialog } from './AppDialog';
 import { EngineManager } from './EngineManager';
 import { Select, toOptions } from './Select';
@@ -27,6 +27,7 @@ const CATEGORIES: { id: SettingsCategory; label: string }[] = [
 
 /** 诊断列表的打开形式 (两种共用同一份列表与筛选, 只是外壳不同) */
 const DIAGNOSTICS_VIEW_OPTIONS = toOptions({ modal: '模态框', dock: '底部托盘' });
+const GIT_DIFF_VIEW_OPTIONS = toOptions({ sideBySide: '并排显示', inline: '内联显示' });
 
 // 关于页链接 (仓库 / 许可证): 配文本身就是"这一栏是什么", 链接地址另起一行小字
 const ABOUT_LINKS: { label: string; icon: JSX.Element; url: string }[] = [
@@ -136,7 +137,7 @@ export function SettingsDialog() {
           )}
           {category === 'editor' && (
             <div className="settings-group">
-              <h3 className="settings-group-title">语言服务</h3>
+              <h3 className="settings-group-title">工具箱</h3>
 
               <div className="settings-field settings-field-inline">
                 <span className="settings-label">诊断列表</span>
@@ -146,6 +147,18 @@ export function SettingsDialog() {
                     title="诊断列表的打开形式"
                     options={DIAGNOSTICS_VIEW_OPTIONS}
                     onChange={(value) => updateSettings({ diagnosticsView: value as DiagnosticsView })}
+                  />
+                </div>
+              </div>
+
+              <div className="settings-field settings-field-inline">
+                <span className="settings-label">差异布局</span>
+                <div className="settings-select">
+                  <Select
+                    value={settings.gitDiffView}
+                    title="Git 差异选项卡的呈现方式"
+                    options={GIT_DIFF_VIEW_OPTIONS}
+                    onChange={(value) => updateSettings({ gitDiffView: value as GitDiffView })}
                   />
                 </div>
               </div>

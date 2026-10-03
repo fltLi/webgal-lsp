@@ -35,6 +35,8 @@ pub fn run() {
             service::game_config::parse_game_config_text,
             service::game_config::read_game_config,
             service::git::git_status,
+            service::git::git_local_branches,
+            service::git::git_switch_branch,
             service::git::git_init,
             service::git::git_set_identity,
             service::git::git_stage,

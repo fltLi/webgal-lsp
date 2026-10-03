@@ -5,22 +5,41 @@
 // 状态跨打开保留: 打开场景差异 / Esc 自动关闭时不重置; 仅"关闭"按钮手动关闭才重置。
 
 import { Button } from '@fluentui/react-components';
-import { ArrowClockwiseRegular, BranchForkRegular, HistoryRegular } from '@fluentui/react-icons';
+import {
+  ArrowClockwiseRegular,
+  BranchForkRegular,
+  CheckmarkRegular,
+  ChevronDownRegular,
+  ChevronUpRegular,
+  HistoryRegular,
+} from '@fluentui/react-icons';
 import { useEffect, useRef, useState } from 'react';
 
-import { gitCommitFiles, gitLog, gitRestore, gitRestoreAll, type GitCommit, type GitCommitFile } from '../commands/git';
+import {
+  gitCommitFiles,
+  gitLocalBranches,
+  gitLog,
+  gitRestore,
+  gitRestoreAll,
+  gitStatus as getGitStatus,
+  gitSwitchBranch,
+  type GitCommit,
+  type GitCommitFile,
+} from '../commands/git';
 import { openGitDiff } from '../git/diff';
 import { refreshGitStatus } from '../git/status';
 import { STATUS_CLASS } from '../git/util';
+import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store';
 import { AppDialog } from './AppDialog';
-import { ContextMenu } from './ContextMenu';
+import { ContextMenu, type ContextMenuEntry } from './ContextMenu';
 import { middleEllipsis } from './FileTree';
 
 /** 跨打开保留的历史状态 (打开场景差异 / Esc 关闭时不清空, 仅"关闭"按钮重置) */
 interface HistoryPersist {
+  projectPath: string;
   commits: GitCommit[];
-  expanded: string | null;
+  expanded: string[];
   files: Record<string, GitCommitFile[]>;
   scrollTop: number;
 }
@@ -39,37 +58,81 @@ function formatDate(seconds: number): string {
 export function GitHistoryDialog({ onClose }: Props) {
   const projectPath = useAppStore((s) => s.projectPath);
   const branch = useAppStore((s) => s.gitStatus?.branch ?? null);
+  const gitStatus = useAppStore((s) => s.gitStatus);
+  const documents = useAppStore((s) => s.documents);
 
-  const [commits, setCommits] = useState<GitCommit[]>(persisted?.commits ?? []);
-  const [expanded, setExpanded] = useState<string | null>(persisted?.expanded ?? null);
-  const [files, setFiles] = useState<Record<string, GitCommitFile[]>>(persisted?.files ?? {});
+  const cached = persisted?.projectPath === projectPath ? persisted : null;
+  const [commits, setCommits] = useState<GitCommit[]>(cached?.commits ?? []);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string[]>(cached?.expanded ?? []);
+  const [files, setFiles] = useState<Record<string, GitCommitFile[]>>(cached?.files ?? {});
   const listRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [menu, setMenu] = useState<{ file: GitCommitFile; commitId: string; x: number; y: number } | null>(null);
+  const [branchMenu, setBranchMenu] = useState<{ x: number; y: number } | null>(null);
+  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    file?: GitCommitFile;
+    commitId: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
-  // 恢复 / 初次加载
+  // 每次打开都同步最新提交列表; 同一仓库保留展开项、文件详情与滚动位置。
   useEffect(() => {
     if (!projectPath) return;
-    if (!persisted) {
-      gitLog(projectPath)
-        .then((list) => {
-          setCommits(list);
-          persisted = { commits: list, expanded: null, files: {}, scrollTop: 0 };
-        })
-        .catch((e) => setError(String(e)));
-      return;
+    let cancelled = false;
+    const previous =
+      persisted?.projectPath === projectPath
+        ? persisted
+        : { projectPath, commits: [], expanded: [], files: {}, scrollTop: 0 };
+    if (persisted !== previous) {
+      persisted = previous;
+      setCommits([]);
+      setExpanded([]);
+      setFiles({});
     }
-    // 恢复滚动位置
-    requestAnimationFrame(() => {
-      if (listRef.current) listRef.current.scrollTop = persisted?.scrollTop ?? 0;
-    });
+    setLoading(true);
+    gitLog(projectPath)
+      .then((list) => {
+        if (cancelled) return;
+        setCommits(list);
+        persisted = { ...previous, commits: list };
+        requestAnimationFrame(() => {
+          if (listRef.current) listRef.current.scrollTop = persisted?.scrollTop ?? 0;
+        });
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPath]);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    let cancelled = false;
+    gitLocalBranches(projectPath)
+      .then((list) => {
+        if (!cancelled) setBranches(list);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectPath]);
 
   // 记录滚动位置
   useEffect(() => {
     const el = listRef.current;
-    if (!el || !persisted) return;
+    if (!el) return;
     const onScroll = () => {
       if (persisted) persisted.scrollTop = el.scrollTop;
     };
@@ -93,8 +156,11 @@ export function GitHistoryDialog({ onClose }: Props) {
   }, [onClose]);
 
   useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
+    if (!menu && !branchMenu) return;
+    const close = () => {
+      setMenu(null);
+      setBranchMenu(null);
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
@@ -106,15 +172,15 @@ export function GitHistoryDialog({ onClose }: Props) {
       window.removeEventListener('scroll', close, { capture: true });
       window.removeEventListener('resize', close);
     };
-  }, [menu]);
+  }, [menu, branchMenu]);
 
   if (!projectPath) return null;
 
   const toggle = async (id: string) => {
-    const next = expanded === id ? null : id;
+    const next = expanded.includes(id) ? expanded.filter((item) => item !== id) : [...expanded, id];
     setExpanded(next);
     if (persisted) persisted.expanded = next;
-    if (next && !files[id]) {
+    if (next.includes(id) && !files[id]) {
       try {
         const list = await gitCommitFiles(projectPath, id);
         setFiles((prev) => {
@@ -128,14 +194,118 @@ export function GitHistoryDialog({ onClose }: Props) {
     }
   };
 
+  const expandAll = async () => {
+    const ids = commits.map((commit) => commit.id);
+    setExpanded(ids);
+    if (persisted) persisted.expanded = ids;
+
+    const missing = commits.filter((commit) => !files[commit.id]);
+    const results = await Promise.allSettled(missing.map((commit) => gitCommitFiles(projectPath, commit.id)));
+    const merged = { ...files };
+    let failed = false;
+    let failure: unknown;
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        merged[missing[index].id] = result.value;
+      } else if (!failed) {
+        failed = true;
+        failure = result.reason;
+      }
+    });
+    setFiles(merged);
+    if (persisted) persisted.files = merged;
+    if (failed) setError(String(failure));
+  };
+
+  const collapseAll = () => {
+    setExpanded([]);
+    if (persisted) persisted.expanded = [];
+  };
+
+  const switchBranch = async (nextBranch: string) => {
+    if (busy || !projectPath || nextBranch === branch) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await gitSwitchBranch(projectPath, nextBranch);
+      const [nextStatus, nextCommits, nextBranches] = await Promise.all([
+        getGitStatus(projectPath),
+        gitLog(projectPath),
+        gitLocalBranches(projectPath),
+      ]);
+      if (useAppStore.getState().projectPath === projectPath) {
+        useAppStore.getState().setGitStatus(nextStatus);
+      }
+      setCommits(nextCommits);
+      setBranches(nextBranches);
+      setExpanded([]);
+      setFiles({});
+      if (persisted) {
+        persisted = {
+          ...persisted,
+          commits: nextCommits,
+          expanded: [],
+          files: {},
+          scrollTop: 0,
+        };
+      }
+      if (listRef.current) listRef.current.scrollTop = 0;
+      const cleanDocuments = useAppStore.getState().documents.filter((document) => !document.dirty);
+      const refreshedDocuments = await Promise.allSettled(
+        cleanDocuments.map(async (document) => ({
+          path: document.path,
+          name: document.name,
+          content: await fs.readText(document.path),
+        }))
+      );
+      const failedDocuments: string[] = [];
+      refreshedDocuments.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          useAppStore.getState().updateDocument(result.value.path, { content: result.value.content, dirty: false });
+        } else {
+          failedDocuments.push(`${cleanDocuments[index].name}: ${String(result.reason)}`);
+        }
+      });
+      if (failedDocuments.length > 0) {
+        setError(`分支已切换，但部分打开文档无法刷新：${failedDocuments.join('；')}`);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+      setPendingBranch(null);
+    }
+  };
+
+  const requestBranchSwitch = (nextBranch: string) => {
+    setBranchMenu(null);
+    if (nextBranch === branch || busy) return;
+    const hasChanges = Boolean(
+      gitStatus?.staged.length || gitStatus?.unstaged.length || documents.some((document) => document.dirty)
+    );
+    if (hasChanges) {
+      setPendingBranch(nextBranch);
+      return;
+    }
+    void switchBranch(nextBranch);
+  };
+
+  const branchMenuItems: ContextMenuEntry[] = branches.map((name) => ({
+    key: name,
+    label: name,
+    icon: name === branch ? <CheckmarkRegular /> : undefined,
+    disabled: busy || name === branch,
+    onClick: () => requestBranchSwitch(name),
+  }));
+
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
     try {
       await fn();
       await refreshGitStatus(projectPath);
-      setExpanded(null);
-      if (persisted) persisted.expanded = null;
+      setExpanded([]);
+      if (persisted) persisted.expanded = [];
     } catch (e) {
       setError(String(e));
     } finally {
@@ -170,6 +340,53 @@ export function GitHistoryDialog({ onClose }: Props) {
     );
   };
 
+  const menuItems: ContextMenuEntry[] = menu
+    ? (() => {
+        const allExpanded = commits.length > 0 && commits.every((commit) => expanded.includes(commit.id));
+        const allCollapsed = commits.every((commit) => !expanded.includes(commit.id));
+        const items: ContextMenuEntry[] = [
+          {
+            key: 'toggle',
+            label: expanded.includes(menu.commitId) ? '折叠' : '展开',
+            icon: expanded.includes(menu.commitId) ? <ChevronUpRegular /> : <ChevronDownRegular />,
+            onClick: () => void toggle(menu.commitId),
+          },
+          { key: 'separator-toggle', separator: true },
+          {
+            key: 'expand-all',
+            label: '全部展开',
+            icon: <ChevronDownRegular />,
+            disabled: allExpanded,
+            onClick: () => void expandAll(),
+          },
+          {
+            key: 'collapse-all',
+            label: '全部折叠',
+            icon: <ChevronUpRegular />,
+            disabled: allCollapsed,
+            onClick: collapseAll,
+          },
+          { key: 'separator-restore', separator: true },
+        ];
+        const file = menu.file;
+        if (file) {
+          items.push({
+            key: 'restore',
+            label: '还原',
+            icon: <ArrowClockwiseRegular />,
+            onClick: () => void run(() => gitRestore(projectPath, [file.path], menu.commitId)),
+          });
+        }
+        items.push({
+          key: 'restoreAll',
+          label: '还原全部',
+          icon: <HistoryRegular />,
+          onClick: () => void run(() => gitRestoreAll(projectPath, menu.commitId)),
+        });
+        return items;
+      })()
+    : [];
+
   return (
     <AppDialog
       title="提交历史"
@@ -178,9 +395,22 @@ export function GitHistoryDialog({ onClose }: Props) {
       compact
       onClose={onClose}
       titleExtra={
-        <span className="repository-branch">
-          <BranchForkRegular /> {branch ?? '当前分支'}
-        </span>
+        <button
+          type="button"
+          className="file-tree-path history-branch-picker"
+          title={branch ?? '当前分支'}
+          aria-haspopup="menu"
+          aria-expanded={branchMenu !== null}
+          disabled={busy || branches.length === 0}
+          onClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setBranchMenu({ x: bounds.left, y: bounds.bottom });
+          }}
+        >
+          <BranchForkRegular />
+          <span className="file-tree-path-label">{branch ?? '当前分支'}</span>
+          <ChevronDownRegular />
+        </button>
       }
       footer={
         <Button appearance="secondary" onClick={manualClose}>
@@ -188,14 +418,23 @@ export function GitHistoryDialog({ onClose }: Props) {
         </Button>
       }
     >
-      <div className="history-list dialog-scroll" ref={listRef}>
-        {commits.length === 0 ? (
+      <div className="history-list git-history-list dialog-scroll" ref={listRef}>
+        {loading ? (
+          <div className="muted repository-empty-list">正在同步提交历史…</div>
+        ) : commits.length === 0 ? (
           <div className="muted repository-empty-list">暂无提交记录</div>
         ) : (
           commits.map((c) => (
             <div key={c.id} className="git-commit">
-              <div className="git-commit-row" onClick={() => void toggle(c.id)}>
-                <span className="git-commit-toggle">{expanded === c.id ? '▾' : '▸'}</span>
+              <div
+                className="git-commit-row"
+                onClick={() => void toggle(c.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ commitId: c.id, x: e.clientX, y: e.clientY });
+                }}
+              >
+                <span className="git-commit-toggle">{expanded.includes(c.id) ? '▾' : '▸'}</span>
                 <span className="git-commit-summary" title={c.summary}>
                   {middleEllipsis(c.summary, 60)}
                 </span>
@@ -205,7 +444,7 @@ export function GitHistoryDialog({ onClose }: Props) {
                   {c.deletions > 0 ? <em className="git-del">-{c.deletions}</em> : null}
                 </span>
               </div>
-              {expanded === c.id ? (
+              {expanded.includes(c.id) ? (
                 <div className="git-commit-detail">
                   <div className="git-commit-detail-info">
                     <pre className="git-commit-message">{c.message}</pre>
@@ -222,26 +461,9 @@ export function GitHistoryDialog({ onClose }: Props) {
         )}
       </div>
 
-      {menu ? (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          items={[
-            {
-              key: 'restore',
-              label: '还原',
-              icon: <ArrowClockwiseRegular />,
-              onClick: () => void run(() => gitRestore(projectPath, [menu.file.path], menu.commitId)),
-            },
-            {
-              key: 'restoreAll',
-              label: '还原全部',
-              icon: <HistoryRegular />,
-              onClick: () => void run(() => gitRestoreAll(projectPath, menu.commitId)),
-            },
-          ]}
-          onClose={() => setMenu(null)}
-        />
+      {menu ? <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} /> : null}
+      {branchMenu ? (
+        <ContextMenu x={branchMenu.x} y={branchMenu.y} items={branchMenuItems} onClose={() => setBranchMenu(null)} />
       ) : null}
 
       {error ? (
@@ -251,6 +473,32 @@ export function GitHistoryDialog({ onClose }: Props) {
             关闭
           </Button>
         </div>
+      ) : null}
+      {pendingBranch ? (
+        <AppDialog
+          title="切换分支"
+          size="small"
+          height="auto"
+          onClose={() => {
+            if (!busy) setPendingBranch(null);
+          }}
+          footer={
+            <>
+              <Button appearance="secondary" disabled={busy} onClick={() => setPendingBranch(null)}>
+                取消
+              </Button>
+              <Button appearance="primary" disabled={busy} onClick={() => void switchBranch(pendingBranch)}>
+                切换
+              </Button>
+            </>
+          }
+        >
+          <p className="confirm-message">
+            当前有 {gitStatus?.staged.length ?? 0} 个暂存项、{gitStatus?.unstaged.length ?? 0} 个未暂存项和{' '}
+            {documents.filter((document) => document.dirty).length} 个未保存的编辑器文档。要切换到“{pendingBranch}”吗？
+            Git 若检测到切换会覆盖文件，将阻止操作。
+          </p>
+        </AppDialog>
       ) : null}
     </AppDialog>
   );

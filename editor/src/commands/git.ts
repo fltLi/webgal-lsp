@@ -82,6 +82,14 @@ export function gitStatus(path: string): Promise<GitStatus> {
   return invoke<GitStatus>('git_status', { path });
 }
 
+export function gitLocalBranches(path: string): Promise<string[]> {
+  return invoke<string[]>('git_local_branches', { path });
+}
+
+export function gitSwitchBranch(path: string, branch: string): Promise<void> {
+  return invoke<void>('git_switch_branch', { path, branch });
+}
+
 export function gitInit(path: string, gitignore: string): Promise<void> {
   return invoke<void>('git_init', { path, gitignore });
 }

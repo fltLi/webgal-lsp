@@ -290,6 +290,7 @@ export function RepositoryTab() {
             <Textarea
               className="gitignore-editor dialog-scroll"
               value={gitignore}
+              resize="none"
               onChange={(_, data) => setGitignore(data.value)}
               disabled={busy}
             />
@@ -329,14 +330,20 @@ export function RepositoryTab() {
           </Button>
           <Button
             appearance="secondary"
-            icon={<SelectAllOnRegular />}
+            icon={<AddRegular />}
             disabled={busy || unstaged.length === 0}
             onClick={() => void run(() => gitStageAll(projectPath))}
           >
-            暂存全部
+            暂存
           </Button>
-          <Button appearance="secondary" icon={<HistoryRegular />} disabled={busy} onClick={() => setHistoryOpen(true)}>
-            查看历史
+          <Button
+            className="repository-history-button"
+            appearance="secondary"
+            icon={<HistoryRegular />}
+            disabled={busy}
+            onClick={() => setHistoryOpen(true)}
+          >
+            历史
           </Button>
         </div>
       </div>

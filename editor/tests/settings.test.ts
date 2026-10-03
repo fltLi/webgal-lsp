@@ -71,4 +71,10 @@ describe('normalizeSettings', () => {
     // 老数据里没有这个字段时, 展开任意字符串不该被当成合法形式
     expect(normalizeSettings({ diagnosticsView: 'drawer' as never }).diagnosticsView).toBe('dock');
   });
+
+  it('差异比较布局只认内联和并排两种形式', () => {
+    expect(normalizeSettings({ gitDiffView: 'inline' }).gitDiffView).toBe('inline');
+    expect(normalizeSettings({}).gitDiffView).toBe('sideBySide');
+    expect(normalizeSettings({ gitDiffView: 'invalid' as never }).gitDiffView).toBe('sideBySide');
+  });
 });

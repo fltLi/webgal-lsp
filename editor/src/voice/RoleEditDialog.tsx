@@ -180,7 +180,7 @@ export function RoleEditDialog({ character, models, hideModel = false, onClose, 
         <Field label="描述" className="role-edit-span">
           <Textarea
             className="character-description"
-            resize="vertical"
+            resize="none"
             value={draft.description}
             onChange={(_, data) => setDraft({ ...draft, description: data.value })}
             onBlur={() => void commit({ description: draft.description })}

@@ -9,7 +9,7 @@
 //   「移除」只清除当前语句的 `-vocal=` (不删文件、不清历史);
 // * 语音之外的参数 (文本) 随场景内容变化, 不随历史项回填。
 
-import { Button, Textarea } from '@fluentui/react-components';
+import { Button, Input, Textarea } from '@fluentui/react-components';
 import {
   ArrowResetRegular,
   ArrowSyncRegular,
@@ -96,6 +96,14 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
   }, [params?.characterId]);
 
   if (!params) return <div className="voice-sentence-panel" />;
+
+  const openReferencePicker = () => {
+    if (!character) {
+      setMessage('请先选择角色，再挑选参考音频');
+      return;
+    }
+    setPickerOpen(true);
+  };
 
   const update = (patch: Partial<VoiceParams>) => {
     setParams({ ...params, ...patch });
@@ -220,7 +228,7 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
             <Select
               value={params.characterId ?? ''}
               title={character ? `${character.name}${matchHint && !selected ? `（${matchHint}）` : ''}` : '未选择角色'}
-              placeholder="未选择（点击选择角色）"
+              placeholder="未选择"
               options={characters.map((item) => ({
                 value: item.id,
                 label: `${item.name}${item.references.length === 0 ? '（无参考音频）' : ''}`,
@@ -263,34 +271,33 @@ export function SentenceVoicePanel({ cardId, dialogue, characters, refreshToken,
               于是这个"已打开"的状态一直挂着 —— 等用户随后选好角色, 它**立刻自己弹出来**,
               像是在替用户做决定。根因是打开动作缺少前提校验, 不是对话框的渲染条件。
             */}
-            <button
-              type="button"
-              className="select-trigger voice-reference-trigger"
-              title={character ? referenceLabel(character, params.referenceHash) : '请先在左侧选择角色, 再挑选参考音频'}
-              onClick={() => {
-                if (!character) {
-                  setMessage('请先选择角色，再挑选参考音频');
-                  return;
+            <Input
+              className="voice-reference-trigger"
+              value={referenceLabel(character, params.referenceHash)}
+              readOnly
+              title={character ? referenceLabel(character, params.referenceHash) : '请先在左侧选择角色，再挑选参考音频'}
+              contentAfter={<ChevronDownRegular className="select-chevron" />}
+              role="combobox"
+              aria-haspopup="dialog"
+              aria-expanded={pickerOpen}
+              onClick={openReferencePicker}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openReferencePicker();
                 }
-                setPickerOpen(true);
               }}
-            >
-              <span className="select-label">{referenceLabel(character, params.referenceHash)}</span>
-              <ChevronDownRegular className="select-chevron" />
-            </button>
+            />
           </label>
         </div>
 
         {/* 第二行: 文本 (独占一行; 它是唯一可能很长的输入) */}
         <label className="voice-field voice-field-text">
-          <span className="voice-label">
-            文本
-            {dialogue.speaker === null && <span className="voice-label-tag">旁白</span>}
-          </span>
+          <span className="voice-label">文本</span>
           <Textarea
             className="voice-control voice-text"
             value={params.text}
-            resize="vertical"
+            resize="none"
             onChange={(_, data) => update({ text: data.value })}
           />
         </label>

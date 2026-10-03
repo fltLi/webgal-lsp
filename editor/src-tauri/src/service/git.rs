@@ -8,8 +8,8 @@
 use std::{collections::HashMap, path::Path, sync::Once};
 
 use git2::{
-    build::CheckoutBuilder, Commit, Delta, Diff, DiffDelta, DiffLine, DiffOptions, Index, Oid,
-    Repository, Signature, Status, StatusOptions, Tree,
+    build::CheckoutBuilder, BranchType, Commit, Delta, Diff, DiffDelta, DiffLine, DiffOptions,
+    Index, Oid, Repository, Signature, Status, StatusOptions, Tree,
 };
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
@@ -394,6 +394,64 @@ pub async fn git_status(path: String) -> Result<RepoStatus, String> {
             }
         };
         compute_status(&repo)
+    })
+    .await
+}
+
+/// 列出仓库中的本地分支
+#[tauri::command]
+pub async fn git_local_branches(path: String) -> Result<Vec<String>, String> {
+    blocking(move || {
+        let repo = open_repo(&path)?;
+        let mut branches = repo
+            .branches(Some(BranchType::Local))
+            .map_err(|e| e.to_string())?
+            .map(|branch| {
+                let (branch, _) = branch.map_err(|e| e.to_string())?;
+                branch
+                    .name()
+                    .map_err(|e| e.to_string())?
+                    .map(str::to_owned)
+                    .ok_or_else(|| "本地分支名称不是有效的 UTF-8".to_string())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        branches.sort();
+        Ok(branches)
+    })
+    .await
+}
+
+/// 安全切换到指定本地分支
+#[tauri::command]
+pub async fn git_switch_branch(path: String, branch: String) -> Result<(), String> {
+    blocking(move || {
+        let repo = open_repo(&path)?;
+        let local_branch = repo
+            .find_branch(&branch, BranchType::Local)
+            .map_err(|e| e.to_string())?;
+        let reference = local_branch.get();
+        let commit = reference
+            .peel_to_commit()
+            .map_err(|e| format!("无法切换到分支“{branch}”：{e}"))?;
+        let reference_name = reference
+            .name()
+            .ok_or_else(|| format!("分支“{branch}”没有有效的引用名称"))?
+            .to_owned();
+        let mut status_options = StatusOptions::new();
+        status_options.include_untracked(true);
+        let has_local_changes = !repo
+            .statuses(Some(&mut status_options))
+            .map_err(|e| e.to_string())?
+            .is_empty();
+        let mut checkout = CheckoutBuilder::new();
+        if has_local_changes {
+            checkout.safe();
+        } else {
+            checkout.force().update_index(true);
+        }
+        repo.checkout_tree(commit.as_object(), Some(&mut checkout))
+            .map_err(|e| e.to_string())?;
+        repo.set_head(&reference_name).map_err(|e| e.to_string())
     })
     .await
 }
@@ -1021,8 +1079,8 @@ pub async fn git_file_region(
 
 #[cfg(test)]
 mod tests {
-    use super::is_git_tracked;
-    use git2::Repository;
+    use super::{git_local_branches, git_switch_branch, is_git_tracked};
+    use git2::{Repository, Signature};
     use std::{
         fs,
         path::Path,
@@ -1047,6 +1105,88 @@ mod tests {
         assert!(is_git_tracked(&repo, "staged.txt").unwrap());
 
         drop(repo);
+        fs::remove_dir_all(repo_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lists_and_safely_switches_local_branches() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX epoch")
+            .as_nanos();
+        let repo_path = std::env::temp_dir().join(format!("webgal-git-branches-{unique}"));
+        let repo = Repository::init(&repo_path).expect("temporary repository should initialize");
+        repo.set_head("refs/heads/main").unwrap();
+        let signature = Signature::now("Ink Test", "ink@example.test").unwrap();
+
+        fs::write(repo_path.join("scene.txt"), "main\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("scene.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let main_id = repo
+            .commit(Some("HEAD"), &signature, &signature, "main", &tree, &[])
+            .unwrap();
+        drop(tree);
+        drop(index);
+        let main_commit = repo.find_commit(main_id).unwrap();
+        repo.branch("feature", &main_commit, false).unwrap();
+        drop(main_commit);
+
+        repo.set_head("refs/heads/feature").unwrap();
+        fs::write(repo_path.join("scene.txt"), "feature\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("scene.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let feature_parent = repo.find_commit(main_id).unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "feature",
+            &tree,
+            &[&feature_parent],
+        )
+        .unwrap();
+        drop(feature_parent);
+        drop(tree);
+        drop(index);
+
+        assert_eq!(repo.head().unwrap().shorthand(), Some("feature"));
+        let mut status_options = git2::StatusOptions::new();
+        status_options.include_untracked(true);
+        assert!(repo.statuses(Some(&mut status_options)).unwrap().is_empty());
+        drop(repo);
+
+        let path = repo_path.to_string_lossy().into_owned();
+        git_switch_branch(path.clone(), "main".to_string())
+            .await
+            .unwrap();
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut status_options = git2::StatusOptions::new();
+        status_options.include_untracked(true);
+        assert!(repo.statuses(Some(&mut status_options)).unwrap().is_empty());
+        drop(repo);
+        assert_eq!(
+            git_local_branches(path.clone()).await.unwrap(),
+            vec!["feature".to_string(), "main".to_string()]
+        );
+
+        fs::write(repo_path.join("scene.txt"), "local edit\n").unwrap();
+        assert!(git_switch_branch(path.clone(), "feature".to_string())
+            .await
+            .is_err());
+        let repo = Repository::open(&repo_path).unwrap();
+        assert_eq!(repo.head().unwrap().shorthand(), Some("main"));
+        drop(repo);
+        assert_eq!(
+            fs::read_to_string(repo_path.join("scene.txt")).unwrap(),
+            "local edit\n"
+        );
+
         fs::remove_dir_all(repo_path).unwrap();
     }
 }

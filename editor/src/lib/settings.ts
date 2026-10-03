@@ -15,6 +15,9 @@ export type ThemePreference = 'light' | 'dark' | 'system';
  */
 export type DiagnosticsView = 'modal' | 'dock';
 
+/** Git 差异选项卡的呈现方式。 */
+export type GitDiffView = 'inline' | 'sideBySide';
+
 /** 已添加的 WebGAL 模板 (引用式: 记录磁盘路径, 不复制)。 */
 export interface TemplateEntry {
   id: string;
@@ -65,6 +68,8 @@ export interface Settings {
   editorMinimap: boolean;
   /** 诊断列表以弹窗还是底部托盘打开 */
   diagnosticsView: DiagnosticsView;
+  /** Git 差异选项卡内联或并排显示 */
+  gitDiffView: GitDiffView;
 }
 
 /** v0.5.1 及以前的设置形状, 只用于读取老数据。 */
@@ -90,6 +95,7 @@ export const defaultSettings: Settings = {
   editorWordWrap: true,
   editorMinimap: false,
   diagnosticsView: 'dock',
+  gitDiffView: 'sideBySide',
 };
 
 export function loadSettings(): Settings {
@@ -125,6 +131,7 @@ export function normalizeSettings(raw: Partial<Settings> & LegacySettings): Sett
     ...raw,
     // 枚举值要显式校验: 老数据里没有这个字段时上面的展开会原样带进来任意字符串
     diagnosticsView: raw.diagnosticsView === 'modal' ? 'modal' : 'dock',
+    gitDiffView: raw.gitDiffView === 'inline' ? 'inline' : 'sideBySide',
     engines: engines.length === 0 && legacyPath ? [legacyEngineEntry(legacyPath)] : engines,
     recentProjects: normalizeRecentProjects(raw.recentProjects),
     templates: Array.isArray(raw.templates) ? raw.templates.filter(isTemplateEntry) : [],
