@@ -3,14 +3,30 @@
 import globals from 'globals';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import svelte from 'eslint-plugin-svelte';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   // 全局忽略
   {
-    ignores: ['**/dist/', '**/node_modules/', '**/pkg/', '**/*.d.ts', 'crates/', 'target/'],
+    ignores: [
+      '**/dist/',
+      '**/build/',
+      '**/.svelte-kit/',
+      '**/node_modules/',
+      '**/pkg/',
+      '**/*.d.ts',
+      'crates/',
+      'target/',
+    ],
   },
-  // 基础 TypeScript 规则（所有 TS/TSX 文件）
+  // 基础 TypeScript 规则（TS 与 runes 模块）
+  //
+  // 这里**很关键**的一点: `**/*.ts` 会把 `.svelte.ts` (runes 模块) 一起匹配进来 ——
+  // 那是对的, 它们就是 TypeScript, 由 `tseslint.parser` 解析。
+  // 反过来, `.svelte` 组件不在这个列表里: 组件不能用 typed linting
+  // (`parserOptions.project`), 因为它们不在任何 tsconfig 的 program 中,
+  // 混进来会直接报 "Parsing error: parserOptions.project has been provided"。
   {
     files: ['**/*.ts', '**/*.tsx'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -19,6 +35,45 @@ export default tseslint.config(
       parserOptions: {
         project: true,
         tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  // Svelte 组件
+  //
+  // 组件里的类型检查交给 `svelte-check` (editor 的 `type-check` 脚本), ESLint 只管规则 ——
+  // 两边都开会让每个 workspace 都要解析 Svelte 的 tsconfig, 报错还会重复。
+  //
+  // ⚠️ 这里必须显式把 `files` 收窄到 `**/*.svelte`: 插件自带的 recommended 里有一项
+  // 会把 `**/*.svelte.ts` 也指向 svelte-eslint-parser, 那与 `.svelte.ts` 是
+  // **TypeScript 模块**这一事实冲突 (它们就该由 tseslint 解析), 结果是整个 runes 模块
+  // 报 "Unexpected token {"。不收窄的话上面那个基础 TS 块会被它悄悄覆盖。
+  ...svelte.configs.recommended.map((config) => ({
+    ...config,
+    files: ['editor/**/*.svelte'],
+  })),
+  {
+    files: ['editor/**/*.svelte'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      // 组件的 `<script lang="ts">` 需要指出内层解析器, 否则 svelte-eslint-parser
+      // 会按纯 JS 解析, 一遇到 `import type {` 就报 "Unexpected token {"。
+      parserOptions: {
+        parser: tseslint.parser,
+      },
+    },
+    rules: {
+      // Svelte 5 的 rune 是编译器内建, 不是全局变量。
+      'no-undef': 'off',
+    },
+  },
+  // runes 模块需要浏览器全局量 (window / document / localStorage 等)
+  {
+    files: ['editor/**/*.svelte.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
       },
     },
   },
@@ -36,7 +91,7 @@ export default tseslint.config(
     files: ['packages/parse-playground/**/*.ts', 'packages/parse-playground/**/*.tsx'],
     languageOptions: {
       globals: {
-        ...'globals'.browser,
+        ...globals.browser,
       },
       parserOptions: {
         ecmaFeatures: {
@@ -50,17 +105,12 @@ export default tseslint.config(
       },
     },
   },
-  // Editor（浏览器 + React + Tauri）
+  // 图标生成脚本（Node 环境）
   {
-    files: ['editor/**/*.ts', 'editor/**/*.tsx'],
+    files: ['editor/scripts/**/*.mjs'],
     languageOptions: {
       globals: {
-        ...globals.browser,
-      },
-      parserOptions: {
-        ecmaFeatures: {
-          jsx: true,
-        },
+        ...globals.node,
       },
     },
   },

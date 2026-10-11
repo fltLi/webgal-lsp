@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   baseName,
   joinPath,
+  middleEllipsis,
   relativeDirectoryPath,
   samePath,
   sanitizeFolderName,
@@ -44,6 +45,27 @@ describe('路径工具', () => {
     expect(relativeDirectoryPath('C:\\p\\game\\scene', 'c:/P/game/scene/chapter/start.txt')).toBe('chapter');
     expect(relativeDirectoryPath('C:\\p\\game\\scene', 'C:\\p\\game\\scene\\start.txt')).toBe('');
     expect(relativeDirectoryPath('C:\\p\\game\\scene', 'C:\\p\\game\\resource\\image.png')).toBeNull();
+  });
+});
+
+describe('middleEllipsis', () => {
+  it('不超过上限时原样返回', () => {
+    expect(middleEllipsis('game/scene/1.txt', 40)).toBe('game/scene/1.txt');
+  });
+
+  it('保留开头与扩展名, 中间省略', () => {
+    const long = 'game/scene/chapter-01/very-long-scene-name.txt';
+    const out = middleEllipsis(long, 20);
+    expect(out.length).toBeLessThanOrEqual(20);
+    expect(out.startsWith('game/')).toBe(true);
+    expect(out.endsWith('.txt')).toBe(true);
+    expect(out).toContain('...');
+  });
+
+  it('扩展名太长、放不下中间省略时退化成"取前若干字符 + 省略号"', () => {
+    const out = middleEllipsis('name.verylongextension', 10);
+    expect(out.length).toBeLessThanOrEqual(10);
+    expect(out.endsWith('...')).toBe(true);
   });
 });
 

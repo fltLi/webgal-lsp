@@ -4,20 +4,15 @@
 // 把事件转换为 LSP `workspace/didChangeWatchedFiles` 的 FileEvent (changeType: 1=创建 2=修改 3=删除),
 // 供 LSP 客户端转发给语言服务器 (服务器通过 client/registerCapability 注册过该能力)。
 //
-// 一次"拷贝一整个立绘文件夹到资源目录"会在一瞬间产生成千上万条事件。原来的写法有两个
-// 放大器, 结果就是 issue #25 的第三处症状 (语言服务卡死, 状态栏还写着就绪):
-//
-// 1. **每条 notify 回调各起一条异步链** (`void handleEvent(...)`, 互相不排队), 每条链又
-//    逐条 `await fs.exists` —— 成百上千条链同时在跑, 主线程被 IPC 淹没;
-// 2. 每条 notify 回调各自转发一条通知, 语言服务收到的是成百上千条互相独立的小通知,
-//    每条都要取一次项目写锁并触发一次诊断。
-//
-// 现在: 事件先按路径合并 (同一路径只留最后一次变化), **只有一条转发链**在跑, 复核用的
-// 存在性查询按固定并发度批量做完 (见 `change-batch`), 整批变更作为一条通知发出。
+// 一次"拷贝一整个立绘文件夹到资源目录"会在一瞬间产生成千上万条事件, 因此:
+// 事件先按路径合并 (同一路径只留最后一次变化), **只有一条转发链**在跑, 复核存在性的查询按固定
+// 并发度批量做完 (见 `change-batch`), 整批变更作为**一条**通知发出 —— 逐条转发会在这种场景下
+// 淹掉 IPC 与语言服务 (issue #25: 状态栏仍显示就绪, 实际已卡死)。
 
 import { watch, type UnwatchFn, type WatchEvent, type WatchEventKind } from '@tauri-apps/plugin-fs';
 
 import { fs } from '../lib/fs';
+import { isIgnoredWatchPath } from '../lib/watch-filter';
 import { resolveChanges, type FileChangeType, type WatchedChange } from './change-batch';
 
 export type { FileChangeType, WatchedChange } from './change-batch';
@@ -55,10 +50,7 @@ function normalize(raw: string): string | null {
   return p || null;
 }
 
-/**
- * 监听指定根目录 (递归) 的文件变化。
- * 串行化 start/stop, 避免与后续 stop 竞态。
- */
+/** 监听指定根目录 (递归) 的文件变化; 串行化 start/stop, 避免与后续 stop 竞态。 */
 export function startWatching(roots: string[], onChange: (changes: WatchedChange[]) => void): Promise<void> {
   queue = queue.then(() => doStart(roots, onChange));
   return queue;
@@ -112,6 +104,14 @@ function collect(event: WatchEvent): void {
   for (const raw of event.paths) {
     const path = normalize(raw);
     if (!path) continue;
+    /*
+     * `.git/` 里的变化不透传给语言服务。
+     *
+     * 它既不是源码 (语言服务不需要重扫), 又是**高频自激**的: `git status` 每次都创建/删除
+     * `.git/index.lock`, 递归监听会把它们全收进来, 于是"每次变更全项目重推诊断"被反复触发。
+     * 判据见 `lib/watch-filter.ts`。
+     */
+    if (isIgnoredWatchPath(path)) continue;
     // 拷贝过程中同一路径会被反复报 create/modify: 合并成一条即可
     pending.set(path, type);
   }

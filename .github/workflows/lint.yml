@@ -114,3 +114,6 @@ jobs:
 
       - name: Run ESLint and type-check
         run: npm run lint:all
+
+      - name: Run unit tests
+        run: npm test

@@ -2,15 +2,10 @@
 
 // 实时预览行号指示器的渲染断言。
 //
-// 两个曾经踩过的坑, 在这里钉住:
+// 图标必须走**零长度区间**, 且与整行高亮分成**两条装饰**: 一旦图标改成整行区间 (`isWholeLine`),
+// Monaco 会把字形栏图标铺到折出来的每一个视觉行上, 一条长语句旁边就多出一串箭头。
 //
-// 1. **自动换行时不能每折一行多画一个箭头**。图标走的是零长度区间 —— 一旦有人图省事
-//    把它改成整行区间 (`isWholeLine`), Monaco 会把字形栏图标铺到折出来的每一个视觉行上,
-//    一条长语句旁边就多出一串箭头。
-// 2. 图标与整行高亮必须是**两条装饰**: 图标只占第一行的第一个字符, 高亮才是整行。
-//
-// 这里用结构化替身而不是真 Monaco: 控制器只用到少数几个成员, 直接把它们记下来断言
-// 比拉起整个编辑器便宜得多, 也不会因为 Monaco 版本变化而假失败。
+// 用结构化替身而不是真 Monaco: 比拉起整个编辑器便宜得多, 也不会因为 Monaco 版本变化而假失败。
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -30,6 +25,8 @@ interface RecordedDecoration {
 /** 造一个"只有一行折成多行"的假编辑器: 行内容长度足够长, 折行是编辑器的事, 不影响行号 */
 function createFakeEditor(lineCount = 10, lineLength = 200) {
   let recorded: RecordedDecoration[] = [];
+  let setCalls = 0;
+  let clearCalls = 0;
   const mouseListeners: Array<(event: unknown) => void> = [];
 
   const editor = {
@@ -38,14 +35,17 @@ function createFakeEditor(lineCount = 10, lineLength = 200) {
         return recorded.length;
       },
       set: (decorations: RecordedDecoration[]) => {
+        setCalls += 1;
         recorded = [...decorations];
         return [];
       },
       clear: () => {
+        clearCalls += 1;
         recorded = [];
       },
     }),
     getModel: () => ({
+      uri: { toString: () => 'file:///project/game/scene/start.txt' },
       getLineCount: () => lineCount,
       getLineMaxColumn: () => lineLength + 1,
     }),
@@ -59,6 +59,8 @@ function createFakeEditor(lineCount = 10, lineLength = 200) {
   return {
     editor: editor as unknown as Parameters<typeof createLivePreviewGutterController>[0]['editor'],
     decorations: () => recorded,
+    setCalls: () => setCalls,
+    clearCalls: () => clearCalls,
     emitMouseDown: (event: unknown) => mouseListeners.forEach((listener) => listener(event)),
   };
 }
@@ -132,6 +134,65 @@ describe('实时预览指示器的装饰', () => {
     const [glyph, highlight] = setup(marker({ line: 999 })).decorations();
     expect(glyph.range.startLineNumber).toBe(10);
     expect(highlight.range.endLineNumber).toBe(10);
+  });
+
+  /*
+   * 去重: 状态没变时**不能**重画。
+   *
+   * 触发源又密又重复 —— 轮询的观察者在 marker 换新对象时调 `sync()`, 模块自己又在每次按键后调一次。
+   * `set()` 会拆掉旧装饰重新插 DOM, 对同一行重复画在视觉上就是指示器与整行底色在闪。
+   */
+  it('同一行同一状态重复 sync 不重画', () => {
+    const fake = setup(marker());
+    const before = fake.setCalls();
+    fake.controller.sync();
+    fake.controller.sync();
+    expect(fake.setCalls()).toBe(before);
+    expect(fake.decorations()).toHaveLength(2);
+  });
+
+  it('行号或状态变了才重画', () => {
+    let current = marker();
+    const fake = createFakeEditor();
+    const controller = createLivePreviewGutterController({
+      editor: fake.editor,
+      getMarker: () => current,
+      isReplayAvailable: () => true,
+      onReplay: vi.fn(),
+    });
+    controller.sync();
+    expect(fake.setCalls()).toBe(1);
+
+    current = marker({ line: 6 });
+    controller.sync();
+    expect(fake.setCalls()).toBe(2);
+
+    current = marker({ line: 6, phase: 'done' });
+    controller.sync();
+    expect(fake.setCalls()).toBe(3);
+
+    // 同一个状态再来一次: 不重画
+    current = marker({ line: 6, phase: 'done' });
+    controller.sync();
+    expect(fake.setCalls()).toBe(3);
+  });
+
+  it('指示器消失时清掉装饰, 且重复清不重复调用', () => {
+    let current: LivePreviewMarker | null = marker();
+    const fake = createFakeEditor();
+    const controller = createLivePreviewGutterController({
+      editor: fake.editor,
+      getMarker: () => current,
+      isReplayAvailable: () => true,
+      onReplay: vi.fn(),
+    });
+    controller.sync();
+    current = null;
+    controller.sync();
+    expect(fake.clearCalls()).toBe(1);
+    controller.sync();
+    expect(fake.clearCalls()).toBe(1);
+    expect(fake.decorations()).toHaveLength(0);
   });
 });
 

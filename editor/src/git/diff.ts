@@ -2,7 +2,7 @@
 
 // 打开只读差异选项卡的辅助函数。
 
-import { useAppStore } from '../state/store';
+import { useAppStore } from '../state/store.svelte';
 import { makeDiffTab } from '../tabs/model';
 
 /** 打开一个只读差异选项卡 (同一文件的暂存/未暂存/历史差异各自独立)。 */

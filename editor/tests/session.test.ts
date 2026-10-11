@@ -19,7 +19,11 @@ const tab = (id: string, kind: string, path: string, resourceKind?: 'image' | 'a
   ...(resourceKind ? { resourceKind } : {}),
 });
 
-const sessionEntry = (kind: 'scene' | 'resource' | 'config', path: string, resourceKind?: 'image' | 'audio' | 'video' | 'text') => ({
+const sessionEntry = (
+  kind: 'scene' | 'resource' | 'config',
+  path: string,
+  resourceKind?: 'image' | 'audio' | 'video' | 'text'
+) => ({
   kind,
   path,
   ...(resourceKind ? { resourceKind } : {}),
@@ -52,10 +56,7 @@ describe('sessionFromTabs', () => {
   it('记下激活的场景卡', () => {
     const tabs = [tab('scene:a', 'scene', 'C:\\p\\a.txt'), tab('scene:b', 'scene', 'C:\\p\\b.txt')];
     const session = sessionFromTabs(tabs, 'scene:b');
-    expect(session.tabs).toEqual([
-      sessionEntry('scene', 'C:\\p\\a.txt'),
-      sessionEntry('scene', 'C:\\p\\b.txt'),
-    ]);
+    expect(session.tabs).toEqual([sessionEntry('scene', 'C:\\p\\a.txt'), sessionEntry('scene', 'C:\\p\\b.txt')]);
     expect(session.activeTab).toBe('C:\\p\\b.txt');
   });
 

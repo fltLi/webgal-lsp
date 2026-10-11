@@ -5,7 +5,8 @@
 import { watch, type UnwatchFn } from '@tauri-apps/plugin-fs';
 
 import { gitStatus } from '../commands/git';
-import { useAppStore } from '../state/store';
+import { hasRelevantWatchPath } from '../lib/watch-filter';
+import { useAppStore } from '../state/store.svelte';
 
 let unwatch: UnwatchFn | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -33,7 +34,13 @@ export async function startGitWatcher(path: string): Promise<void> {
   try {
     unwatch = await watch(
       [path],
-      () => {
+      (event) => {
+        /*
+         * `.git/` 里的变化不触发刷新 —— 这是自激回路的开关: `git status` 为了刷新索引会拿锁,
+         * 每次都创建/删除 `.git/index.lock`, 不加判据就会被自己写出的锁立刻叫醒、永不收敛。
+         * 判据见 `lib/watch-filter.ts`。
+         */
+        if (!hasRelevantWatchPath(event.paths)) return;
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => void refreshGitStatus(path), 400);
       },

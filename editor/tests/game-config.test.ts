@@ -8,12 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  gameConfigSummary,
-  gameConfigValue,
-  setGameConfigValue,
-  setGameConfigValues,
-} from '../src/lib/gameConfig';
+import { gameConfigSummary, gameConfigValue, setGameConfigValue, setGameConfigValues } from '../src/lib/gameConfig';
 
 describe('gameConfigSummary', () => {
   it('汇总侧栏需要的字段', () => {

@@ -17,9 +17,11 @@ import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
 import 'monaco-editor/esm/vs/basic-languages/monaco.contribution';
 import { invoke } from '@tauri-apps/api/core';
 
+import { diagnosticSignature } from '../diagnostics/model';
 import { fs } from '../lib/fs';
 import { toUri } from '../lib/uri';
-import { useAppStore } from '../state/store';
+import { registerNovelLanguage } from '../novel/monaco';
+import { useAppStore } from '../state/store.svelte';
 import { createCodeBlockHighlight } from './code-block-highlight';
 import {
   lspClient,
@@ -131,9 +133,8 @@ function highlightScene(text: string): Promise<number[]> {
 /**
  * 全文语义高亮愿意等语言服务多久。
  *
- * 握手 (initialize 往返) 通常 200ms 内就完成, 这里等的主要是**项目加载** —— 项目越大越慢。
- * 但高亮本身不需要项目上下文 (同一份 highlight(), 只是本地调用), 所以不必陪着它一起等:
- * 预算一到就用本地结果着色, 用户不会对着一片灰等下去。
+ * 握手通常 200ms 内就完成, 这里等的主要是**项目加载** (项目越大越慢); 而高亮本身不需要项目
+ * 上下文, 因此预算一到就用本地结果着色, 不让用户对着一片灰等下去。
  */
 const HIGHLIGHT_LSP_BUDGET_MS = 1500;
 /** 预算内的重试间隔 (语言服务答"还不知道这个文件"时) */
@@ -249,17 +250,11 @@ function toMonacoInlayHint(hint: LspInlayHint): monaco.languages.InlayHint {
   };
 }
 
-// 语义高亮需要显式启用: 内置 vs/vs-dark 主题的 `semanticHighlighting` 恒为 false,
-// 且内置主题缺少 parameter/property/enumMember/function/operator 等规则,
-// 因此自定义主题并为全部 12 种语义 token 类型定义颜色。
-//
-// 颜色 = 按 VS Code 官方的"语义 token -> TextMate 作用域"映射 (tokenClassificationRegistry.js)
-// 在主题 tokenColors 上解析出的结果, 与 WebGAL_Terre 中 LSP 语义高亮覆盖 TextMate 后的实际效果一致:
-//   type→entity.name.type / variable→variable.other.readwrite / parameter→variable.parameter /
-//   property→variable.other.property / enumMember→variable.other.enummember / function→entity.name.function /
-//   keyword→keyword.control / comment→comment / string→string / number→constant.numeric /
-//   regexp→constant.regexp / operator→keyword.operator
-// 深色对应 vscode-dark-modern.json (Dark+), 浅色对应 monokai-light-vs.json (Monokai Light)。
+// 语义高亮需要显式启用: 内置主题 (vs/vs-dark) 的 `semanticHighlighting` 恒为 false, 且缺少
+// parameter/property/enumMember/function/operator 等规则, 因此自定义主题并为全部 12 种语义
+// token 类型定义颜色。颜色 = 按 VS Code 官方的"语义 token -> TextMate 作用域"映射
+// (tokenClassificationRegistry.js) 解析出的结果, 与 LSP 语义高亮覆盖 TextMate 后的实际效果
+// 一致; 深色对应 Dark+, 浅色对应 Monokai Light。
 const WEBGAL_TOKEN_COLORS: Record<string, string> = {
   type: '4ec9b0',
   variable: '9cdcfe',
@@ -399,6 +394,15 @@ export function setupMonaco(): void {
   defineWebgalThemes();
   monaco.languages.register({ id: LANGUAGE_ID });
 
+  /*
+   * 文本预处理那个语言 (`webgal-novel`) 也在这里注册。
+   *
+   * 必须与其它应用级注册同在 `setupMonaco()` 这一个入口: 漏掉这一句, 预处理编辑器虽然仍以
+   * `NOVEL_LANGUAGE_ID` 建 model, 却**没有任何 tokenizer 与格式化 provider**, 看起来就是
+   * 没有高亮的纯文本。
+   */
+  registerNovelLanguage(monaco);
+
   // WebGAL 语言配置 (对齐 packages/vscode-extension/language-configuration.json):
   // 行注释 `;`, 括号 ()/[]/{} 的自动闭合与包围配对, 引号自动闭合 (不在字符串内)。
   monaco.languages.setLanguageConfiguration(LANGUAGE_ID, {
@@ -436,15 +440,10 @@ export function setupMonaco(): void {
 
   // 语义高亮: 全文与区间两个 provider 都注册, 二者共用同一份 legend。
   //
-  // Monaco (0.52.2) 的实际取舍: 全文 provider 一旦有回包, 该 model 就被标记为语义 token
-  // "已完成" (documentSemanticTokens.js:336 `setSemanticTokens(result, true)`; 返回 null 时同文件
-  // 265 行同样标记为 true), 之后区间 provider 不再被调用 —— viewportSemanticTokens.js:89 与
-  // tokenizationTextModelPart.js:185 都先判定 hasCompleteSemanticTokens()。
-  // 即当前生效的是全文 provider (整篇与缩略图都有色), 区间 provider 在本版本 Monaco 下不会被触发。
-  //
-  // 正因为"空回包也算完成", 全文 provider 不能一上来就把空答案交出去: 语言服务在项目还没扫完时
-  // 对本项目文件只会回空, 一旦被 Monaco 记成"已完成", 这个场景就再也不会有高亮。取值策略
-  // (预算内重试 + 超时退回本地高亮) 见 highlight-fallback.ts。
+  // Monaco 里"空回包也算完成": 全文 provider 一有回包 (包括返回 null), 该 model 就被记成语义
+  // token 已完成, 之后区间 provider 不再被调用。因此全文 provider 不能一上来就把空答案交出去
+  // —— 语言服务在项目还没扫完时对本项目文件只会回空, 一旦被记成"已完成", 这个场景就再也不会有
+  // 高亮。取值策略 (预算内重试 + 超时退回本地高亮) 见 highlight-fallback.ts。
   monaco.languages.registerDocumentSemanticTokensProvider(LANGUAGE_ID, {
     getLegend: semanticTokenLegend,
     provideDocumentSemanticTokens: async (model, _lastResultId, token) => {
@@ -643,9 +642,9 @@ export function setupMonaco(): void {
   });
 
   // 颜色色块: 语句中的颜色字面量 (如 `intro -fontColor=rgba(...)` 与 `[文字](style=color:#FF8800)`)
-  // 由后端 textDocument/documentColor 勾画, 点击色块后的改写由 textDocument/colorPresentation 给出。
+  // 由后端 `textDocument/documentColor` 勾画, 改写方案由 `textDocument/colorPresentation` 给出。
   //
-  // 两个方法必须同时提供: Monaco 拿到色块后会用**产出该颜色的 provider** 取改写方案
+  // 两个方法必须同时提供: Monaco 拿到色块后会向**产出该颜色的 provider** 索要改写方案
   // (colorHoverParticipant.js `_createColorHover`), 缺 provideColorPresentations 会在点开色块时抛错。
   monaco.languages.registerColorProvider(LANGUAGE_ID, {
     provideDocumentColors: async (model) => {
@@ -734,7 +733,13 @@ export function setMonacoTheme(dark: boolean): void {
   monaco.editor.setTheme(dark ? 'webgal-dark' : 'webgal-light');
 }
 
-function languageForPath(path: string): string {
+/**
+ * 路径 → Monaco 语言 id。**导出**出去, 让差异编辑器也用同一套判据。
+ *
+ * 判据必须与代码编辑器完全相同: 只看扩展名会把场景文件 (`.txt`) 一律判成 `plaintext`, 于是
+ * **差异选项卡里两边都没有高亮**。
+ */
+export function languageForPath(path: string): string {
   if (path.replace(/\\/g, '/').includes('/game/scene/')) return LANGUAGE_ID;
   const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
   if (
@@ -799,8 +804,25 @@ export function bindModel(
   };
 }
 
-/** 把 store 中该文档的诊断写入 Monaco markers。 */
+/**
+ * 每个 model 上一次真正写进去的诊断签名。
+ *
+ * 用 `WeakMap` 而不是组件变量: 写入点不止一处 (建实例时画一次 + 观察者回调), 而 model 销毁后
+ * 条目由弱引用回收。
+ */
+const lastDiagnosticSignatures = new WeakMap<monaco.editor.ITextModel, string>();
+
+/**
+ * 把 store 中该文档的诊断写入 Monaco markers。
+ *
+ * **内容没变就不写**: 语言服务按项目重推, 每次推送都把 `diagnostics[path]` 换成新数组, 按引用
+ * 判断会在每次自动保存后重画一遍波浪线 (用户在编辑器里看到的就是闪)。判据用
+ * `diagnosticSignature` 落在值上。
+ */
 export function applyDiagnostics(model: monaco.editor.ITextModel, path: string): void {
   const diags = useAppStore.getState().diagnostics[path] ?? [];
+  const signature = diagnosticSignature(diags);
+  if (lastDiagnosticSignatures.get(model) === signature) return;
+  lastDiagnosticSignatures.set(model, signature);
   monaco.editor.setModelMarkers(model, LANGUAGE_ID, diags.map(toMarker));
 }

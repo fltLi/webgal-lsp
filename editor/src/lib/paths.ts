@@ -43,11 +43,29 @@ export function joinPath(directory: string, ...segments: string[]): string {
 }
 
 /**
+ * 长名称中间省略, 保留开头与扩展名后缀 (`a/b/c/very-long-name.txt` -> `a/b...name.txt`)。
+ *
+ * 放在这里而不是某个组件里: 文件树与仓库页都要用, 而 `.svelte` 实例脚本里的 `export function`
+ * 是导不出来的 (Svelte 只允许从 `<script module>` 导出)。
+ */
+export function middleEllipsis(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  const dot = text.lastIndexOf('.');
+  const hasExt = dot > 0 && dot < text.length - 1;
+  const ext = hasExt ? text.slice(dot) : '';
+  const stem = hasExt ? text.slice(0, dot) : text;
+  const avail = maxLen - ext.length - 3;
+  if (avail < 4) return `${text.slice(0, Math.max(1, maxLen - 3))}...`;
+  const keepHead = Math.ceil(avail / 2);
+  const keepTail = avail - keepHead;
+  return `${stem.slice(0, keepHead)}...${stem.slice(stem.length - keepTail)}${ext}`;
+}
+
+/**
  * 把用户输入的项目名整理成可用的文件夹名。
  *
- * 只做必要的清理: 去掉路径分隔符与 Windows 保留字符, 合并空白, 去掉首尾的点与空格
- * (Windows 上 `name.` 与 `name ` 都会指向 `name`)。**不**在名字为空时编造名字 ——
- * 那由调用方校验, 否则用户会得到一个自己没起过名字的项目。
+ * 去掉路径分隔符与 Windows 保留字符, 合并空白, 去掉首尾的点与空格 (Windows 上 `name.` 与
+ * `name ` 都会指向 `name`)。**不**在名字为空时编造名字 —— 那由调用方校验。
  */
 export function sanitizeFolderName(name: string): string {
   return name

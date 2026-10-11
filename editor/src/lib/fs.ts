@@ -12,8 +12,14 @@ import {
   remove,
   rename,
   stat,
+  watch,
   writeTextFile,
 } from '@tauri-apps/plugin-fs';
+
+import { hasRelevantWatchPath } from './watch-filter';
+
+/** 取消监听的函数 (`plugin-fs` 的 `UnwatchFn`; 用 ReturnType 取, 免得依赖它的类型名)。 */
+export type Unwatch = Awaited<ReturnType<typeof watch>>;
 
 export interface FsEntry {
   name: string;
@@ -103,5 +109,27 @@ export const fs = {
 
   async copyFile(from: string, to: string): Promise<void> {
     await copyFile(from, to);
+  },
+
+  /**
+   * 监听一个目录的变化, 变化时回调。
+   *
+   * `recursive` **默认 false, 只有展平模式才该传 true**: 展平视图要显示子目录里的文件, 分层
+   * 视图只看当前这一层。在大目录上递归注册监听代价很高 —— `notify` 要为每个子目录建句柄,
+   * 此后项目里任何活动都会触发重列目录并重建带缩略图的行, 整个应用变迟钝。
+   *
+   * `.git/` 一类版本控制元数据由 `lib/watch-filter.ts` 跳过, 否则 `git status` 自己写的索引锁
+   * 会把这个监听一起叫醒; `debounceMs` 交给插件自己做 (它内置了防抖队列), 外面再包一层定时器
+   * 只会把延迟叠成两倍。
+   */
+  async watchDirectory(path: string, onChange: () => void, debounceMs = 160, recursive = false): Promise<Unwatch> {
+    return watch(
+      path,
+      (event) => {
+        if (!hasRelevantWatchPath(event.paths)) return;
+        onChange();
+      },
+      { recursive, delayMs: debounceMs }
+    );
   },
 };

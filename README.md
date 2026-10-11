@@ -76,7 +76,7 @@ cargo run -p webgal-language-server -- --log-level debug --disable-hover --disab
 
 ### :pencil2: WebGAL Ink 编辑器
 
-> 基于 Tauri 2 + React + Monaco + Fluent UI 的 WebGAL 桌面场景编辑器，内置上述语言服务与实用工具等功能，开箱即用。
+> 基于 Tauri 2 + Svelte 5 + Monaco 的 WebGAL 桌面场景编辑器，内置上述语言服务与实用工具等功能，开箱即用。
 
 在 VS Code 中打开项目根目录，选择 **Launch Ink Editor** 启动配置（按 `F5`，或运行同名任务）即可启动开发模式（首次运行会自动安装依赖并编译）。
 

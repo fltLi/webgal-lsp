@@ -2,19 +2,20 @@
 
 // 配音编辑模式的交互入口。
 //
-// 配音工作台是**一个普通选项卡**, 因此这里不需要任何"开关"状态:
-// * 打开工作台 = 打开 (或聚焦) 那个选项卡;
-// * 关闭工作台 = 关闭那个选项卡;
-// * "工作台是否打开" 一律由选项卡序列推导 (`isVoiceWorkbenchOpen`)。
+// 工作台是**一个普通选项卡**, 因此这里没有任何"开关"状态: 打开即打开 (或聚焦) 该选项卡,
+// 关闭即关闭它, "工作台是否打开"一律由选项卡序列推导 (`isVoiceWorkbenchOpen`)。
+// 场景级的配音编辑模式规则收敛在 store 内部。
 //
-// 场景的配音编辑模式规则收敛在 store 内部:
-// 工作台存在时, 当前场景卡自动进入; 关闭工作台即全部退出。
-//
-// 这里另外承担"有任务没跑完时先问一句"的职责 —— 三处都走同一个确认框 (`confirm.ts`),
-// 而不是 `window.confirm` (它在 WebView 里不一定真的弹出来, 于是询问会变成悄悄放行)。
+// 有任务没跑完时先问一句: 三处都走 `confirm.ts` 的统一确认框, 而不是 `window.confirm`
+// (它在 WebView 里不一定真的弹出来, 于是询问会变成悄悄放行)。
 
 import { requestConfirm } from '../confirm';
-import { activeSceneDocumentOf, isVoiceWorkbenchOpen, isVoiceWorkbenchActive, useAppStore } from '../state/store';
+import {
+  activeSceneDocumentOf,
+  isVoiceWorkbenchOpen,
+  isVoiceWorkbenchActive,
+  useAppStore,
+} from '../state/store.svelte';
 import { voiceController } from './controller';
 
 /** 打开配音工作台选项卡 (当前场景卡会自动进入配音编辑模式) */
@@ -25,12 +26,10 @@ export function openVoiceWorkbench(): void {
 /**
  * 关闭配音工作台。
  *
- * 还有任务没跑完时先问一句 —— 关闭工作台会:
- * * **撤下这些任务**: 工作台一关服务就停, 留着它们只会是"永远等不到结果的排队中";
- * * **停掉 GSOV 服务**: 工作台就是这个功能的开关, 没必要让一个几 GB 的推理进程继续
- *   占着显存与端口 (停止期间状态栏显示「停止中…」)。
+ * 还有任务没跑完时先问一句 —— 关闭工作台会**撤下这些任务** (工作台一关服务就停, 留着
+ * 只会是"永远等不到结果的排队中") 并**停掉 GSOV 服务** (停止期间状态栏显示「停止中…」)。
  *
- * 历史记录 (已经生成出来的那些) 不受影响。
+ * 已经生成出来的历史记录不受影响。
  */
 export function closeVoiceWorkbench(): void {
   const store = useAppStore.getState();
@@ -87,8 +86,8 @@ export function activeSceneInVoiceMode(): boolean {
  * 切换指定场景的配音编辑模式。
  *
  * **离开配音卡时先问一句**: 该场景还有没跑完的任务时, 用户点麦克风很可能是想"再看一眼"
- * 而不是真的要离开。任务本身不会因为离开而中止 (队列是全局的, 历史也已落盘), 但看不见
- * 进度的等待很容易被当成卡死。
+ * 而不是真的要离开。任务本身不会因为离开而中止 (队列是全局的), 但看不见进度的等待很容易
+ * 被当成卡死。
  */
 export function setSceneVoiceMode(path: string, enabled: boolean): void {
   const leave = () => useAppStore.getState().setVoiceMode(path, false);

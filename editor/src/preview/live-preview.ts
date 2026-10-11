@@ -13,12 +13,11 @@
 //    而 WebGAL 的语句号就是 0 起算的行号, 因此"执行第 L 行"= 让指针推到 L。快进循环
 //    `while (currentSentenceId < L)` 执行的正是第 L 行本身, 停下后回灌的 `sentenceId`
 //    恰好等于 L —— 所以「回灌值 == 指示器的行号」才是"这一行跑完了"。
-// 2. **回灌是异步的, 会迟到**: 光标一移就换目标, 而引擎上一条快进的回灌可能后到。
-//    把"回灌值不等于目标行"当成失败, 就会出现"明明抵达了却说没执行到"的假失败
-//    (第 2 个需求的根因)。因此这里把这一类回灌一律读作**预览已经不在目标行上** ——
-//    也就是"已越过", 而不是失败。
-// 3. **对同一行的重复同步不该把结果打回等待**: 原地打字会让同一行反复触发同步,
-//    每次都把已落定的结果清掉就会一直闪 (由 `preview/client.ts` 决定初始状态)。
+// 2. **回灌是异步的, 会迟到**: 光标一移就换目标, 而上一条快进的回灌可能后到。把"回灌值不等于
+//    目标行"当成失败, 就会出现"明明抵达了却说没执行到"的假失败 —— 这一类回灌一律读作**预览
+//    已经不在目标行上**, 也就是"已越过"。
+// 3. **对同一行的重复同步不该把结果打回等待**: 原地打字会让同一行反复触发同步, 每次都把已
+//    落定的结果清掉就会一直闪 (初始状态由 `preview/client.ts` 决定)。
 
 /** 指示器状态 */
 export type LivePreviewPhase =
@@ -56,9 +55,28 @@ export interface FastPreviewTimeoutPayload {
 }
 
 /**
- * 本次同步的目标行是否已经执行完。
+ * 两个指示器是否**内容相同** (含都是 `null`)。
  *
- * 单独成函数是因为它承载着上面第 1 条约定 —— 可单独测试, 也避免各处各写一份判断。
+ * `syncScene` 每次都会**新造一个 marker 对象**, 即使行号、阶段、场景名完全一样 (原地打字、
+ * 点同一个指示器重跑都会这样)。store 里如果无条件接受这个新对象, 所有观察者都会被唤醒一次
+ * → 行号旁的指示器装饰被拆掉重画 —— 用户看到的就是"编辑器一直在闪"。
+ *
+ * 因此把"值没变就不通知"放在**写入 store 的那一处**, 而不是让每个下游各自去重。
+ */
+export function sameLivePreviewMarker(
+  a: LivePreviewMarker | null | undefined,
+  b: LivePreviewMarker | null | undefined
+): boolean {
+  if (a === b) return true;
+  // `null` 与 `undefined` 都表示"没有指示器", 两者之间不该算变化
+  const aEmpty = a === null || a === undefined;
+  const bEmpty = b === null || b === undefined;
+  if (aEmpty || bEmpty) return aEmpty && bEmpty;
+  return a.docPath === b.docPath && a.line === b.line && a.phase === b.phase && a.sceneName === b.sceneName;
+}
+
+/**
+ * 本次同步的目标行是否已经执行完 (承载上面第 1 条约定: 快进跑的正是目标行本身)。
  */
 export function isLivePreviewTargetExecuted(
   marker: Pick<LivePreviewMarker, 'line'>,
@@ -84,10 +102,9 @@ function reportsSameScene(marker: LivePreviewMarker, sceneName: unknown): boolea
 /**
  * 这条 `stage.snapshot.updated` 是否还在说当前这次同步。
  *
- * 这里的闸门只挡"别的场景" —— 同场景内指针值是几都照收: 等于目标行是"执行到了",
- * 不等于目标行是"预览不在这一行上了"(见 `applyStageSnapshotToLivePreviewMarker`)。
- * 曾经的写法是"指针越过目标行就丢弃", 于是迟到的旧回灌既不算成功也不算越过,
- * 指示器就一直停在等待里。
+ * 闸门只挡"别的场景" —— 同场景内指针值是几都照收: 等于目标行是"执行到了", 不等于目标行是
+ * "预览不在这一行上了"(见 `applyStageSnapshotToLivePreviewMarker`)。不能按"指针越过目标行就
+ * 丢弃"处理: 迟到的旧回灌会既不算成功也不算越过, 指示器就永远停在等待里。
  */
 export function isStageSnapshotForLivePreviewMarker(marker: LivePreviewMarker, payload: StageSnapshotPayload): boolean {
   return reportsSameScene(marker, payload.sceneName);
@@ -112,16 +129,12 @@ export function isFastPreviewTimeoutForLivePreviewMarker(
 /**
  * 按 `stage.snapshot.updated` 推进指示器。
  *
- * 只有"指针 == 目标行"才叫**确证执行到了**, 也就是绿色 —— 快进循环跑的正是目标行本身,
- * 因此这是唯一能确证的方式。
+ * 只有"指针 == 目标行"才叫**确证执行到了**, 也就是绿色。其余一律退一步读作"预览不在这条路上",
+ * 给黄色"已越过": 引擎停下时可能报出**超过**目标行的指针 (目标行是连续执行/多行语句的一部分,
+ * 一次 forward 就走过去了), 但那是"跳过去了"而不是"确证执行了", 因此不敢判绿。
  *
- * "指针 != 目标行"则退一步读作"预览不在这条路上", 给黄色"已越过": 引擎停下时可能报出
- * **超过**目标行的指针 (目标行是连续执行/多行语句的一部分, 一次 forward 就走过去了),
- * 但那是"跳过去了"而不是"确证执行了", 因此不敢判绿。黄色同时明确、不误报, 且点一下能重跑。
- *
- * 关键是**绿可以覆盖黄与红**: 迟到的旧回灌会先把状态带偏 (报出别的指针), 而引擎每次跳转
- * 落定都会再播报一次目标行, 那才是权威答案; 红 (超时) 同理, 不该因一次陈旧判定就永远留着。
- * 反过来, 已经确证执行过的绿不会被引擎继续往下跑所改写。
+ * 关键是**绿可以覆盖黄与红**: 迟到的旧回灌会先把状态带偏, 而引擎每次跳转落定都会再播报一次
+ * 目标行, 那才是权威答案; 反过来, 已经确证执行过的绿不会被引擎继续往下跑所改写。
  */
 export function applyStageSnapshotToLivePreviewMarker(
   marker: LivePreviewMarker,

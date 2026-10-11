@@ -2,11 +2,11 @@
 
 // LSP 客户端单例: 在浏览器 WebSocket 上实现最小 JSON-RPC, 桥接内置 WebGAL LSP。
 //
-// 关键点:
-// * 服务端 -> 客户端使用二进制帧 (ArrayBuffer/Blob), 需解码为文本。
-// * 文本同步为 FULL 模式: 每次 didChange 发送完整文档。
+// 与后端 (`src-tauri/src/service/lsp.rs`) 的契约:
+// * 服务端 -> 客户端使用二进制帧 (ArrayBuffer/Blob), 需解码为文本;
+// * 文本同步为 FULL 模式: 每次 didChange 发送完整文档;
 // * 必须实现 `workspace/fs/stat`, `workspace/fs/readDirectory` 和
-//   `workspace/fs/readFile` 三个反向请求 (服务端依赖它们扫描项目)。
+//   `workspace/fs/readFile` 三个反向请求 (服务端依赖它们扫描项目);
 // * 接受 `client/registerCapability` (服务端在 initialized 时注册文件监控)。
 
 import { invoke } from '@tauri-apps/api/core';
@@ -14,7 +14,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { fs } from '../lib/fs';
 import { fromUri, toUri } from '../lib/uri';
 import { previewClient } from '../preview/client';
-import { useAppStore } from '../state/store';
+import { useAppStore } from '../state/store.svelte';
 import { startWatching, stopWatching } from './watch';
 
 export interface LspPosition {
@@ -139,9 +139,8 @@ type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
 /**
  * 一个请求超过这么久还没答复, 就认为语言服务在忙 (而不是"就绪")。
  *
- * 处理大批文件变更时语言服务会长时间不给任何答复 —— 连接还在、状态还是 ready, 编辑器
- * 底部却写着"就绪", 用户看到的就是"卡死了还骗我说没事"(issue #25)。这里按**响应延迟**
- * 判断忙闲: 只要还有请求超时未答就显示"响应缓慢", 答复一到就自动恢复。
+ * 处理大批文件变更时语言服务会长时间不答复, 而连接还在、状态还是 ready —— 按**响应延迟**
+ * 判断忙闲, 答复一到就恢复 (issue #25 的症状就是"卡死了还显示就绪")。
  */
 const SLOW_REQUEST_MS = 2000;
 
@@ -158,8 +157,8 @@ export class LspClient {
   private started = false;
   private initialized = false;
   /**
-   * 握手 (initialize 往返 + initialized 通知) 是否已完成 —— 服务端在那之前不会处理任何
-   * 请求与通知 (tower-lsp 直接回 -32002 或直接丢弃), 因此出站消息在此之前只能先攒着。
+   * 握手 (initialize 往返 + initialized 通知) 是否已完成 —— 服务端在那之前不会处理任何请求
+   * 与通知 (tower-lsp 回 -32002 或直接丢弃), 因此出站消息在此之前只能先攒着。
    */
   private ready = false;
   /** 握手完成前攒下的出站消息, 见 `sendRaw` */
@@ -297,9 +296,8 @@ export class LspClient {
   /**
    * 发送一条出站消息。
    *
-   * 连接就绪之前**不能**直接写 socket, 也不能丢掉: 旧实现这时直接 `return`, 于是启动期间
-   * 发出的 `didOpen` 与语义高亮请求被静默吞掉 —— 请求的 Promise 再也没有结果, Monaco 的
-   * provider 就此停在那里 (场景一直不着色, 直到用户切标签页重建编辑器)。现在改为按序缓冲,
+   * 连接就绪之前**不能**直接写 socket, 也不能丢掉: 丢掉会让启动期间发出的 `didOpen` 与语义
+   * 高亮请求永远没有结果 (Monaco 的 provider 就此停在那里, 场景一直不着色)。因此按序缓冲,
    * 握手完成后一次性冲出 (`flushOutbox`), 顺序即语义。
    */
   private sendRaw(obj: unknown): void {
@@ -312,10 +310,8 @@ export class LspClient {
   }
 
   /**
-   * 真正写一帧。
-   *
-   * 握手消息 (`initialize` / `initialized`) 与"对服务端反向请求的应答"走这里 —— 它们
-   * 必须绕开缓冲, 否则缓冲永远等不到释放它的那条消息。
+   * 真正写一帧。握手消息 (`initialize` / `initialized`) 与"对服务端反向请求的应答"走这里 ——
+   * 它们必须绕开缓冲, 否则缓冲永远等不到释放它的那条消息。
    */
   private writeFrame(obj: unknown): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
@@ -369,9 +365,8 @@ export class LspClient {
   }
 
   /**
-   * 安排一次忙闲检查。
-   *
-   * 用"延迟"而不是"有没有在跑"判断: 语言服务是被动应答的, 只有请求迟迟不回才说明它忙。
+   * 安排一次忙闲检查。用"延迟"而不是"有没有在跑"判断: 语言服务是被动应答的, 只有请求迟迟
+   * 不回才说明它忙。
    */
   private scheduleActivityCheck(): void {
     if (this.activityTimer) return;

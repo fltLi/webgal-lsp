@@ -1,28 +1,20 @@
 {
+  "//": "不要在这里写 baseUrl/paths: 那会与 SvelteKit 自动生成的 .svelte-kit/tsconfig.json 打架 (vite dev 会直接警告)。路径别名统一放 svelte.config.js 的 kit.alias, 理由见那里的注释。",
+  "extends": "./.svelte-kit/tsconfig.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "paths": {
-      "webgal-novel-preprocess": ["../packages/webgal-novel-preprocess/src/index.ts"]
-    },
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-
-    /* Linting */
+    "skipLibCheck": true,
+    "sourceMap": true,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "bundler"
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src/**/*.ts", "src/**/*.svelte"],
+  "exclude": ["../node_modules/**", "./node_modules/**", "tests"]
 }

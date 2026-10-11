@@ -10,7 +10,7 @@ import {
   startPreviewServer,
 } from '../commands/server';
 import { sceneNameFromPath } from '../lib/uri';
-import { useAppStore } from '../state/store';
+import { useAppStore } from '../state/store.svelte';
 import {
   applyFastPreviewTimeoutToLivePreviewMarker,
   applyStageSnapshotToLivePreviewMarker,
@@ -21,9 +21,31 @@ import {
 } from './live-preview';
 import { createId, createRequestEnvelope, type HostEventType } from './protocol';
 
+/**
+ * 站点身份: 项目 + 引擎, 都做分隔符与大小写规范化。
+ *
+ * 同一个项目在 Windows 上可能以 `C:\x\y` / `c:/x/y/` 两种写法到达, 不规范化会让同一个项目被
+ * 当成两个、每次都重新注册站点 (白白多一次 iframe 重挂)。口径与 `project.ts` 的 `bindingOf` 一致。
+ */
+function siteKeyOf(projectPath: string, enginePath?: string): string {
+  const normalize = (value: string | undefined) => (value ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return `${normalize(projectPath)}|${normalize(enginePath)}`;
+}
+
 class PreviewClient {
   private serverUrl: string | null = null;
   private siteUrl: string | null = null;
+  /**
+   * `siteUrl` 缓存对应的"项目 + 引擎"。只缓存 url 而不记住它是哪个项目的, 换项目时会把上一个
+   * 项目的站点当成命中原样返回 (见 [`ensureSite`])。
+   */
+  private siteKey: string | null = null;
+  /**
+   * 缓存里那个站点的 siteId。单独存一份而不是从 url 里抠出来: 网关靠 siteId
+   * (`set_active_preview_session`) 认领引擎会话, 而命中缓存时也得把它重新写回 store ——
+   * `setProject` 会先把 `previewSiteId` 清成 null。
+   */
+  private siteId: string | null = null;
   private pendingServer: Promise<string | null> | null = null;
 
   private buildServeUrl(siteId: string, server: string): string {
@@ -55,16 +77,35 @@ class PreviewClient {
   /**
    * 注册 (并缓存) 预览静态站点。
    *
+   * **缓存按"项目 + 引擎"记账, 不能只看 url 有没有值**: 站点是按项目注册的 (`add_static_site`
+   * 把项目根与引擎目录记在这个 siteId 名下), 只看 url 会让"打开 A → 再打开 B"时 B 拿到
+   * **A 的站点** —— 引擎跑着 A 的工程 (界面看着完全正常、也能交互), 而 `previewSiteId` 不会被
+   * 更新, 网关随即认为"没有活动会话", 编辑器发的 `sync-scene` 又找不到场景, 于是工具条一直
+   * 显示"未连接"。按 key 记账之后: 同一个项目重复调用仍命中缓存, 换了项目或引擎一定重新注册。
+   *
    * 静音状态不从这里传: 站点只在首次注册时写一次, 之后的开关切换到不了这里; 统一走
-   * [`setMuted`] —— 它在挂载时就会把当前状态告诉服务器, 早于 iframe 加载, 因此注入脚本
-   * 拿到的初始值是准的。
+   * [`setMuted`] —— 它在挂载时就会把当前状态告诉服务器, 早于 iframe 加载。
    */
   async ensureSite(projectPath: string, enginePath?: string): Promise<string | null> {
-    if (this.siteUrl) return this.siteUrl;
+    const key = siteKeyOf(projectPath, enginePath);
+    /*
+     * 命中缓存也要把会话信息写回 store: `setProject` 会把 `previewSiteId` 清成 null (新项目 =
+     * 新会话), 而"重新打开同一个项目"这类调用会命中缓存直接返回 —— 只返回 url 不写回 siteId
+     * 的话, 紧接着的 `set_active_preview_session` 就会告诉网关"没有活动会话"。
+     */
+    if (this.siteUrl && this.siteKey === key) {
+      if (this.siteId) {
+        useAppStore.getState().setPreview({ previewServerUrl: this.serverUrl, previewSiteId: this.siteId });
+      }
+      return this.siteUrl;
+    }
+
     const server = await this.ensureServer();
     if (!server) return null;
     const siteId = await addStaticSite(projectPath, enginePath ?? undefined);
     this.siteUrl = this.buildServeUrl(siteId, server);
+    this.siteKey = key;
+    this.siteId = siteId;
     useAppStore.getState().setPreview({ previewServerUrl: server, previewSiteId: siteId });
     return this.siteUrl;
   }
@@ -72,6 +113,8 @@ class PreviewClient {
   /** 项目切换/关闭时清空站点缓存。 */
   resetSite(): void {
     this.siteUrl = null;
+    this.siteKey = null;
+    this.siteId = null;
   }
 
   async bindEmbeddedLaunchId(id: string | null): Promise<void> {
@@ -88,11 +131,14 @@ class PreviewClient {
    * * `isReplay`: 这是点击指示器发起的**重跑**。同一行的重复同步里有两种截然不同的情况 ——
    *   打字触发的自动同步不该把已经画好的对勾打回"执行中"(会闪), 而重跑必须打回去
    *   (否则点了图标界面毫无反应)。
-   * * 站点还没就绪时 (预览刚打开/正在重挂) 请求发不出去, 但指示器仍然点亮: 预览就绪后
-   *   `CodeEditor` 会把当前行补发一次, 那一次才决定成败 —— 在这里直接判失败只会把一个
-   *   正常的等待过程显示成红叉。
+   *
+   * **站点没就绪时直接返回, 什么都不发、也不点亮指示器**: 先发布"执行中"再早退会让指示器
+   * **永久**停在灰色整行底 (它还跟着光标走), 看起来就是"预览无效"。不点亮不会漏掉真正的同步:
+   * 预览就绪时 `CodeEditor` 会在"就绪"上升沿把当前行补发一次, 那一次才决定成败。
    */
   async syncScene(scenePath: string, lineNumber: number, isReplay = false): Promise<void> {
+    if (!this.siteUrl) return;
+
     const marker: LivePreviewMarker = {
       docPath: scenePath,
       line: lineNumber,
@@ -100,8 +146,6 @@ class PreviewClient {
       sceneName: sceneNameFromPath(scenePath),
     };
     useAppStore.getState().beginLivePreview(marker);
-
-    if (!this.siteUrl) return;
 
     const request = createRequestEnvelope('preview.command.sync-scene', createId(), {
       sceneName: marker.sceneName,
@@ -115,10 +159,8 @@ class PreviewClient {
   }
 
   /**
-   * 对同一行的重复同步: 保留已经落定的结果。
-   *
-   * 自动同步是"防抖后的当前行上报", 原地打字会让同一行反复触发。此时结果并没有变化,
-   * 把对勾打回"执行中"只会让它一直闪。
+   * 对同一行的重复同步: 保留已经落定的结果。自动同步是"防抖后的当前行上报", 原地打字会让同一
+   * 行反复触发, 而结果并没有变化 —— 把对勾打回"执行中"只会让它一直闪。
    */
   private keepSettledPhase(docPath: string, line: number): LivePreviewPhase {
     const previous = useAppStore.getState().livePreviewMarker;
@@ -139,12 +181,10 @@ class PreviewClient {
   /**
    * 记录预览静音状态。
    *
-   * 两条路都要走, 缺一不可:
-   * * 告诉宿主服务器 (影响**下次**页面加载时注入脚本里的初始状态, 并让服务端先记住);
-   * * 给已经打开的预览页面发消息实时生效 —— 页面里那段注入脚本统一压所有 `audio`/`video`
-   *   的音量, 因此不依赖引擎版本, 也不需要引擎配合。
-   *
-   * 页面重挂之后由 `PreviewPanel` 在 iframe 的 load 事件里补发一次。
+   * 两条路都要走, 缺一不可: 告诉宿主服务器 (影响**下次**页面加载时注入脚本里的初始状态),
+   * 以及给已经打开的预览页面发消息实时生效 —— 页面里那段注入脚本统一压所有 `audio`/`video`
+   * 的音量, 因此不依赖引擎版本, 也不需要引擎配合。页面重挂之后由 `PreviewPanel` 在 iframe 的
+   * load 事件里补发一次。
    */
   async setMuted(muted: boolean): Promise<void> {
     try {
@@ -162,6 +202,12 @@ class PreviewClient {
       return;
     }
     if (msg.kind !== 'event' || typeof msg.type !== 'string') return;
+
+    /*
+     * 开发期把每条宿主事件打出来: 「工具条一直显示未连接」这类问题只能靠"引擎到底有没有说话"
+     * 来判断, 而这条链 (引擎 → 网关 → 这里) 中间没有日志。只在 dev 构建里输出。
+     */
+    if (import.meta.env.DEV) console.debug('[preview] 宿主事件', msg.type, msg.payload);
 
     const type = msg.type as HostEventType;
     if (type === 'preview.ready.updated') {
@@ -187,8 +233,8 @@ class PreviewClient {
   /**
    * 把引擎事件折算到指示器上。
    *
-   * 折算本身是纯函数 (见 `preview/live-preview`), 这里只负责接上 store ——
-   * "这条回灌是否还在说当前这次同步" 的判断也在那些纯函数里, 因此可单独测试。
+   * 折算本身是纯函数 (见 `preview/live-preview`), "这条回灌是否还在说当前这次同步"的判断也在
+   * 那些纯函数里, 因此可单独测试; 这里只负责接上 store。
    */
   private applyLivePreviewEvent(fold: (marker: LivePreviewMarker) => LivePreviewMarker): void {
     useAppStore.getState().applyLivePreviewEvent(fold);
