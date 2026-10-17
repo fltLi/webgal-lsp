@@ -253,6 +253,14 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /*
+   * **滚动条归整页, 不归内容列** (`--welcome-column` 的 883 就是"900 减去滚动条"的量出来的)。
+   *
+   * 滚动条如果挂在 `.welcome-body` 上, 它吃掉的是**那一层自己的宽度**: 内容列 883 再减去 17,
+   * 三张 273 的卡片就正好差这 17px 排不下, 于是项目一多到需要滚动 (第 2 行出现) 就变成一行两张。
+   * 挂在 `.welcome` 上则顶栏与正文一起被压缩, 网格宽度依旧 843 = 3×273 + 2×12。
+   */
+  overflow-y: auto;
 }
 
 .welcome-head {
@@ -261,6 +269,11 @@ body {
   align-items: center;
   gap: 24px;
   flex-wrap: wrap;
+  /* 滚动的是整页 (见 `.welcome`), 顶栏因此要贴在顶部: 搜索、新建、打开不该被列表滚走 */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--app-canvas);
   /* 左右内边距取自 `--welcome-padding-x`: 它与卡片宽度共同决定内容列宽 (见 `.welcome`) */
   padding: 24px var(--welcome-padding-x) 20px;
   /*
@@ -326,9 +339,13 @@ body {
 }
 
 .welcome-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  /*
+   * 这一层**不自己滚动** —— 滚动条挂在 `.welcome` 上, 否则它会吃掉内容列的 17px, 项目一多
+   * 就从"一行三张"掉成两张 (理由见 `.welcome` 的注释)。
+   *
+   * `flex: 1 0 auto`: 内容不满时撑满一页 (空态居中), 内容超出时按内容高度长出去, 由整页来滚。
+   */
+  flex: 1 0 auto;
   padding: 0 var(--welcome-padding-x) 32px;
   /* 与顶栏共用同一条定宽内容列; 见 `.welcome-head` 的说明 */
   width: 100%;
