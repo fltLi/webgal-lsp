@@ -68,8 +68,9 @@ export function orderTabs(tabs: WorkbenchTabItem[]): WorkbenchTabItem[] {
   };
   const diffRank: Record<Extract<WorkbenchTabItem, { kind: 'diff' }>['diffKind'], number> = {
     staged: 0,
-    unstaged: 1,
-    commit: 2,
+    'index-to-worktree': 1,
+    unstaged: 2,
+    commit: 3,
   };
 
   return [...tabs].sort((left, right) => {

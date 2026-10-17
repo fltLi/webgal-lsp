@@ -24,15 +24,41 @@
 
   const settings = $derived(appStore.settings);
 
-  const diffOptions = $derived<monaco.editor.IStandaloneDiffEditorConstructionOptions>({
+  /**
+   * 差异编辑器的构造选项。
+   *
+   * 故意取两套类型的交集: `IStandaloneDiffEditorConstructionOptions` **没有**继承
+   * `IGlobalEditorOptions`, 而语义高亮开关恰好定义在后者里。运行时 diff 编辑器是能接住这类
+   * 全局选项的 (老实现就是这么传的), 所以这里把它们并进来, 免得靠 `as` 断言把拼错的键也放过去。
+   */
+  type DiffOptions = monaco.editor.IStandaloneDiffEditorConstructionOptions & monaco.editor.IGlobalEditorOptions;
+
+  const diffOptions = $derived<DiffOptions>({
+    /*
+     * ⚠️ **这一项不能省**: WebGAL 脚本没有 Monarch tokenizer, 全部颜色都来自语言服务的语义
+     * token, 而 Monaco 的默认值是 `'byTheme'` + 主题里 `semanticHighlighting: false` —— 不显式
+     * 打开, 语义 token **根本不会被请求**, 两侧都只剩纯文本 (没有任何报错)。与 `CodeEditor`
+     * 的 `'semanticHighlighting.enabled'` 是同一条要求, 两处都要写。
+     */
+    'semanticHighlighting.enabled': true,
     renderSideBySide: settings.gitDiffView === 'sideBySide',
+    /*
+     * ⚠️ **必须显式关掉**: Monaco 默认 `true`, 宽度小于 `renderSideBySideInlineBreakpoint` (900px)
+     * 时会把"并排"悄悄降级成"内联" —— 编辑区被侧栏挤掉几百像素后经常不到 900px, 于是设置里选了
+     * "并排"却始终只看到一栏 (没有任何提示)。重构前的实现就是关掉的。
+     */
+    useInlineViewWhenSpaceIsLimited: false,
+    // 下面两项是 Monaco 的默认值, 写出来是表明"有意如此": 分隔条可拖拽 / 右侧概览标尺画出差异位置
+    enableSplitViewResizing: true,
+    renderOverviewRuler: true,
     readOnly: true,
     automaticLayout: true,
-    minimap: { enabled: false },
+    // 与代码编辑器共用同一批排版设置 (重构前就是这样, 差异两侧的字号/换行不该和编辑器不一致)
+    minimap: { enabled: settings.editorMinimap },
+    wordWrap: settings.editorWordWrap ? 'on' : 'off',
     fontFamily: settings.editorFontFamily,
     fontSize: settings.editorFontSize,
     // 不设 `scrollBeyondLastLine`: Monaco 默认 true, 与 CodeEditor 保持一致
-    renderOverviewRuler: false,
     // 两个 model 都按只读用, 因此不显示"交换/还原"这类动作
     originalEditable: false,
     /*
@@ -69,32 +95,54 @@
     modified = monaco.editor.createModel('', language, monaco.Uri.parse(`${uriBase}?modified`));
     diffEditor.setModel({ original, modified });
 
+    /*
+     * 设置变了要热更。这里**必须把写进构造选项的每一项都列上**: 构造选项是实例创建时拍下的快照
+     * (`diffOptions` 在 `untrack` 里取), 漏一项就会出现"改了设置但当前这张选项卡不跟随"。
+     */
     const settingsWatcher = watchValues({
-      select: () => [appStore.settings.gitDiffView],
+      select: () => [
+        appStore.settings.gitDiffView,
+        appStore.settings.editorFontFamily,
+        appStore.settings.editorFontSize,
+        appStore.settings.editorWordWrap,
+        appStore.settings.editorMinimap,
+      ],
       onChange: () => {
-        const next = appStore.settings.gitDiffView;
-        diffEditor?.updateOptions({ renderSideBySide: next === 'sideBySide' });
+        const next = appStore.settings;
+        diffEditor?.updateOptions({
+          renderSideBySide: next.gitDiffView === 'sideBySide',
+          fontFamily: next.editorFontFamily,
+          fontSize: next.editorFontSize,
+          wordWrap: next.editorWordWrap ? 'on' : 'off',
+          minimap: { enabled: next.editorMinimap },
+        });
       },
     });
 
     void (async () => {
       try {
+        /*
+         * `commitId` 由 `makeDiffTab` 保证 (提交差异一定带 id); 万一缺失就退化成工作区差异,
+         * 而不是让整张选项卡报错。
+         */
         const diff =
-          diffKind === 'commit' && commitId
-            ? await gitCommitDiff(projectPath, file, commitId)
-            : await gitDiff(projectPath, file, diffKind === 'staged' ? 'staged' : 'unstaged');
+          diffKind !== 'commit'
+            ? await gitDiff(projectPath, file, diffKind)
+            : commitId
+              ? await gitCommitDiff(projectPath, file, commitId)
+              : await gitDiff(projectPath, file, 'unstaged');
         if (disposed) return;
         if (diff.binary) {
           message = '二进制文件，无法展示文本差异';
           return;
         }
         message = null;
-        // 语言按文件类型判定, 让差异也有高亮
-        const language = languageForFile(file);
+        /*
+         * 只灌内容, **不再 setModelLanguage**: 两个 model 建的时候就带着 `languageForPath(file)`
+         * 的语言 (见上面), 再设一遍是同一份判据的空操作。
+         */
         original?.setValue(diff.original ?? '');
         modified?.setValue(diff.modified ?? '');
-        if (original) monaco.editor.setModelLanguage(original, language);
-        if (modified) monaco.editor.setModelLanguage(modified, language);
       } catch (error) {
         if (!disposed) message = `无法加载差异：${String(error)}`;
       }
@@ -109,16 +157,6 @@
       modified?.dispose();
     };
   });
-
-  /*
-   * 差异两侧的语言 = **代码编辑器同一套判据** (`lsp/monaco.ts` 的 `languageForPath`)。
-   *
-   * 不要在这里另写一份"只看扩展名"的判据: 那会把 `.txt` 判成 `plaintext`, 而场景文件正是
-   * `.txt` —— 场景的差异选项卡两边都没有高亮。复制一份判据必然会再次漂移。
-   */
-  function languageForFile(file: string): string {
-    return languageForPath(file);
-  }
 </script>
 
 <div class="git-diff-host" bind:this={host}></div>

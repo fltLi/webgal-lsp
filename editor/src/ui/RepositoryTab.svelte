@@ -155,13 +155,11 @@
     if (!current || !path) return [];
 
     if (current.section === 'staged') {
+      /*
+       * 已暂存区**只有取消动作**: 在这里给"暂存全部"没有意义 —— 已经在暂存区里的文件不需要
+       * 再暂存一次, 而"把工作区的其它改动也加进来"是仓库整体操作, 属于下方的"暂存全部"按钮。
+       */
       return [
-        {
-          key: 'stage-all',
-          label: '暂存全部',
-          iconName: 'SelectAllOn',
-          onClick: () => void run(() => gitStageAll(path)),
-        },
         {
           key: 'unstage-one',
           label: '取消暂存',
@@ -178,6 +176,18 @@
     }
 
     return [
+      /*
+       * 读的动作放在最前面, 与编辑器里"查看差异"的惯用位置一致; 它下面是会改仓库状态的动作,
+       * 中间用一条分隔线断开。
+       */
+      {
+        key: 'diff-vs-staged',
+        // 左侧是"暂存项里那一份", 右侧是"磁盘上现在这一份" —— 也就是**还没暂存的那部分**
+        label: '与暂存项比较',
+        iconName: 'ArrowSwap',
+        onClick: () => openGitDiff(current.file.path, 'index-to-worktree'),
+      },
+      { key: 'separator-diff', separator: true },
       {
         key: 'stage-one',
         label: '暂存',

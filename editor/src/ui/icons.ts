@@ -33,6 +33,7 @@
   | 'ChevronUp'
   | 'Copy'
   | 'Delete'
+  | 'Desktop'
   | 'Dismiss'
   | 'Document'
   | 'DocumentAdd'
@@ -109,6 +110,7 @@ export const ICON_NAMES: readonly IconName[] = [
   'ChevronUp',
   'Copy',
   'Delete',
+  'Desktop',
   'Dismiss',
   'Document',
   'DocumentAdd',
@@ -187,6 +189,7 @@ import chevronRightRaw from '@fluentui/svg-icons/icons/chevron_right_20_regular.
 import chevronUpRaw from '@fluentui/svg-icons/icons/chevron_up_20_regular.svg?raw';
 import copyRaw from '@fluentui/svg-icons/icons/copy_20_regular.svg?raw';
 import deleteRaw from '@fluentui/svg-icons/icons/delete_20_regular.svg?raw';
+import desktopRaw from '@fluentui/svg-icons/icons/desktop_20_regular.svg?raw';
 import dismissRaw from '@fluentui/svg-icons/icons/dismiss_20_regular.svg?raw';
 import documentRaw from '@fluentui/svg-icons/icons/document_20_regular.svg?raw';
 import documentAddRaw from '@fluentui/svg-icons/icons/document_add_20_regular.svg?raw';
@@ -262,6 +265,7 @@ export const ICON_SVG: Record<IconName, string> = {
   ChevronUp: chevronUpRaw,
   Copy: copyRaw,
   Delete: deleteRaw,
+  Desktop: desktopRaw,
   Dismiss: dismissRaw,
   Document: documentRaw,
   DocumentAdd: documentAddRaw,

@@ -4,6 +4,16 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+import type { DiffKind } from '../tabs/model';
+
+/**
+ * `git_diff` 的比较方式。
+ *
+ * 直接用差异选项卡的种类去掉"某个提交"那一档, 后端 `mode` 与它逐个对应 —— 两边各写一份
+ * 枚举必然会漂移。
+ */
+export type GitDiffMode = Exclude<DiffKind, 'commit'>;
+
 /** 文件更改类型 */
 export type GitStatusLetter = 'M' | 'A' | 'U' | 'R' | 'D' | 'T';
 
@@ -134,8 +144,8 @@ export function gitCommitFiles(path: string, commitId: string): Promise<GitCommi
   return invoke<GitCommitFile[]>('git_commit_files', { path, commitId });
 }
 
-export function gitDiff(path: string, file: string, stage: 'staged' | 'unstaged'): Promise<GitFileDiff> {
-  return invoke<GitFileDiff>('git_diff', { path, file, stage });
+export function gitDiff(path: string, file: string, mode: GitDiffMode): Promise<GitFileDiff> {
+  return invoke<GitFileDiff>('git_diff', { path, file, mode });
 }
 
 export function gitCommitDiff(path: string, file: string, commitId: string): Promise<GitFileDiff> {

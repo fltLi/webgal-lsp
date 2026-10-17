@@ -12,7 +12,7 @@
     `game/xxx/yyy.png`; 而 `assetBase` 已经到 `.../game/{hash}/s/` 这一层。少了 `game/` 拼
     出来的地址必然 404。
   * **单击 ≠ 打开**。资源目录里挑素材是高频操作, 每次单击都开一个选项卡会把选项卡栏塞满;
-    因此单击只选中 + 右侧预览, 双击才开。
+    因此单击只选中 + 右侧预览, 双击才开。取消选中同样有两条路: 再点一次同一项, 或者按 Esc。
 
   ⚠️ 不带 `<style>` 块: 类名全部来自全局 `styles.css`。
 -->
@@ -221,6 +221,27 @@
   $effect(() => () => {
     if (selectTimer) clearTimeout(selectTimer);
   });
+
+  /**
+   * Esc 解除选中 (右侧预览随之收起)。
+   *
+   * 监听在 `window` 上而不是列表里: 选中态由本组件持有, 而焦点可能在行上、也可能已经跑到
+   * 预览的 `<video>` / `<audio>` 控件上 —— 只挂行的话会漏掉后者。
+   *
+   * 四条放行条件都不能省:
+   *   * 没选中 -> 什么都不做, 别把 Esc 从别人手里吞掉;
+   *   * 组合输入中 / 已被别人 `preventDefault` -> 不管;
+   *   * 前台有模态框 -> 交给它: `AppDialog` 的 Esc 监听**同在 window 上**,
+   *     `stopPropagation()` 拦不住同一节点上的其它监听, 于是"关对话框"会顺带清掉选中;
+   *   * 本组件自己的右键菜单 / 命名对话框开着 -> 同理, 先让它们关。
+   */
+  function handleEscape(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
+    if (!previewNode) return;
+    if (blankMenu || itemMenu || prompt) return;
+    if (document.querySelector('.modal-surface')) return;
+    clearPreview();
+  }
 
   function droppedPaths(event: DragEvent): string[] {
     const direct = Array.from(event.dataTransfer?.files ?? [])
@@ -575,6 +596,12 @@
     onDropFiles={(dir, event) => void handleDropFiles(dir, event)}
   />
 {/snippet}
+
+<!--
+  Esc 取消选中。`<svelte:window>` 只能放在组件顶层 (Svelte 不允许嵌在元素或块里), 因此它挂在
+  整个组件生命周期上; 判据都在 `handleEscape` 里 (没选中就不管), 无害。
+-->
+<svelte:window onkeydown={handleEscape} />
 
 {#if projectPath && gameRoot}
   <div class="resource-browser">

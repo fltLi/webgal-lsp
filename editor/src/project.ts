@@ -9,6 +9,8 @@
 
 import { readGameConfig, type GameConfigReadResult } from './commands/gameConfig';
 import { copyDirectory } from './commands/server';
+import { startupProjectPath } from './commands/startup';
+import { requestAlert } from './confirm';
 import { refreshGitStatus, stopGitWatcher } from './git/status';
 import { fs } from './lib/fs';
 import { resolveProjectEngine, resolveProjectEnginePath } from './lib/engine';
@@ -162,6 +164,26 @@ export async function openProject(projectPath: string, name?: string | null): Pr
   await refreshGitStatus(projectPath);
 
   await restoreSession(projectPath);
+}
+
+/**
+ * 命令行里指定了项目目录就打开它 (`webgal-ink <项目目录>`)。
+ *
+ * **必须在 `setupMonaco()` 之后调用**: 打开项目会恢复上次的选项卡并立刻建 Monaco model, 而
+ * 语言 id 与主题是 `setupMonaco()` 注册的 —— 早于它建出来的 model 没有高亮。调用点在
+ * `+layout.svelte` 的 `onMount` (那里刚注册完 Monaco)。
+ *
+ * 失败只提示、不抛: 启动主流程不该被一个参数搞挂, 用户还能从开始界面自己开项目。
+ */
+export async function openStartupProject(): Promise<void> {
+  if (useAppStore.getState().projectPath) return;
+  const path = await startupProjectPath().catch(() => null);
+  if (!path) return;
+  try {
+    await openProject(path);
+  } catch (error) {
+    requestAlert('无法打开命令行指定的项目', `${path}\n\n${String(error)}`);
+  }
 }
 
 /*

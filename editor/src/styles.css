@@ -156,6 +156,42 @@ body {
   background: var(--app-hover);
 }
 
+/*
+ * 主题按钮的三态角标 (见 `ui/TitleBar.svelte`)。
+ *
+ * 底图是太阳/月亮, 偏好为"跟随系统"时右下角压一个小显示器。角标必须**带一圈与按钮同色的描边**:
+ * 它会压在太阳的射线上, 没有这圈底色两块图形会糊在一起。
+ *
+ * 尺寸写在这里而不是用 `Icon` 的 `size` —— `.title-bar-action svg` 已经是 18px, 同优先级下靠后
+ * 出现的规则才算数; 用带父级选择器的一条把它压住, 以后有人调按钮尺寸时角标不会跟着变大。
+ */
+.title-bar-theme {
+  position: relative;
+}
+
+.title-bar-action .title-bar-theme-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  background: var(--app-panel);
+  box-shadow: 0 0 0 1px var(--app-panel);
+}
+
+.title-bar-action .title-bar-theme-badge svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* 悬浮底色是 --app-hover, 描边跟着换, 否则角标位置会留一块突兀的底色 */
+.title-bar-theme:hover .title-bar-theme-badge {
+  background: var(--app-hover);
+  box-shadow: 0 0 0 1px var(--app-hover);
+}
+
 .window-controls {
   display: flex;
   align-items: stretch;
@@ -3020,6 +3056,20 @@ body.resizing {
 .tab-strip-item .file-badges .git-file-status {
   position: relative;
   top: 1px;
+}
+
+/*
+ * 选项卡里的诊断计数再往下压 1px (全局 0.5px -> 1.5px)。
+ *
+ * 全局那 0.5px 是按**文件树行**的字号与行高调的; 选项卡标题是 13px, 且与徽标同处一条
+ * `align-items: center` 的横排, 行盒更高, 于是数字的墨迹相对标题略微上浮。压 1px 与同一行里的
+ * git 字母 (`top: 1px`, 见上一条) 同一量级 —— 两者并排时不该一个偏高一个偏低。
+ *
+ * 这是纯视觉修正, 唯一旋钮就是这个值: 看走眼时只改它, 别去动 `.diag-badge` 的全局值
+ * (那会让文件树里的一起变)。
+ */
+.tab-strip-item .file-badges .diag-badge {
+  top: 1.5px;
 }
 
 /*

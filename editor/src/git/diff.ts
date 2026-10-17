@@ -3,17 +3,19 @@
 // 打开只读差异选项卡的辅助函数。
 
 import { useAppStore } from '../state/store.svelte';
-import { makeDiffTab } from '../tabs/model';
+import { makeDiffTab, type DiffKind } from '../tabs/model';
 
-/** 打开一个只读差异选项卡 (同一文件的暂存/未暂存/历史差异各自独立)。 */
-export function openGitDiff(
-  file: string,
-  kind: 'staged' | 'unstaged' | 'commit',
-  commitId?: string,
-  title?: string
-): void {
+/** 差异来源 -> 选项卡标题里的后缀 (用户看到的是"拿哪两份比")。 */
+const DIFF_SOURCE_LABEL: Record<Exclude<DiffKind, 'commit'>, string> = {
+  staged: '暂存',
+  unstaged: '更改',
+  'index-to-worktree': '更改 vs 暂存',
+};
+
+/** 打开一个只读差异选项卡 (同一文件的暂存/未暂存/暂存对比/历史差异各自独立)。 */
+export function openGitDiff(file: string, kind: DiffKind, commitId?: string, title?: string): void {
   const base = file.split('/').pop() ?? file;
-  const source = kind === 'staged' ? '暂存' : kind === 'commit' ? (commitId ?? '').slice(0, 7) : '更改';
+  const source = kind === 'commit' ? (commitId ?? '').slice(0, 7) : DIFF_SOURCE_LABEL[kind];
   useAppStore.getState().openTab(
     makeDiffTab({
       file,

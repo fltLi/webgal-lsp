@@ -105,10 +105,9 @@
       <div class="settings-content">
         {#if appStore.settingsCategory === 'editor'}
           <!--
-            「主题」没有单独一组: 标题栏那个太阳/月亮按钮就是主题开关, 再占一组反而重复。
-            **取舍**: 「跟随系统」因此暂时没有入口 —— 但 `settings.theme` / `ThemePreference` /
-            `lib/theme.ts` 与 `+layout.svelte` 的跟随系统逻辑**全部保留**, 默认值仍是 'system',
-            所以只是少了 UI 入口, 能力没有被删掉。
+            「主题」没有单独一组: 标题栏那个按钮就是主题开关, 再占一组反而重复。
+            它是**三态循环** (浅色 → 深色 → 跟随系统, 见 `ui/TitleBar.svelte`), 因此"跟随系统"
+            不需要额外的入口。
           -->
           <section class="settings-group">
             <h3>编辑器</h3>

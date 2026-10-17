@@ -35,7 +35,12 @@ import {
 } from './client';
 import { installDocAlerts } from './doc-alert';
 import { resolveSemanticTokens } from './highlight-fallback';
+// 语言判据放在纯模块里 (可单测, 见 `lsp/language.ts`); 这里连同 `LANGUAGE_ID` 一起转出去,
+// 让既有 import 点 (`ui/CodeEditor.svelte` 等) 不必改。
+import { LANGUAGE_ID, languageForPath } from './language';
 import { applyTextEdits, renameFileEdits, type RenameFileEdit } from './rename';
+
+export { LANGUAGE_ID, languageForPath };
 
 // Monaco 内部模块 (无公开类型声明): 用于在启动时把补全详情面板设为默认展开
 // (expandSuggestionDocs 标志默认 false, 会导致补全项文档不显示)。
@@ -60,7 +65,7 @@ self.MonacoEnvironment = {
   },
 };
 
-export const LANGUAGE_ID = 'webgal';
+// `LANGUAGE_ID` 与 `languageForPath` 都来自 `./language` (纯模块, 上面已导入并转出)。
 
 // 服务端 completionProvider.triggerCharacters (见 crates/webgal-language-service/src/service/complete.rs):
 // 输入这些符号时自动触发补全 (Monaco 原生支持 provider 级 triggerCharacters)。
@@ -731,36 +736,6 @@ export function setupMonaco(): void {
 
 export function setMonacoTheme(dark: boolean): void {
   monaco.editor.setTheme(dark ? 'webgal-dark' : 'webgal-light');
-}
-
-/**
- * 路径 → Monaco 语言 id。**导出**出去, 让差异编辑器也用同一套判据。
- *
- * 判据必须与代码编辑器完全相同: 只看扩展名会把场景文件 (`.txt`) 一律判成 `plaintext`, 于是
- * **差异选项卡里两边都没有高亮**。
- */
-export function languageForPath(path: string): string {
-  if (path.replace(/\\/g, '/').includes('/game/scene/')) return LANGUAGE_ID;
-  const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  if (
-    extension === 'json' ||
-    extension === 'jsonl' ||
-    extension === 'jsonc' ||
-    extension === 'json5' ||
-    extension === 'geojson' ||
-    extension === 'webmanifest' ||
-    extension === 'har' ||
-    extension === 'map' ||
-    extension === 'wmdl'
-  )
-    return 'json';
-  if (extension === 'js' || extension === 'jsx' || extension === 'mjs' || extension === 'cjs') return 'javascript';
-  if (extension === 'ts' || extension === 'tsx') return 'typescript';
-  if (extension === 'css' || extension === 'scss' || extension === 'less') return extension;
-  if (extension === 'html' || extension === 'htm') return 'html';
-  if (extension === 'csv') return 'csv';
-  if (extension === 'md' || extension === 'markdown') return 'markdown';
-  return 'plaintext';
 }
 
 /** 打开文档对应的 model (已存在则重置内容, 保证重新打开读到最新磁盘内容)。 */

@@ -17,8 +17,17 @@ export type TabKind = 'scene' | 'resource' | 'config' | 'novel' | 'diff' | 'voic
 
 export type ResourceKind = 'image' | 'audio' | 'video' | 'text';
 
-/** 差异来源 */
-export type DiffKind = 'staged' | 'unstaged' | 'commit';
+/**
+ * 差异来源。
+ *
+ * * `staged` —— 提交历史 vs 索引 (暂存项);
+ * * `unstaged` —— 提交历史 vs 工作区 (更改项);
+ * * `index-to-worktree` —— 索引 vs 工作区 (暂存之后又改了的那部分);
+ * * `commit` —— 某个提交与其父提交 (需要 `commitId`)。
+ *
+ * 前三者的口径与后端 `git_diff` 的 `mode` 一一对应, 别在这里另造名字。
+ */
+export type DiffKind = 'staged' | 'unstaged' | 'index-to-worktree' | 'commit';
 
 interface TabBase {
   /** 全局唯一 id (同时作为列表 key 与排序单位) */

@@ -781,28 +781,48 @@ pub async fn git_commit_files(path: String, commit_id: String) -> Result<Vec<Com
     .await
 }
 
-/// 读取文件差异: 暂存项比较索引与 HEAD, 更改项比较工作区与 HEAD。
+/// 读取文件差异。
+///
+/// `mode` 决定比较的两侧:
+/// * `staged` —— 提交历史 (HEAD) vs 索引, 即"暂存项";
+/// * `unstaged` —— HEAD vs 工作区, 即"更改项" (与 git 一致的、相对已提交内容的口径);
+/// * `index-to-worktree` —— 索引 vs 工作区, 即"还没暂存的那部分" (只需要看清暂存之后又改了什么)。
 #[tauri::command]
-pub async fn git_diff(path: String, file: String, stage: String) -> Result<FileDiff, String> {
+pub async fn git_diff(path: String, file: String, mode: String) -> Result<FileDiff, String> {
     blocking(move || {
         let repo = open_repo(&path)?;
-        let original = head_tree(&repo)
+        let head = head_tree(&repo)
             .as_ref()
             .and_then(|tree| tree_blob(&repo, tree, &file))
             .unwrap_or_default();
-        let original_label = "HEAD（已提交）".to_string();
-        let (modified, modified_label) = if stage == "staged" {
-            let index = repo.index().map_err(|e| e.to_string())?;
-            (
-                index_blob(&repo, &index, &file).unwrap_or_default(),
-                "已暂存".to_string(),
-            )
-        } else {
-            let workdir = repo.workdir().ok_or("仓库无工作目录")?;
-            (
-                std::fs::read(workdir.join(&file)).unwrap_or_default(),
+        let workdir = repo.workdir().ok_or("仓库无工作目录")?;
+        let worktree = || std::fs::read(workdir.join(&file)).unwrap_or_default();
+
+        let (original, original_label, modified, modified_label) = match mode.as_str() {
+            "staged" => {
+                let index = repo.index().map_err(|e| e.to_string())?;
+                (
+                    head,
+                    "HEAD（已提交）".to_string(),
+                    index_blob(&repo, &index, &file).unwrap_or_default(),
+                    "已暂存".to_string(),
+                )
+            }
+            "index-to-worktree" => {
+                let index = repo.index().map_err(|e| e.to_string())?;
+                (
+                    index_blob(&repo, &index, &file).unwrap_or_default(),
+                    "已暂存".to_string(),
+                    worktree(),
+                    "工作区文件".to_string(),
+                )
+            }
+            _ => (
+                head,
+                "HEAD（已提交）".to_string(),
+                worktree(),
                 "工作区文件".to_string(),
-            )
+            ),
         };
 
         let binary = is_binary(&original) || is_binary(&modified);

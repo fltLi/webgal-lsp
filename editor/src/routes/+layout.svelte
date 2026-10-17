@@ -8,7 +8,8 @@
   HTML, 而构建与类型检查仍然全绿)。
 
   启动顺序: 挂窗口保险丝 → 模块作用域写主题 (要早于首帧) → `onMount` 装配 Monaco 并拉起会话跟踪 →
-  语言服务与配音服务并行发起但不等待 → 首帧绘制后由 `+page.svelte` 调 `revealWindow()` 显示窗口。
+  命令行指定的项目 (若有) → 语言服务与配音服务并行发起但不等待 →
+  首帧绘制后由 `+page.svelte` 调 `revealWindow()` 显示窗口。
 
   项目级逻辑不在这里: 打开项目后才有意义的启动项在 `+page.svelte` 的编辑页分支里。
 -->
@@ -24,7 +25,7 @@
   import { applyTheme, resolveTheme } from '../lib/theme';
   import { lspClient } from '../lsp/client';
   import { setMonacoTheme, setupMonaco } from '../lsp/monaco';
-  import { startSessionTracking } from '../project';
+  import { openStartupProject, startSessionTracking } from '../project';
   import { actions, appStore } from '../state/store.svelte';
   import { requestClose, windowCloseAllowed } from '../unsaved';
   import AppConfirmDialog from '../ui/AppConfirmDialog.svelte';
@@ -49,8 +50,8 @@
 
   /*
    * 主题的唯一权威链路。三件事必须由同一处同时完成, 否则就会各说各话:
-   * `data-theme` 决定 `styles.css` 的变量、`store.theme` 决定标题栏显示太阳还是月亮、
-   * `setMonacoTheme()` 决定编辑器配色 (Monaco 自己一套主题)。
+   * `data-theme` 决定 `styles.css` 的变量、`store.theme` 决定标题栏显示哪个主题图标
+   * (浅色 / 深色 / 跟随系统三态)、`setMonacoTheme()` 决定编辑器配色 (Monaco 自己一套主题)。
    */
   const systemDark = new MediaQuery('(prefers-color-scheme: dark)');
   const resolvedTheme = $derived(
@@ -97,6 +98,15 @@
     void lspClient.start();
     void voiceController.initialize();
     const stopSessionTracking = startSessionTracking();
+
+    /*
+     * 命令行参数指定的项目 (`webgal-ink <项目目录>`)。
+     *
+     * 位置只能在这里, 而且必须在 `setupMonaco()` 之后: 打开项目会建 Monaco model, 语言 id 是
+     * 刚才那次注册提供的。`+page.svelte` 的 `onMount` 比这里**更早** (子组件先挂载), 放在那边
+     * 就会抢在 Monaco 注册之前。
+     */
+    void openStartupProject();
 
     /*
      * 系统关闭按钮 (右上角的叉 / Alt+F4) 要先问未保存的更改。

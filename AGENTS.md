@@ -163,7 +163,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   lib.rs                    Tauri Builder：插件、managed state、invoke_handler 全量注册、退出清理
   service/lsp.rs            把内置语言服务器桥到本地 WebSocket（每次连接 = 一个新 LSP 实例）
   service/preview.rs        预览静态服务器 + /api/webgalsync WebSocket 网关（兼容两代引擎）
-  service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs
+  service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
 ```

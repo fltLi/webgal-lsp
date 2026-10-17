@@ -16,6 +16,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
 
+  import type { ThemePreference } from '../lib/settings';
   import { appStore, actions } from '../state/store.svelte';
   import { requestClose } from '../unsaved';
   import Icon from './Icon.svelte';
@@ -24,9 +25,29 @@
   /** 是否已最大化: 决定中间那个按钮是"最大化"还是"还原" */
   let maximized = $state(false);
   const win = getCurrentWindow();
-  const dark = $derived(appStore.theme === 'dark');
+  /** 主题**偏好** (含 `system`); 不是 store 里那个已解析成 light/dark 的 `appStore.theme`。 */
+  const preference = $derived(appStore.settings.theme);
   /** 中间那个窗口按钮的图标: 取决于当前是否已最大化。 */
   const maximizeIcon: IconName = $derived(maximized ? 'SquareMultiple' : 'Maximize');
+
+  const THEME_LABELS: Record<ThemePreference, string> = { light: '浅色', dark: '深色', system: '跟随系统' };
+  /** 点击顺序: 浅色 → 深色 → 跟随系统 → 浅色。 */
+  const THEME_CYCLE: Record<ThemePreference, ThemePreference> = { light: 'dark', dark: 'system', system: 'light' };
+
+  /*
+   * 图标分两层: 底图永远是**当前生效的主题** (太阳/月亮), 偏好为"跟随系统"时再压一个显示器
+   * 角标。于是四种外观对应三种偏好:
+   *   太阳 = 浅色 / 月亮 = 深色 / 太阳+角标 = 跟随系统(系统是浅色) / 月亮+角标 = 跟随系统(系统是深色)
+   * 底图取 `appStore.theme` (已解析的生效主题) 而不是偏好: 三态循环里"点一下会变成什么"说不清
+   * 自己在哪一档, 而"现在到底是什么颜色"永远有用 —— 系统主题变了, 角标那侧的底图也跟着变。
+   */
+  const themeIcon: IconName = $derived(appStore.theme === 'dark' ? 'WeatherMoon' : 'WeatherSunny');
+  const followingSystem = $derived(preference === 'system');
+  const themeTitle = $derived(
+    followingSystem
+      ? `主题：跟随系统（当前${THEME_LABELS[appStore.theme]}）· 点击切换为${THEME_LABELS[THEME_CYCLE[preference]]}`
+      : `主题：${THEME_LABELS[preference]}（点击切换为${THEME_LABELS[THEME_CYCLE[preference]]}）`
+  );
 
   /*
    * 最大化状态只能由窗口事件推出来。
@@ -49,8 +70,8 @@
     };
   });
 
-  function toggleTheme() {
-    actions.updateSettings({ theme: dark ? 'light' : 'dark' });
+  function cycleTheme() {
+    actions.updateSettings({ theme: THEME_CYCLE[preference] });
   }
 </script>
 
@@ -66,11 +87,16 @@
   <div class="title-bar-actions">
     <button
       type="button"
-      class="title-bar-action"
-      title={dark ? '切换到浅色主题' : '切换到深色主题'}
-      onclick={toggleTheme}
+      class="title-bar-action title-bar-theme"
+      title={themeTitle}
+      aria-label={themeTitle}
+      onclick={cycleTheme}
     >
-      <Icon name={dark ? 'WeatherSunny' : 'WeatherMoon'} />
+      <Icon name={themeIcon} />
+      {#if followingSystem}
+        <!-- 角标的内容与尺寸都由 `styles.css` 的 `.title-bar-theme-badge` 决定 -->
+        <span class="title-bar-theme-badge"><Icon name="Desktop" /></span>
+      {/if}
     </button>
     <button
       type="button"

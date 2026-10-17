@@ -65,6 +65,7 @@ pub fn run() {
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
+            service::startup::startup_project_path,
             service::voice::voice_detect_runtime,
             service::voice::voice_default_launch_config,
             service::voice::voice_list_conda_envs,
