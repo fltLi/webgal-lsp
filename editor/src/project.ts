@@ -11,6 +11,7 @@ import { readGameConfig, type GameConfigReadResult } from './commands/gameConfig
 import { copyDirectory } from './commands/server';
 import { startupProjectPath } from './commands/startup';
 import { requestAlert } from './confirm';
+import { checkAllOpenDocuments, noteDiskContent, stopDiskSync } from './editor/disk-sync.svelte';
 import { refreshGitStatus, stopGitWatcher } from './git/status';
 import { fs } from './lib/fs';
 import { resolveProjectEngine, resolveProjectEnginePath } from './lib/engine';
@@ -77,6 +78,11 @@ export async function openFile(path: string): Promise<void> {
     dirty: false,
     isScene,
   });
+  /*
+   * 刚读到的就是磁盘上的那一份: 记下磁盘基准。之后磁盘被外部改过时, 同步机制靠它区分
+   * "我们已知的内容"与"别人改过的内容" (见 `editor/disk-sync.svelte.ts`)。
+   */
+  noteDiskContent(path, content);
   // 注意: 语言服务的文档标识是**路径**, 不是 URI —— 由它自己经 `toUri` 转换。
   // 传 URI 会让服务端拿到 `file:///c%3A/...` 这种错误键。
   if (isScene) lspClient.openDocument(path, content);
@@ -104,6 +110,7 @@ export async function openResourceFile(path: string, resourceKind: ResourceKind)
     dirty: false,
     isScene: false,
   });
+  noteDiskContent(path, content);
 }
 
 /** 打开项目配置 (`game/config.txt`) 为一个专门的配置选项卡。 */
@@ -126,6 +133,7 @@ export async function openProjectConfig(projectPath: string): Promise<void> {
     dirty: false,
     isScene: false,
   });
+  noteDiskContent(path, content);
 }
 
 /** 读 `game/config.txt` 的解析结果; 读不到时返回 null, 由界面显示空态。 */
@@ -205,6 +213,7 @@ export async function closeProject(): Promise<void> {
   disposeAllModels();
   disposeAllNovelTabs();
   await stopGitWatcher();
+  stopDiskSync();
   voiceController.resetProject();
   previewClient.resetSite();
   if (projectPath) lspClient.changeWorkspaceFolders([], [projectPath]);
@@ -305,6 +314,12 @@ export async function switchTemplate(projectPath: string, templateId: string | n
   await previewClient.reloadTemplates();
   // 旧版引擎对 reload-templates 支持不一致、且会被 service worker 缓存 —— 强制整块重挂预览
   useAppStore.getState().requestPreviewReload();
+  /*
+   * 模板是**直接复制覆盖**项目文件的, 打开中的文档此刻已经与磁盘不一致: 干净的直接重读,
+   * 有未保存改动的进冲突裁决。只靠文件监听也能兜住, 但"用户点了切换模板"是一个明确时刻,
+   * 立刻对齐比等监听更可控。
+   */
+  await checkAllOpenDocuments();
 }
 
 /**

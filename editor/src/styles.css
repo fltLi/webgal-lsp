@@ -750,6 +750,20 @@ body.resizing {
   font-size: 10px;
 }
 
+/*
+ * 磁盘冲突标记 (警告三角): 与脏点同一位置, 但它表示"磁盘上有另一份内容等你裁决"。
+ * 用琥珀色而不是主题强调色 —— 与脏点撞色的话, 一眼分不出"没保存"和"磁盘变了"。
+ */
+.tab-strip-conflict {
+  display: inline-flex;
+  align-items: center;
+  color: #b26a00;
+}
+
+[data-theme='dark'] .tab-strip-conflict {
+  color: #e0a16a;
+}
+
 .tab-strip-close {
   border: none;
   background: transparent;
@@ -4505,6 +4519,24 @@ input[type='number'].voice-control {
   color: var(--app-muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* 磁盘冲突对话框里的内容预览 (磁盘上那一份的开头几行) */
+.disk-conflict-preview {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-canvas);
+  color: var(--app-fg);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  /* 缩进与制表符要看得见: 用户是在这里判断"哪一份才是新的" */
+  white-space: pre;
+  tab-size: 2;
 }
 
 /* 清单导入的预览 (条数较多, 导入前先确认) */

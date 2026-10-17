@@ -27,11 +27,11 @@
     type GitCommitFile,
   } from '../commands/git';
   import { requestConfirm } from '../confirm';
+  import { checkAllOpenDocuments } from '../editor/disk-sync.svelte';
   import { openGitDiff } from '../git/diff';
   import { clearHistoryState, historyStateFor, type HistoryState } from '../git/history-state';
   import { refreshGitStatus } from '../git/status';
   import { STATUS_CLASS } from '../git/util';
-  import { fs } from '../lib/fs';
   import { appStore } from '../state/store.svelte';
   import AppDialog from './AppDialog.svelte';
   import Button from './Button.svelte';
@@ -172,7 +172,7 @@
     }
   }
 
-  /** 切换分支: 切换后刷新状态、提交列表、分支列表与已打开的干净文档。 */
+  /** 切换分支: 切换后刷新状态、提交列表、分支列表与已打开的文档。 */
   async function switchBranch(nextBranch: string): Promise<void> {
     const path = projectPath;
     if (busy || !path || nextBranch === branch) return;
@@ -204,25 +204,13 @@
       if (list) list.scrollTop = 0;
 
       /*
-       * 刷新**干净的**已打开文档: 它们在磁盘上的内容已经被工作区换了, 不刷新的话编辑器里
-       * 还是上一个分支的内容。有未保存改动的文档一律跳过 —— 覆盖会吃掉用户的字。
+       * 工作区内容已经被换掉了, 打开中的文档必须重新对齐: 干净文档直接重读, **有未保存改动的
+       * 文档进入冲突裁决**。
+       *
+       * 以前这里只刷新干净文档、脏文档**静默跳过** —— 编辑器里长期留着上一个分支的内容,
+       * 用户之后随便敲一个字, 自动保存就把那份旧内容写进了新分支。
        */
-      const clean = appStore.documents.filter((document) => !document.dirty);
-      const refreshed = await Promise.allSettled(
-        clean.map(async (document) => ({
-          path: document.path,
-          content: await fs.readTextLossy(document.path),
-        }))
-      );
-      const failed: string[] = [];
-      refreshed.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          appStore.updateDocument(result.value.path, { content: result.value.content, dirty: false });
-        } else {
-          failed.push(`${clean[index]!.name}: ${String(result.reason)}`);
-        }
-      });
-      if (failed.length > 0) error = `分支已切换，但部分打开文档无法刷新：${failed.join('；')}`;
+      await checkAllOpenDocuments();
     } catch (e) {
       error = String(e);
     } finally {
@@ -264,6 +252,12 @@
     error = null;
     try {
       await action();
+      /*
+       * 还原是**直接改写工作区**的 (后端 `checkout_tree` 带 `force`), 连有未保存改动的文件也
+       * 一起覆盖。因此必须立刻把打开中的文档重新对齐: 干净文档重读磁盘, 脏文档弹冲突裁决。
+       * 只刷新 git 状态的话, 编辑器里还是还原前的内容, 之后一次自动保存就把还原结果盖回去。
+       */
+      await checkAllOpenDocuments();
       await refreshGitStatus(path);
       expanded = [];
       if (persisted) persisted.expanded = [];

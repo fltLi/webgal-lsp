@@ -171,12 +171,8 @@ export interface SceneVoiceState {
   selectedHistoryId: string | null;
   /** 光标所在对话 (null 表示不在对话上) */
   cursorLine: number | null;
-  /** 打开时记录的磁盘内容哈希 (用于检测本地文件变更) */
-  diskHash: string;
   /** 全场景的角色归属推断 (按对话行号) */
   matches: Map<number, CharacterMatch>;
-  /** 本地文件是否已被外部改动 (需要用户裁决) */
-  diskChanged?: boolean;
 }
 
 /** 配音工作台默认推理配置 */

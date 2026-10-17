@@ -50,6 +50,7 @@ import {
   voiceWriteHistory,
   type CharacterPatch,
 } from '../commands/voice';
+import { noteDiskContent } from '../editor/disk-sync.svelte';
 import { fs } from '../lib/fs';
 import { useAppStore } from '../state/store.svelte';
 import { estimator, formatEta } from './estimate';
@@ -75,9 +76,6 @@ import {
 /** 就绪探测的上限与间隔 */
 const PROBE_INTERVAL = 1500;
 const PROBE_TIMEOUT = 4 * 60 * 1000;
-
-/** 本地文件变更检查间隔 */
-const DISK_CHECK_INTERVAL = 8000;
 
 class VoiceController {
   private settings: VoiceSettings = loadVoiceSettings();
@@ -135,7 +133,7 @@ class VoiceController {
   }
 
   /** 打开 (或重新聚焦) 一个场景的配音卡: 解析对话并按内容哈希回填历史 */
-  async openCard(id: string, scenePath: string, content: string, diskHash: string): Promise<SceneVoiceState> {
+  async openCard(id: string, scenePath: string, content: string): Promise<SceneVoiceState> {
     const dialogues = await this.parse(content);
     const previous = this.cards.get(id);
     /*
@@ -154,7 +152,6 @@ class VoiceController {
       history,
       selectedHistoryId: previous?.selectedHistoryId ?? null,
       cursorLine: previous?.cursorLine ?? null,
-      diskHash,
       matches: new Map(),
     };
 
@@ -596,9 +593,11 @@ class VoiceController {
     if (store.settings.autoSave) {
       await fs.writeText(card.scenePath, next);
       store.updateDocument(card.scenePath, { content: next, dirty: false });
-      // 这次写盘是**我们自己**做的, 必须同步"打开时的磁盘哈希": 否则下一次磁盘变更检测
-      // 会把它判成"被外部修改", 弹出一个别无选择的裁决对话框。
-      card.diskHash = hashText(normalizeEol(next));
+      /*
+       * 这次写盘是**我们自己**做的, 必须同步磁盘基准: 否则下一次磁盘变更检测会把它判成
+       * "被外部修改", 弹出一个两个选项都没区别的裁决对话框 (基准在 `editor/disk-sync`)。
+       */
+      noteDiskContent(card.scenePath, next);
     }
 
     await this.refreshCard(id, next);
@@ -701,18 +700,13 @@ class VoiceController {
     this.emit();
   }
 
-  // -------- 场景变更裁决与历史对齐 --------
-
-  /** 记录打开卡片时的磁盘内容哈希 */
-  setDiskHash(id: string, hash: string): void {
-    const card = this.cards.get(id);
-    if (card) card.diskHash = hash;
-  }
+  // -------- 历史对齐 --------
 
   /**
    * 重新对齐历史到当前对话列表。
    *
-   * 调用时机必须在"用户已裁决本地变更"之后, 否则裁决会再次改变行号使对齐失效。
+   * 调用时机必须在"用户已裁决本地变更"之后, 否则裁决会再次改变行号使对齐失效。磁盘被外部改动
+   * 的检测与裁决在 `editor/disk-sync.svelte.ts`; 配音卡在内容被换掉之后订阅它来调这里。
    */
   async realignCard(id: string): Promise<void> {
     const card = this.cards.get(id);
@@ -1152,33 +1146,6 @@ class VoiceController {
   }
 
   /**
-   * 磁盘内容是否被**外部**改过。
-   *
-   * 判据是"磁盘既不同于打开时的基准 (`diskHash`), 也不同于编辑器里现在这一份": 只比基准
-   * 会把**我们自己**的写盘 (配音「应用」、`Ctrl+S`、自动保存) 当成外部修改, 弹出一个别无
-   * 选择的裁决对话框; 只比编辑器内容则会把"有未保存改动"的脏标记误判成冲突。
-   */
-  async checkDiskChange(id: string): Promise<boolean> {
-    const card = this.cards.get(id);
-    if (!card) return false;
-    try {
-      const content = await fs.readTextLossy(card.scenePath);
-      const diskHash = hashText(normalizeEol(content));
-      if (diskHash === card.diskHash) return false;
-
-      // 磁盘内容与编辑器里的一致 -> 是我们自己刚保存过, 顺手把基准对齐, 不打扰用户
-      const doc = this.store().documents.find((item) => item.path === card.scenePath);
-      if (doc && hashText(normalizeEol(doc.content)) === diskHash) {
-        card.diskHash = diskHash;
-        return false;
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * 把最新卡片表推给 store。
    *
    * 调用点很多, 但它**不是**统一发令牌处 —— 只换一份新 Map, 就地改过的字段仍然不会传播
@@ -1283,26 +1250,10 @@ class VoiceController {
   }
 }
 
-/** 内容哈希 (与磁盘比对用, 无需密码学强度) */
-export function hashText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index++) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16);
-}
-
-export function normalizeEol(text: string): string {
-  return text.replace(/\r\n/g, '\n');
-}
-
 /** 生成默认参数 (供 UI 直接使用) */
 export function makeDefaultParams(text: string): VoiceParams {
   return defaultParams(null, text, randomSeed());
 }
-
-export const DISK_CHECK_MS = DISK_CHECK_INTERVAL;
 
 /** 会话级单例 */
 export const voiceController = new VoiceController();

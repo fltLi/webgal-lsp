@@ -154,10 +154,11 @@ editor/src/                 前端 (Svelte 5 + SvelteKit + Monaco)
   styles.css                全局样式唯一来源（主题变量在 :root 与 [data-theme='dark']）
   commands/*.ts             对后端 invoke 的薄封装（voice / git / snapshot / server / gameConfig / devtools）
   dnd/                      拖放：应用内"拖路径进编辑器"（指针事件）与系统文件拖进浏览器（webview 事件）
-  lib/*.ts                  无 UI 的基础设施：fs、uri、paths、settings、bindings、session、window、engine、theme
+  lib/*.ts                  无 UI 的基础设施：fs、uri、paths、settings、bindings、session、window、engine、theme、
+                            project-watch（项目根的唯一递归监听，git 状态与磁盘同步共用）
   project.ts / fileops.ts / unsaved.ts / confirm.ts   项目生命周期、文件操作、未保存与通用确认框
   lsp/                      LSP 客户端、Monaco 集成、文件监听、重命名、文档链接、高亮回退
-  editor/                   Monaco 之上的编辑行为：差异色块、行内 diff、实时预览标记、落盘队列
+  editor/                   Monaco 之上的编辑行为：差异色块、行内 diff、实时预览标记、落盘队列、磁盘变更同步
   preview/                  实时预览客户端与协议、全屏、音频桥
   git/  tabs/  voice/  diagnostics/  novel/           git 状态与差异、选项卡、配音工作流、诊断、小说预处理
 editor/src-tauri/src/       后端 (crate 名 webgal-ink)
@@ -223,7 +224,12 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   ——Monaco 会把 `file:///C:/...` 序列化成 `file:///c%3A/...`，导致发给 LSP 的 URI 错误；model 到路径的映射在
   `lsp/monaco.ts` 里显式维护。另外语言服务的文档标识是**路径而不是 URI**。
 - **文档落盘**统一走 `editor/document-saver.ts` 的队列（串行写入、回执前重新取内容），不要在别处再写一遍
-  `writeTextFile`；「已打开的文档一律以内存里那一份为准」，不要拿磁盘内容覆盖编辑器。
+  `writeTextFile`。
+- **磁盘 → 编辑器的同步只有一个入口**：`editor/disk-sync.svelte.ts`（判据在 `editor/disk-state.ts`）。规则是
+  「没保存就直接重读、有未保存改动就弹裁决」，谁都别绕开它拿磁盘内容覆盖编辑器。三条配套约束：自己写盘之后
+  必须 `noteDiskContent`（否则被当成外部修改）、冲突未裁决期间该文档**暂停自动保存**（否则内存那份会盖回去）、
+  比较一律按**归一化换行**后的哈希。显式写盘的操作（还原历史 / 切分支 / 切模板）在做完之后要
+  `checkAllOpenDocuments()`，别等文件监听。
 - **依赖版本**：`tower`、`tower-http`、`tower-lsp`、`lsp-types` 在根 `Cargo.toml` 里用 `=` 精确锁定，因为编辑器
   后端与语言服务器在**同一进程**里共享 `lsp-types`；要升级必须让 `[workspace.dependencies]` 与相关 crate
   同时对齐并跑通编辑器编译。其余依赖是下限声明，具体版本以 `Cargo.toml` / `Cargo.lock` / `package.json` 为准。
@@ -335,6 +341,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | Linux 上 `webgal-ink` 编译失败 | 装 Tauri 系统依赖（见第 2 节），或只验证语言侧并加 `--exclude webgal-ink` |
 | 编辑器里注释文字莫名变英文 / 提示失效 | 检查文件是否为 UTF-8；改文件请用读写工具，别用会按 GBK 转码的命令行重定向 |
 | 打开项目后没有高亮、状态栏却显示就绪 | 文件监听事件风暴或握手前丢帧，见第 4 节；用 `--log-level debug` 看语言服务器日志（走 stderr） |
+| **外部改了文件（或点了「还原历史」/「切分支」/「切模板」）之后，编辑器里还是旧内容** | 磁盘 → 编辑器的同步只在 `editor/disk-sync.svelte.ts`，而且只同步**打开中的文档**。先确认那份文件确实开着；再看触发链路：项目监听（`lib/project-watch.ts`，与 git 状态刷新共用一条）、窗口聚焦、显式动作后的 `checkAllOpenDocuments()`。若表现是"自己的保存被当成外部修改"，检查那条写盘路径有没有 `noteDiskContent` |
 | 预览白屏或不同步 | 确认静态站点已挂载（`add_static_site` 的项目 / 引擎路径），并检查 `/api/webgalsync` 连接 |
 | **拖放没反应（从资源管理器拖进场景 / 资源，或把资源、选项卡拖进编辑器）** | 页面内的 HTML5 DnD 在本应用里**不可用**：窗口没关 `dragDropEnabled`，Tauri 接管系统拖放后页面的 `dragover` / `drop` 不再派发，`dataTransfer.files[].path` 也不存在。系统文件走 webview 的拖放事件、应用内拖拽用指针事件，见第 3 节 `dnd/` |
 | 单测在新环境跑不起来 | 测试应保持 node 环境纯逻辑，勿引入 jsdom / 真实 Tauri；参照 `editor/tests/lsp-client.test.ts` |

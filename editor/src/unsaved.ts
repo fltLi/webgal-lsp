@@ -5,6 +5,7 @@
 // 与 `confirm.ts` 同一套路: 调用方给出"确认之后要做什么", 这里决定要不要先问, 并在用户选了
 // "保存"时先把脏文档落盘 (关选项卡 / 关项目 / 关窗口 / 生成快照前都走这里)。
 
+import { noteDiskContent } from './editor/disk-sync.svelte';
 import { fs } from './lib/fs';
 import { useAppStore } from './state/store.svelte';
 
@@ -108,6 +109,11 @@ async function saveDirty(path?: string): Promise<void> {
         // 写失败就不清脏标记: 让用户还能再试一次, 而不是以为已经存好了
         return;
       }
+      /*
+       * 磁盘上现在就是这一份: 记下基准。不记的话, 这次"关窗前保存"会被磁盘变更检测当成外部
+       * 修改而弹一次冲突 (用户刚点过保存, 却被告知文件被外部改过)。
+       */
+      noteDiskContent(doc.path, doc.content);
       // 落盘期间内容可能又被改过; 变了就不清脏标记
       const latest = useAppStore.getState().documents.find((item) => item.path === doc.path);
       if (!latest || latest.content !== doc.content) return;

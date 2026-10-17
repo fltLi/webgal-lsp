@@ -22,6 +22,7 @@
   import { gitFileChanges, gitFileRegion } from '../commands/git';
   import { pathDrag, registerPathDropTarget } from '../dnd/path-drag.svelte';
   import { createDocumentSaver } from '../editor/document-saver';
+  import { isDiskBlocked, noteDiskContent, requestDiskAttention } from '../editor/disk-sync.svelte';
   import { diffGutterMarks } from '../editor/diff-gutter';
   import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
   import { createInlineDiffZoneController } from '../editor/inline-diff-zone';
@@ -414,7 +415,17 @@
 
       const docSaver = createDocumentSaver({
         read: () => instance.getValue(),
-        write: (text) => fs.writeText(path, text),
+        write: async (text) => {
+          await fs.writeText(path, text);
+          /*
+           * 这次写盘是**我们自己**做的, 写完立刻把磁盘基准对齐。
+           *
+           * 不记的话, 下一次磁盘变更检查会把这次写入当成"外部修改": 写作时用户往往还在打字,
+           * 磁盘与编辑器立刻又不同了, 于是弹出一个两个选项都没有区别的对话框。
+           * 顺序也不能反 —— 先记基准再写盘的话, 写完到记基准之间来一次检查就会误判。
+           */
+          noteDiskContent(path, text);
+        },
         commit: (text) => actions.updateDocument(path, { content: text, dirty: false }),
         onError: (error) => console.error('保存失败', error),
       });
@@ -426,7 +437,15 @@
       function scheduleSave(): void {
         if (!untrack(() => appStore.settings.autoSave)) return;
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => void docSaver.save(), AUTOSAVE_DELAY);
+        saveTimer = setTimeout(() => {
+          saveTimer = null;
+          /*
+           * ⚠️ 到点还要再判一次: 冲突可能在等待这段时间里才出现 (监听读盘 → 记冲突),
+           * 而这一次自动保存会把内存内容写回磁盘, 把用户还没裁决的外部改动**静默吃掉**。
+           */
+          if (isDiskBlocked(path)) return;
+          void docSaver.save();
+        }, AUTOSAVE_DELAY);
       }
 
       /**
@@ -488,8 +507,12 @@
         scheduleSync();
       });
 
-      /** Ctrl+S 立即落盘 */
+      /** Ctrl+S 立即落盘 (磁盘冲突未裁决时改为把对话框摆出来 —— 直接写盘等于替用户选了"覆盖磁盘") */
       instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        if (isDiskBlocked(path)) {
+          requestDiskAttention(path);
+          return;
+        }
         void docSaver.save();
       });
 

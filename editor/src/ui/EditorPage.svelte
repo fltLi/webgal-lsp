@@ -14,8 +14,9 @@
 -->
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
+  import { conflictFor, setActiveDocument, startDiskSync, stopDiskSync } from '../editor/disk-sync.svelte';
   import { refreshGitStatus, startGitWatcher, stopGitWatcher } from '../git/status';
   import { closeProject } from '../project';
   import { makeNovelTab } from '../tabs/model';
@@ -31,6 +32,7 @@
   import Button from './Button.svelte';
   import CodeEditor from './CodeEditor.svelte';
   import Diagnostics from './Diagnostics.svelte';
+  import DiskConflictDialog from './DiskConflictDialog.svelte';
   import type { FileTreeViewStateCache } from './FileTree.svelte';
   import GitDiffEditor from './GitDiffEditor.svelte';
   import PreprocessTab from './PreprocessTab.svelte';
@@ -93,16 +95,38 @@
    */
   const workbenchOpen = $derived(voiceWorkbenchOpen());
   const voiceStarting = $derived(appStore.voiceStatus === 'starting');
+  /**
+   * 当前活动选项卡对应的**文档** (场景 / 配置文件 / 文本资源)。
+   *
+   * 磁盘冲突对话框只对"眼前这一份"弹: 后台选项卡被外部改动时不必打断用户, 等他切回来看就
+   * 来得及 (选项卡上已经有一枚标记)。差异/工作台/预处理这类卡没有对应文档, 因此在这里是 null。
+   */
+  const activeDoc = $derived(sceneDoc ?? configDoc ?? resourceDoc);
+  /** 当前活动文档上挂着的磁盘冲突 (响应式: `conflictFor` 读的是 `disk-sync` 里的 `$state`) */
+  const activeConflict = $derived(activeDoc ? conflictFor(activeDoc.path) : null);
 
-  // 项目打开时拉一次 git 状态, 并起文件监听做防抖刷新。
+  // 项目打开时拉一次 git 状态, 并起文件监听 (git 状态刷新与磁盘变更同步共用同一条)。
   onMount(() => {
     const path = projectPath;
     if (!path) return;
     void refreshGitStatus(path);
     void startGitWatcher(path);
+    void startDiskSync(path);
     return () => {
       void stopGitWatcher();
+      stopDiskSync();
     };
+  });
+
+  /**
+   * 告诉磁盘同步"用户现在看的是哪一份"。
+   *
+   * 读 store 的那部分要 `untrack`: `setActiveDocument` 会读冲突表并可能改 `dismissed`, 让它成为
+   * 本 effect 的依赖就会变成"裁决一次 -> effect 重跑一次"的自激回路。这里只依赖活动文档的路径。
+   */
+  $effect(() => {
+    const path = activeDoc?.path ?? null;
+    untrack(() => setActiveDocument(path));
   });
 
   /** 开始拖拽分隔条 (指针捕获, 移动时调整侧栏宽度)。 */
@@ -330,5 +354,17 @@
 
   {#if appStore.diagnosticsOpen && appStore.settings.diagnosticsView === 'modal'}
     <Diagnostics variant="modal" onClose={() => actions.setDiagnosticsOpen(false)} />
+  {/if}
+
+  <!--
+    磁盘冲突裁决: 只给**当前活动文档**弹, 后台选项卡只在标签上留一枚标记 (见 `TabStrip`)。
+    `dismissed` 是"用户按过 Esc 的那一份磁盘内容", 此时不打断; 切走再切回来会重新问。
+  -->
+  {#if activeDoc && activeConflict && !activeConflict.dismissed}
+    <DiskConflictDialog
+      path={activeDoc.path}
+      preview={activeConflict.preview}
+      inRepository={appStore.gitStatus?.initialized === true}
+    />
   {/if}
 </div>

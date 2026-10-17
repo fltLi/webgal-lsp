@@ -30,6 +30,7 @@
     previewPathDrag,
     suppressClickAfterDrag,
   } from '../dnd/path-drag.svelte';
+  import { conflictFor } from '../editor/disk-sync.svelte';
   import { browserRelativePath } from '../lib/paths';
   import { requestCloseTab } from '../tabs/close';
   import { dropIndicator, dropSlot, slotToIndex, type TabBox } from '../tabs/dnd';
@@ -226,6 +227,17 @@
     return appStore.documents.some((doc) => doc.path === tab.path && doc.dirty);
   }
 
+  /**
+   * 这张卡对应的文件是否有一条**还没处理**的磁盘冲突。
+   *
+   * 检测与裁决都不在这里 (`editor/disk-sync.svelte.ts`): 这里只把状态摆成标签上的一枚标记,
+   * 让用户在后台选项卡上也能看出"这个文件在磁盘上被改过, 还没决定怎么办"。
+   */
+  function hasDiskConflict(tab: WorkbenchTabItem): boolean {
+    const path = localPathOf(tab);
+    return path !== null && conflictFor(path) !== null;
+  }
+
   const menuItems = $derived<ContextMenuItem[]>(contextMenu ? buildMenu(contextMenu.tab) : []);
 
   /** 菜单项由 `tabs/menu.ts` 决定 (那里有单测钉住"一项都不能少"), 组件只把动作接上。 */
@@ -336,6 +348,16 @@
       -->
       {#if isDirtyTab(tab)}
         <span class="tab-strip-dirty" title="有未保存的更改">●</span>
+      {/if}
+
+      <!--
+        磁盘冲突标记: 与脏点**分开** —— 脏点说的是"这一份还没保存", 这个标记说的是"磁盘上还有
+        另一份内容等你裁决"。两个都可能同时为真 (编辑器里有改动、磁盘又被外部改过)。
+      -->
+      {#if hasDiskConflict(tab)}
+        <span class="tab-strip-conflict" title="磁盘上的文件已被外部修改, 尚未处理">
+          <Icon name="Warning" size={12} />
+        </span>
       {/if}
 
       <span class="tab-strip-title">

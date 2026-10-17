@@ -6,8 +6,9 @@
 
   * **光标停在哪一行由编辑器派生, 不存字段**: 存字段就会出现"切卡后停在上一张卡的行号"
     (全局光标被新文档继承)。这里一律从 `appStore.cursor` + 当前文档路径算。
-  * **磁盘被外部改动要弹冲突裁决**, 而不是悄悄覆盖 —— 配音卡会让用户长时间停在一个文件上,
-    期间在别处改它的概率不低。
+  * **磁盘被外部改动不再由这张卡自己检测**: 检测与裁决统一在 `editor/disk-sync.svelte.ts`
+    (所有打开中的文档都受同一套规则约束)。卡片只在"内容被磁盘换掉"之后把配音历史重新对齐
+    —— 见下面的 `onExternalContent` 订阅。自己再轮询一遍会让同一个文件弹两次对话框。
 
   ⚠️ 不带 `<style>` 块 —— 类名来自全局 `styles.css`。
 -->
@@ -15,19 +16,14 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
 
-  import { fs } from '../lib/fs';
+  import { onExternalContent } from '../editor/disk-sync.svelte';
   import { appStore } from '../state/store.svelte';
   import { voiceController } from '../voice/controller';
   import { dialogueAtLine } from '../voice/types';
-  import { isSceneInVoiceMode } from '../voice/mode';
   import Button from './Button.svelte';
-  import SceneConflictDialog from './SceneConflictDialog.svelte';
   import SentenceVoicePanel from './SentenceVoicePanel.svelte';
   import VoiceTakeList from './VoiceTakeList.svelte';
   import CodeEditor from './CodeEditor.svelte';
-
-  /** 磁盘变更检测间隔。轮询而不是监听文件: 场景文件可能被任意外部程序改写, 监听会漏掉原子替换式的保存。 */
-  const DISK_CHECK_MS = 3000;
 
   let { docPath }: { docPath: string } = $props();
 
@@ -88,80 +84,26 @@
    */
   let error = $state<string | null>(null);
 
-  /*
-   * 磁盘冲突裁决。
-   *
-   * `dismissedHash` 记住"用户按了 Esc 的那个磁盘状态": 变更检测每隔几秒跑一次, 不记的话
-   * Esc 等于没按、对话框立刻弹回来。以**全文哈希**为键 —— 只用预览那一小段的话, 外部改的
-   * 若是第 13 行之后的内容, 哈希不变, 于是**再也不提示冲突**, 用户的改动会被静默丢掉。
-   */
-
-  let conflict = $state<{ preview: string | null; hash: string } | null>(null);
-  let dismissedHash = $state<string | null>(null);
-
   onMount(() => {
     void syncCard();
+    /*
+     * 磁盘内容被换掉 (外部改动、还原历史、切分支, 或用户在裁决里选了「加载磁盘内容」) 之后,
+     * 把配音历史重新对齐到新的对话列表。
+     *
+     * 只管**本卡**的路径: 事件是全局的, 其余文件的变化与这张卡无关。重新解析 (`refreshCard`)
+     * 通常已由"文档内容变化"那个 effect 做过, 这里补的是对齐 (`realignCard`) —— 行号在外部
+     * 改动之后会整体位移, 不重新对齐的话历史会挂在错误的语句上。
+     */
+    return onExternalContent((path) => {
+      if (path !== docPath) return;
+      const current = appStore.documents.find((item) => item.path === docPath);
+      if (!current || !voiceController.getCard(docPath)) return;
+      void (async () => {
+        await voiceController.refreshCard(docPath, current.content);
+        await voiceController.realignCard(docPath);
+      })();
+    });
   });
-
-  /**
-   * 检测磁盘是否被外部改动 + 回到窗口时补一次。
-   *
-   * 只在这一张卡是**当前活动文档**时检查: 后台选项卡的文件被外部改动不必打断用户,
-   * 等他切回来看就来得及。
-   */
-  $effect(() => {
-    const isActive = isSceneInVoiceMode(docPath);
-    if (!isActive) return;
-
-    let disposed = false;
-    const check = async (): Promise<void> => {
-      if (disposed) return;
-      const changed = await voiceController.checkDiskChange(docPath);
-      if (disposed || !changed) return;
-
-      let preview: string | null = null;
-      let hash: string | null = null;
-      try {
-        const content = await fs.readTextLossy(docPath);
-        /*
-         * 预览只取开头几行 (对话框里放不下), 但**忽略键必须用全文哈希**: 用预览哈希会漏掉
-         * "外部只改了第 13 行之后"的情况 —— 预览没变 -> 哈希没变 -> 被当成"已经忽略过的那一份"
-         * -> **再也不提示冲突**, 用户手改的内容会被悄悄覆盖。全文哈希才是正确的语义:
-         * 同一份磁盘内容只问一次, 内容真的变了一定再问。
-         */
-        hash = hashOf(content);
-        preview = content.split(/\r?\n/).slice(0, 12).join('\n');
-      } catch {
-        // 读不到就只给文字说明, 不发预览 (此时「加载磁盘内容」会保持禁用)
-      }
-      if (disposed) return;
-
-      // 读不到内容时退化成"每次都提示": 宁可多问一次, 也不要静默放过一次冲突
-      if (hash !== null && dismissedHash === hash) return;
-      conflict = { preview, hash: hash ?? `unreadable:${Date.now()}` };
-    };
-
-    void check();
-    const timer = setInterval(() => void check(), DISK_CHECK_MS);
-    const onFocus = () => void check();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-    };
-  });
-
-  /** 与控制器一致的轻量内容哈希 (只用于比较"是不是同一份磁盘内容")。 */
-  function hashOf(text: string): string {
-    let value = 0x811c9dc5;
-    const normalized = text.replace(/\r\n/g, '\n');
-    for (let index = 0; index < normalized.length; index += 1) {
-      value ^= normalized.charCodeAt(index);
-      value = Math.imul(value, 0x01000193);
-    }
-    return (value >>> 0).toString(16);
-  }
 
   /**
    * 文档内容变化 -> 重新解析对话 (卡片随内容更新)。
@@ -207,7 +149,7 @@
     try {
       const existing = voiceController.getCard(docPath);
       if (!existing) {
-        await voiceController.openCard(docPath, docPath, current.content, '');
+        await voiceController.openCard(docPath, docPath, current.content);
       } else {
         await voiceController.refreshCard(docPath, current.content);
       }
@@ -260,17 +202,4 @@
       </div>
     {/if}
   </div>
-
-  {#if conflict}
-    <SceneConflictDialog
-      scenePath={docPath}
-      diskPreview={conflict.preview}
-      inRepository={appStore.gitStatus?.initialized === true}
-      onResolved={() => (conflict = null)}
-      onDismiss={() => {
-        dismissedHash = conflict?.hash ?? null;
-        conflict = null;
-      }}
-    />
-  {/if}
 </div>
