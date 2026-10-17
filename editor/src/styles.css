@@ -3126,15 +3126,41 @@ body.resizing {
 
 .git-history-list {
   position: relative;
+  /*
+   * 必须是**普通块**, 不能沿用 `.history-list` 那套 flex 列布局。
+   *
+   * `.history-list` 这个名字被两处共用: 配音历史的记录列表 (靠 `gap` 排卡片) 与这里。文件靠后
+   * 那条 `.history-list { display: flex; gap: 6px }` 会把提交列表也变成带间隙的 flex 列, 于是
+   * 每个提交块之间多出 6px 缝 —— 而时间线是各提交块自己的竖轨 (`::before` 铺满块高) 拼出来的,
+   * 缝一出现, 整条线就在每条提交处断开。两条选择器的特异性要压过它 (0,2,0 > 0,1,0)。
+   */
+  display: block;
 }
 
 .history-branch-picker {
   max-width: 180px;
 }
 
+/*
+ * 时间线: 一条 2px 的竖轨 + 每个提交一个圆点。
+ *
+ * 竖轨要**比普通分隔线明显一点**才像"时间线", 但又不能抢过提交摘要。圆点外圈垫一圈
+ * **面板色** (`box-shadow`, 与对话框表面同色): 竖轨在圆点处被"挖掉", 圆点才不会看起来只是
+ * 线上一个色块 —— 想换成别的底色时会连着圆点一起变脏, 所以这里刻意用容器色而不是固定色。
+ * 展开的提交用实心点: 一眼看出哪几条是开着的, 不用去读详情里有没有内容。
+ *
+ * 竖轨首尾都只画到**第一个 / 最后一个圆点**为止 (`top` / `height` 取行高的一半), 否则它会在
+ * 列表顶部长出一小截"没有节点的线"。
+ */
 .git-commit {
   position: relative;
   margin-bottom: 0;
+  /*
+   * `flow-root` 是**功能性的**: 展开详情的 `margin-bottom` 会与提交块发生外边距合并, 把那一截
+   * 间距顶到块**外面** —— 而竖轨画在块内 (`::before` 的 `top: 0; bottom: 0`), 于是时间线在
+   * 展开项与下一条之间断开一截。建立块级格式上下文把外边距留在块内, 竖轨就能盖住它。
+   */
+  display: flow-root;
 }
 
 .git-commit::before {
@@ -3142,9 +3168,14 @@ body.resizing {
   top: 0;
   bottom: 0;
   left: 13px;
-  width: 1px;
-  background: var(--app-border);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--app-border-strong);
   content: '';
+}
+
+.git-commit:first-child::before {
+  top: 19px;
 }
 
 .git-commit:last-child::before {
@@ -3159,8 +3190,8 @@ body.resizing {
   align-items: center;
   gap: 8px;
   min-height: 38px;
-  padding: 8px 4px 8px 30px;
-  border-radius: 4px;
+  padding: 8px 8px 8px 30px;
+  border-radius: 6px;
   cursor: pointer;
   user-select: none;
 }
@@ -3168,27 +3199,45 @@ body.resizing {
 .git-commit-row::before {
   position: absolute;
   top: 50%;
-  left: 9px;
-  width: 8px;
-  height: 8px;
+  left: 8px;
+  width: 10px;
+  height: 10px;
   box-sizing: border-box;
-  border: 1px solid var(--app-accent);
+  border: 2px solid var(--app-accent);
   border-radius: 50%;
   background: var(--app-panel);
   content: '';
-  box-shadow: 0 0 0 2px var(--app-bg);
+  box-shadow: 0 0 0 2px var(--app-panel);
   transform: translateY(-50%);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .git-commit-row:hover {
   background: var(--app-hover);
 }
 
+.git-commit-row:hover::before {
+  border-color: var(--app-accent-hover);
+}
+
+/* 展开中的提交: 实心圆点 (与行的展开态一致) */
+.git-commit-row.expanded::before {
+  background: var(--app-accent);
+}
+
 .git-commit-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   flex: 0 0 auto;
   color: var(--app-muted);
-  text-align: center;
+}
+
+.git-commit-row:hover .git-commit-toggle {
+  color: var(--app-fg);
 }
 
 .git-commit-summary {
@@ -3213,9 +3262,10 @@ body.resizing {
 .git-commit-detail {
   display: flex;
   gap: 12px;
-  margin: 0 4px 8px 30px;
+  margin: 0 8px 8px 30px;
   padding: 10px 12px;
-  border-radius: 4px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
   background: var(--app-bg);
 }
 

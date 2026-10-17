@@ -12,8 +12,14 @@ const DIFF_SOURCE_LABEL: Record<Exclude<DiffKind, 'commit'>, string> = {
   'index-to-worktree': '更改 vs 暂存',
 };
 
-/** 打开一个只读差异选项卡 (同一文件的暂存/未暂存/暂存对比/历史差异各自独立)。 */
-export function openGitDiff(file: string, kind: DiffKind, commitId?: string, title?: string): void {
+/**
+ * 打开一个只读差异选项卡 (同一文件的暂存 / 未暂存 / 暂存对比 / 某个提交各自独立)。
+ *
+ * 标题**只在这里拼**: `文件名 (拿哪两份比)`。提交差异的括号里是提交的**短 hash**
+ * (与「更改 vs 暂存」这类文案同一位置), 因此调用方不该再传标题 —— 曾经由历史对话框自己传
+ * `baseName(file)`, 结果提交差异的标题里少了那个 hash, 一眼看不出是哪一次提交。
+ */
+export function openGitDiff(file: string, kind: DiffKind, commitId?: string): void {
   const base = file.split('/').pop() ?? file;
   const source = kind === 'commit' ? (commitId ?? '').slice(0, 7) : DIFF_SOURCE_LABEL[kind];
   useAppStore.getState().openTab(
@@ -21,7 +27,7 @@ export function openGitDiff(file: string, kind: DiffKind, commitId?: string, tit
       file,
       diffKind: kind,
       commitId,
-      title: title ?? `${base} (${source})`,
+      title: `${base} (${source})`,
     })
   );
 }
