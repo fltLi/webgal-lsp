@@ -1,6 +1,6 @@
 {
   "name": "webgal-novel-preprocess",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "WebGAL 小说文本预处理核心: 将无格式小说文本转换为原始 WebGAL 脚本的纯逻辑库",
