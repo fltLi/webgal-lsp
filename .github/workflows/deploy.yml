@@ -1,62 +1,71 @@
-name: Deploy
+name: Deploy Playground
 
 on:
   push:
     branches: ["main"]
+    # 只在真正影响 Playground 的改动上重建: 它自己, 以及它 file: 依赖的 wasm 依赖链
+    paths:
+      - 'packages/webgal-parse-playground/**'
+      - 'crates/webgal-language-service/**'
+      - 'crates/webgal-language-core/**'
+      - 'crates/webgal-sentence-macro/**'
+      - 'crates/webgal-simulate/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build:
+    name: Build playground
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          override: true
+          targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: taiki-e/install-action@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          tool: wasm-pack
 
+      - name: Build wasm package
+        working-directory: packages/webgal-parse-playground
+        run: bun run build:wasm
+
+      # 必须在 build:wasm 之后: 该包以 file: 依赖 crates/webgal-language-service/pkg
       - name: Install dependencies
-        run: npm install
-        working-directory: packages/parse-playground
-
-      - name: Build WASM
-        run: npm run build:wasm
-        working-directory: packages/parse-playground
+        working-directory: packages/webgal-parse-playground
+        run: bun install --frozen-lockfile
 
       - name: Build frontend
-        run: npm run build
-        working-directory: packages/parse-playground
+        working-directory: packages/webgal-parse-playground
+        run: bun run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: packages/parse-playground/dist
+          path: packages/webgal-parse-playground/dist
 
   deploy:
     needs: build

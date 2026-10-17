@@ -55,7 +55,7 @@
 - **自动检查是底线**：改 `crates/` 跑 `cargo check` / `cargo test` / `cargo clippy -- --deny warnings`；
   改 `editor/` 跑 vitest、`type-check`、`lint`、`format-check` 与 `cargo check -p webgal-ink`（命令见第 2 节）。
   **汇报实际结果，别只写「应该没问题」。**
-- **格式检查是仓库级的**：`cargo fmt --all -- --check` 与 `npm run format-check`，不用挑 crate。
+- **格式检查是仓库级的**：`cargo fmt --all -- --check` 与 `bun run format-check`，不用挑 crate。
 - **人工实机是终点**：UI、交互、预览、配音这类改动由维护者实机验收。附一段**可照做的步骤**（从哪个入口进、
   点哪里、预期看到什么、什么算失败），不要只说「已测试」。
 - 改动跨多条链路时，主动建议「先跑一遍看看再继续」。
@@ -66,25 +66,37 @@
 
 - Rust stable（工作区 edition 2024）。仓库**没有** `rust-toolchain.toml`，也不声明 `rust-version`，
   别在文档或代码里假设具体版本号。
-- Node 与 npm：依赖由根目录 npm workspaces 管理，勿引入 pnpm / yarn 锁文件。
-- Tauri 2 系统依赖：Windows 用 WebView2；Linux 的包名清单以 `.github/workflows/lint.yml` 的
-  `clippy-editor` job 为准（会随发行版改动），照抄它安装即可。
+- **依赖由每个 TS 子模块独立管理**：`editor/` 与 `packages/` 下三个包各有自己的 `package.json` 与
+  `bun.lock`，**没有** npm workspaces。装依赖要进到对应目录跑 `bun install`；根目录只做编排。
+  包管理器是 **bun**，勿引入 npm / pnpm / yarn 锁文件。bun 只当包管理器与脚本运行器，实际运行时仍是 node
+  （`vite` / `vitest` / `tauri` 的 bin 都带 `#!/usr/bin/env node`），所以别用 `bun --bun run`。
+- Tauri 2 系统依赖：Windows 用 WebView2；Linux 的包名清单以 `.github/workflows/ci.yml` 的
+  `editor-native` job 为准（会随发行版改动），照抄它安装即可。
 - 需要 wasm 时（playground / 浏览器侧）额外装 `wasm32-unknown-unknown` 与 `wasm-pack`，见第 5 节。
-- `editor/dist` **不在版本控制里**，但 Tauri 构建要求它存在：第一次编译前先跑
-  `npm run build -w webgal-ink`（或手工放一个占位 `editor/dist/index.html`），否则构建脚本直接失败。
+- `editor/dist` **不在版本控制里**，但 Tauri 构建要求它存在：第一次编译前先在 `editor/` 跑
+  `bun run build`（或手工放一个占位 `editor/dist/index.html`），否则构建脚本直接失败。
 
 ### 命令
 
 ```bash
-npm install                          # 根目录，一次装好全部 workspace
-npm run dev:desktop -w webgal-ink    # 完整桌面开发模式（内含 npm install + tauri dev）
-npm run dev -w webgal-ink            # 只跑前端（Vite dev server，固定 1420 端口，strictPort）
+bun run install:all                  # 根目录: 装 editor 与两个 packages（playground 要先 build:wasm）
+cd editor && bun install             # 或者进到任意子模块, 各装各的
 
-npm test -w webgal-ink               # vitest；保持全绿，别让存量用例变红
-npx vitest run tests/tabs.test.ts    # 在 editor/ 下跑单个文件
-npm run type-check -w webgal-ink     # svelte-kit sync && svelte-check（不是 tsc）
-npm run lint -w webgal-ink           # ESLint + 两个类名护栏（见下）
-npm run format                       # 根目录 Prettier（单引号 / 分号 / 120 列 / LF）
+cd editor
+bun run dev:desktop                  # 完整桌面开发模式（内含 bun install + tauri dev）
+bun run dev                          # 只跑前端（Vite dev server，固定 1420 端口，strictPort）
+
+bun run test                         # vitest；保持全绿，别让存量用例变红
+bunx vitest run tests/tabs.test.ts   # 只跑单个文件
+bun run type-check                   # svelte-kit sync && svelte-check（不是 tsc）
+bun run lint                         # ESLint + 两个类名护栏（见下）
+bun run format                       # 本子模块的 Prettier（配置仍取根 .prettierrc.json）
+
+# 根目录的编排脚本（串行跑各子模块，CI 用的就是这些检查）
+bun run lint                         # 四个子模块的 lint
+bun run type-check                   # 四个子模块的 type-check
+bun run test                         # editor 与 novel-preprocess 的 vitest
+bun run check                        # build:wasm + format-check + lint + type-check + test
 
 cargo check -p webgal-ink            # 只查编辑器后端；需要 editor/dist 与系统依赖
 cargo clippy -p webgal-ink -- --deny warnings
@@ -97,26 +109,27 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
 
 - **类型检查的落点是 `svelte-check`，不是 `tsc`**：`editor/tsconfig.json` 的 `include` 只有
   `src/**/*.{ts,svelte}`，`tsc --noEmit` 看不见 `.svelte`。别再改回 `tsc`。
-- **`.svelte` 的 lint 与类型分工是刻意的**，且踩过坑：`eslint.config.js` 里那几条 `files` 划分不要随手改，
-  改之前先读那里的注释（`.svelte` 不能进带 `parserOptions.project` 的配置块，`.svelte.ts` 必须由
-  typescript-eslint 解析，svelte 插件 recommended 的 `files` 必须显式收窄）。
+- **`.svelte` 的 lint 与类型分工是刻意的**，且踩过坑：`editor/eslint.config.js` 里那几条 `files` 划分不要随手改，
+  改之前先读那里的注释（`.svelte` 不能进带 `parserOptions.project` 的配置块 —— 现在干脆不开它，`.svelte.ts`
+  必须由 typescript-eslint 解析，svelte 插件 recommended 的 `files` 必须显式收窄）。
 - **`wasm.rs` 是 clippy 的盲区**（`#[cfg(target_arch = "wasm32")]`，宿主目标不编译它）：只要求 `cargo check`
   通过、别新增告警。
 - **不要用 `cargo build/test --workspace` 验证编辑器**：`webgal-ink` 缺 `editor/dist` 或系统依赖时会拖垮
   整个工作区。语言侧用 `-p`，或统一加 `--exclude webgal-ink`。CI 也只对 `webgal-ink` 单独设 job。
-- **`editor/scripts/` 的两个类名护栏已接进 `npm run lint`，是致命检查**：`check-css-classes.mjs` 核对模板里
+- **`editor/scripts/` 的两个类名护栏已接进 `lint`，是致命检查**：`check-css-classes.mjs` 核对模板里
   用到的类名在 `styles.css` 里都有规则（并报告一遍无人引用的类名，**只报告、不要据此删 CSS**），
   `check-dynamic-classes.mjs` 核对运行期拼出来的类名。
-- CI 的 `ts-lint` job 会跑 `format-check`、`npm run lint:all`（ESLint + `svelte-check` + 类名护栏）与
-  `npm test`（即各 workspace 的 vitest）。本地照这套跑一遍就等于 CI。
+- CI 分四个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
+  type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、`playground`
+  （wasm + 构建）。本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
 
 ### 测试写在哪儿
 
 两处都会被 vitest 收集，按就近原则选：`editor/tests/*.test.ts`（跨模块逻辑）、源码旁
 `editor/src/**/*.test.ts`（单一模块）。目录里的文件清单会变，别照搬记忆，需要时 `ls editor/tests`。
 
-`editor/tests/**` 由 `editor/tsconfig.test.json` **单独**做一次类型检查（`npm run type-check` 的第二段），
-格式也在 `format-check` 的 glob 里；但 `npm run lint` 只扫 `editor/src`，**测试文件不过 ESLint**，改测试时自己留意。
+`editor/tests/**` 由 `editor/tsconfig.test.json` **单独**做一次类型检查（`bun run type-check` 的第二段），
+格式也在 `format-check` 的 glob 里；但 `bun run lint` 只扫 `editor/src`，**测试文件不过 ESLint**，改测试时自己留意。
 
 新增测试请写成**不依赖 Tauri / Monaco / window 的纯函数**再测；确实要碰 Tauri 时用
 `vi.mock('@tauri-apps/api/core', ...)` + `vi.hoisted` 注入假的 `invoke`，碰 WebSocket 时手写 FakeSocket
@@ -177,7 +190,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
 - **组件不带 `<style>` 块**，除非它只定义自己的新类名。Svelte 一旦看到 `<style>` 就给模板类名加作用域哈希，
   而 `styles.css` 的全局类名不带哈希——结果是一整块样式**静默失效**。要加样式就写进 `styles.css`；确实要在
   组件内改全局类名时用 `:global(...)`，且它必须在整条选择器的**开头**（写在后面会被编译器整条删除）。
-- **`ui/` 里的类名必须与 `styles.css` 里的选择器对上**；`npm run lint` 会核对。
+- **`ui/` 里的类名必须与 `styles.css` 里的选择器对上**；`lint` 会核对。
 
 **改动落点约定**：
 
@@ -234,7 +247,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
 - **Monaco 的 provider 必须成对实现**：拿到色块后它会向**同一个** provider 索要改写方案
   （`provideColorPresentations`），只实现 `provideDocumentColors` 会在点开色块时抛异常。
 - 预览：本地静态服务器 + `/api/webgalsync`，同时兼容 V1 引擎（子协议注册）与旧引擎（整数编码 envelope）。
-  预览是独立站点，改动 `service/preview*` 后要用 `npm run dev:desktop` 实机验证，不要只看单测。
+  预览是独立站点，改动 `service/preview*` 后要用 `bun run dev:desktop` 实机验证，不要只看单测。
 
 ## 5. 其余模块（按需查阅）
 
@@ -251,9 +264,10 @@ cargo build -p webgal-snapshot --release
 # 文档数据（悬浮文档 / 补全文档的数据源）
 cd crates/webgal-language-service && python scripts/update-document.py   # 依赖 requests，勿手工编辑 data/document.json
 
-# wasm 与 playground（初次需 rustup target add wasm32-unknown-unknown && cargo install wasm-pack）
-npm run build:wasm        # → crates/webgal-language-service/pkg，被 playground 以 file: 依赖，未纳入 git
-npm run lint:all          # build:wasm + lint + type-check（CI ts-lint job 的等价物）
+# wasm 与 playground（初次需 rustup target add wasm32-unknown-unknown, 并装好 wasm-pack）
+# 顺序要紧: playground 以 file: 依赖 crates/webgal-language-service/pkg, install 必须在 build:wasm 之后
+bun run build:wasm        # 根目录跑; 产物 pkg/ 未纳入 git
+cd packages/webgal-parse-playground && bun install && bun run build
 ```
 
 Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关联资源都声明在
@@ -262,7 +276,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 诊断码语义固定（语法 `WG001`–`WG006` 在 core、环境 `WG007` 起在 service、逻辑分析在 simulate），新增语言能力的
 落点是**四处**：`webgal-language-service/src/service/*.rs`（实现）→ `webgal-language-server/src/server.rs`
 （能力位 + `--disable-*` 开关）→ `webgal-language-service/src/wasm.rs`（浏览器侧封装）→ 消费方
-（`editor/src/lsp/` 或 `packages/parse-playground`）；并同步 `docs/` 与 README 的能力清单。
+（`editor/src/lsp/` 或 `packages/webgal-parse-playground`）；并同步 `docs/` 与 README 的能力清单。
 
 ## 6. 收工前：本文件该不该改
 
@@ -277,7 +291,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 用户可见的语义或文案口径变了（状态、计数、空态、导出格式） | 该模块在第 3 节的说明 + 对应 `docs/`；两者都没有就补上判据 |
 | 新目录、模块边界或状态组织方式变了 | 第 3 节的架构图（它只允许列稳定结构） |
 | 改了 `.svelte` 的**样式作用域策略**（新增 / 移除 `<style>` 块、改用 `:global()`） | 第 3 节「组件不带 `<style>` 块」一条 |
-| 增删了 `editor/scripts/` 下的检查脚本，或把它接进 `lint` / `lint:all` | 第 2 节命令块（说明它是护栏还是报告工具） |
+| 增删了 `editor/scripts/` 下的检查脚本，或把它接进 `lint` / `check` | 第 2 节命令块（说明它是护栏还是报告工具） |
 | 踩到一个耗掉一轮以上调试时间的坑 | 第 7 节排错表 + 对应章节的约定；**能写进代码注释的就写进代码**，别挤占本文件 |
 | CI 增删了检查项 | 第 2 节关于 CI 覆盖范围的说明 |
 | 区域归属变了（某模块由 AI 主导转为人主导，或反之） | 第 1 节的区域表 |
@@ -288,8 +302,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 写法红线：
 
 - **不要写会漂移的数字**：测试条数、文件个数、行号、覆盖百分比、依赖版本号、构建产物大小。要表达「现在是绿的」
-  这类状态，就写成**一条能自己证明的命令**（如 `npm test -w webgal-ink`），或指向 `Cargo.toml` / `package.json` /
-  `Cargo.lock` / `.github/workflows/`。
+  这类状态，就写成**一条能自己证明的命令**（如 `bun run test`），或指向 `Cargo.toml` / `package.json` /
+  `Cargo.lock` / `bun.lock` / `.github/workflows/`。
 - **版本号只写"为什么锁"**，而不是写死某个版本。
 - **别在正文里复述代码**：会随实现改动的细节留在代码注释里，本文件只留决策与约束。
 - 判断标准：**这条信息三个月后还成立吗？** 不成立就别写进来。
@@ -306,7 +320,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 
 | 现象 | 处理 |
 | --- | --- |
-| 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先 `npm run build -w webgal-ink` |
+| 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
 | **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
 | **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |
 | Linux 上 `webgal-ink` 编译失败 | 装 Tauri 系统依赖（见第 2 节），或只验证语言侧并加 `--exclude webgal-ink` |
@@ -322,6 +336,9 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | PowerShell 里 `cargo … 2>&1 \| …` 报 `NativeCommandError`、exit=1 | PowerShell 把 cargo 的 stderr 当成错误，**不是编译失败**；改用 `cmd /c "cargo check … > log 2>&1"` 再读 `$LASTEXITCODE` |
 | 用 PowerShell 数文件行数，结果比实际少 | Windows PowerShell 5.1 的 `Get-Content` 按 GBK 解码无 BOM 的 UTF-8，会丢行并产生乱码。用 `[System.IO.File]::ReadAllLines($p, [System.Text.UTF8Encoding]::new($false)).Count` |
 | PowerShell 里 `$bytes[16..19]` 读出的字节序是反的 | PowerShell 的数组切片对反向区间会倒序返回，`[16..19]` 拿到的是 big-endian。二进制解析用 `[BitConverter]`，别手工下标 |
-| playground 行为与源码不一致 | `pkg/` 是旧产物，重跑 `npm run build:wasm` |
+| playground 行为与源码不一致 | `pkg/` 是旧产物，重跑 `bun run build:wasm` |
+| **任何构建报 "Tsconfig not found … editor/.svelte-kit/tsconfig.json"** | 说明有任务在转换 `editor/` 下的源码：`editor/tsconfig.json` 的 `extends` 指向 `svelte-kit sync` 的生成物，而只构建其它模块的任务里不会有它。**别从别的子模块 import `editor/src/**`**——Playground 曾经这么做，代价是 CI 里要放一个占位 tsconfig（已移除）。确实要共享，就把那份代码提成独立子模块 |
+| **ESLint 对全部文件报 `Unable to parse the specified 'tsconfig' file`** | 配置里开了 `parserOptions.project` 而它要读的 tsconfig 不存在。现在的 `editor/eslint.config.js` 刻意不开类型感知 lint，别再加回去（见第 2 节的分工说明） |
+| **Windows 上 `format-check` 报一大片文件不符合格式** | 本机 `core.autocrlf=true` 让工作树是 CRLF，而配置要求 LF。用 `git ls-files --eol <文件>` 看索引侧是否为 `i/lf`（是就没问题，Linux CI 检出的是 LF），或临时加 `--end-of-line auto` 复核内容 |
 
 更细的功能说明见 [README.md](README.md)、[docs/complete.md](docs/complete.md)、[docs/diagnose.md](docs/diagnose.md)、[docs/voice-guide.md](docs/voice-guide.md)。

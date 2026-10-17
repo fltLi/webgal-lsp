@@ -4,12 +4,24 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号, 不带 v 前缀 (例如 0.4.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
+    name: build (${{ matrix.os-label }})
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -50,160 +62,138 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
+      # 版本号只有一个来源: 发行 tag (发版) 或手动输入 (workflow_dispatch), 并做一次格式校验,
+      # 免得算出一个 "main" 这样的版本号还一路写进产物名
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          VERSION="${VERSION#v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::版本号 '$VERSION' 不合法, 期望形如 0.4.0"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "版本号: $VERSION"
 
       - name: Install editor dependencies
         working-directory: editor
-        run: npm install --workspaces=false
+        run: bun install --frozen-lockfile
 
-      - name: Set version
+      # 两个 CLI 一次编完: 同一条命令复用同一份依赖图与 target/
+      - name: Build CLI binaries
+        run: cargo build -p webgal-language-server -p webgal-snapshot --target ${{ matrix.target }} --release
+
+      - name: Package CLI binaries
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION="0.1.0"
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          set -euo pipefail
+          for name in webgal-language-server webgal-snapshot; do
+            bin="$name"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              bin="$name.exe"
+            fi
+            cp "target/${{ matrix.target }}/release/$bin" "./$bin"
 
-      # ---------------------- server ----------------------
-      - name: Build server binary
-        run: cargo build -p webgal-language-server --target ${{ matrix.target }} --release
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              archive="$name-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+              7z a "$archive" "$bin" > /dev/null
+            else
+              chmod +x "$bin"
+              archive="$name-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
+              tar czf "$archive" "$bin"
+            fi
+            echo "打包: $archive"
+          done
+          ls -lh ./*.zip ./*.tar.gz 2>/dev/null || true
 
-      - name: Package server binary
-        shell: bash
-        run: |
-          BIN_NAME="webgal-language-server"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            BIN_NAME="webgal-language-server.exe"
-          fi
-          SRC="target/${{ matrix.target }}/release/$BIN_NAME"
-          DST="./$BIN_NAME"
-          cp "$SRC" "$DST"
-
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            ARCHIVE="server-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
-            7z a "$ARCHIVE" "$DST"
-          else
-            chmod +x "$DST"
-            ARCHIVE="server-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
-            tar czf "$ARCHIVE" "$DST"
-          fi
-          echo "SERVER_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-
-      # ---------------------- snapshot ----------------------
-      - name: Build snapshot binary
-        run: cargo build -p webgal-snapshot --target ${{ matrix.target }} --release
-
-      - name: Package snapshot binary
-        shell: bash
-        run: |
-          BIN_NAME="webgal-snapshot"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            BIN_NAME="webgal-snapshot.exe"
-          fi
-          SRC="target/${{ matrix.target }}/release/$BIN_NAME"
-          DST="./$BIN_NAME"
-          cp "$SRC" "$DST"
-
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            ARCHIVE="snapshot-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
-            7z a "$ARCHIVE" "$DST"
-          else
-            chmod +x "$DST"
-            ARCHIVE="snapshot-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
-            tar czf "$ARCHIVE" "$DST"
-          fi
-          echo "SNAPSHOT_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-
-      # ---------------------- editor ----------------------
       - name: Build editor
         shell: bash
         working-directory: editor
         run: |
-          npm run tauri build -- --ci \
+          set -euo pipefail
+          # 用文件而不是命令行内联 JSON: 免得在各种 shell 里跟引号打架
+          CONF="$RUNNER_TEMP/tauri.release.conf.json"
+          printf '{"version":"%s"}\n' "${{ env.VERSION }}" > "$CONF"
+          cat "$CONF"
+          bun run tauri -- build --ci \
             --target ${{ matrix.target }} \
             --bundles ${{ matrix.editor-bundles }} \
-            --config "{\"version\":\"${{ env.VERSION }}\"}"
+            --config "$CONF"
 
       - name: Package editor installer
         shell: bash
         run: |
+          set -euo pipefail
           BUNDLE_ROOT="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/bundle"
-          echo "Bundle root: $BUNDLE_ROOT"
-          ls -R "$BUNDLE_ROOT" || true
 
           case "${{ matrix.editor-bundles }}" in
-            nsis)
-              SUBDIR="nsis"
-              PATTERN='*.exe'
-              ;;
-            dmg)
-              SUBDIR="dmg"
-              PATTERN='*.dmg'
-              ;;
-            appimage)
-              SUBDIR="appimage"
-              PATTERN='*.AppImage'
-              ;;
+            nsis)     SUBDIR="nsis";     PATTERN='*.exe' ;;
+            dmg)      SUBDIR="dmg";      PATTERN='*.dmg' ;;
+            appimage) SUBDIR="appimage"; PATTERN='*.AppImage' ;;
+            *)        echo "::error::未知的 bundle 类型"; exit 1 ;;
           esac
 
-          INSTALLER=$(find "$BUNDLE_ROOT/$SUBDIR" -maxdepth 1 -type f -name "$PATTERN" | head -n1)
-
+          INSTALLER=$(find "$BUNDLE_ROOT/$SUBDIR" -maxdepth 1 -type f -name "$PATTERN" -print -quit)
           if [ -z "$INSTALLER" ]; then
-            echo "未找到编辑器安装包，bundle 目录内容:"
+            echo "::error::未找到编辑器安装包"
             find "$BUNDLE_ROOT" -maxdepth 3 -type f 2>/dev/null || true
             exit 1
           fi
+          echo "找到安装包: $INSTALLER"
 
-          echo "Found installer: $INSTALLER"
-
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          if [ "${{ matrix.editor-bundles }}" = "appimage" ]; then
             ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
             tar czf "$ARCHIVE" -C "$(dirname "$INSTALLER")" "$(basename "$INSTALLER")"
-          elif [ "${{ runner.os }}" = "Windows" ]; then
+          elif [ "$RUNNER_OS" = "Windows" ]; then
             ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
-            7z a "$ARCHIVE" "$INSTALLER" >/dev/null
+            7z a "$ARCHIVE" "$INSTALLER" > /dev/null
           else
             ARCHIVE="editor-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
             (cd "$(dirname "$INSTALLER")" && zip -r "$GITHUB_WORKSPACE/$ARCHIVE" "$(basename "$INSTALLER")")
           fi
-
-          echo "EDITOR_ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
           ls -lh "$ARCHIVE"
 
-      # ---------------------- uploads ----------------------
-      - name: Upload server binary to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.SERVER_ARCHIVE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload snapshot binary to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.SNAPSHOT_ARCHIVE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload editor archive to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.EDITOR_ARCHIVE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload binary artifact (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
+      # 手动触发时也要能拿到产物, 所以先统一上传 artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os-label }}-binaries
           path: |
-            ${{ env.SERVER_ARCHIVE }}
-            ${{ env.SNAPSHOT_ARCHIVE }}
-            ${{ env.EDITOR_ARCHIVE }}
+            ./*.zip
+            ./*.tar.gz
+          if-no-files-found: error
+
+  # 发版时把所有平台的产物一次性挂到 Release 上; 手动触发只留 artifact
+  publish:
+    name: Publish release assets
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+# 同一分支上的旧任务直接取消, 省一次全套编译
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Rust 侧: clippy 与 test 共享同一个 target/ 缓存, 所以放在一个 job 里跑完
+  rust:
+    name: Rust (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude webgal-ink -- --deny warnings
+
+      - name: Test
+        run: cargo test --workspace --exclude webgal-ink
+
+  # 编辑器前端: 不碰 Rust、不碰 wasm, 一条 install 跑完所有检查
+  editor:
+    name: Editor (lint + type-check + test + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
+      - name: Install dependencies
+        working-directory: editor
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting
+        working-directory: editor
+        run: bun run format-check
+
+      - name: Lint
+        working-directory: editor
+        run: bun run lint
+
+      - name: Type check
+        working-directory: editor
+        run: bun run type-check
+
+      - name: Unit tests
+        working-directory: editor
+        run: bun run test
+
+      # 这一步以前只有 release 才会跑, 于是「构建挂了」总是要到发版才发现
+      - name: Build frontend
+        working-directory: editor
+        run: bun run build
+
+  # 编辑器后端要在 Linux 上单独验一次: 它需要 Tauri 系统依赖与前端产物
+  editor-native:
+    name: Editor backend (clippy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create placeholder frontend dist
+        run: |
+          mkdir -p editor/dist
+          printf '<!doctype html><html><body></body></html>' > editor/dist/index.html
+
+      - name: Clippy
+        run: cargo clippy -p webgal-ink -- --deny warnings
+
+  # Playground 是唯一需要 wasm 的 TS 模块, 所以单独一个 job, 不拖累其它检查
+  playground:
+    name: Parse playground (wasm + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 预编译二进制, 别再用 cargo install 现编一个 wasm-pack
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build wasm package
+        working-directory: packages/webgal-parse-playground
+        run: bun run build:wasm
+
+      # 必须在 build:wasm 之后: 该包以 file: 依赖 crates/webgal-language-service/pkg
+      - name: Install dependencies
+        working-directory: packages/webgal-parse-playground
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting
+        working-directory: packages/webgal-parse-playground
+        run: bun run format-check
+
+      - name: Lint
+        working-directory: packages/webgal-parse-playground
+        run: bun run lint
+
+      - name: Type check
+        working-directory: packages/webgal-parse-playground
+        run: bun run type-check
+
+      - name: Build
+        working-directory: packages/webgal-parse-playground
+        run: bun run build

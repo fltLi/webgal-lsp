@@ -92,12 +92,12 @@ cargo run -p webgal-language-server -- --log-level debug --disable-hover --disab
 
 > :warning: 该扩展仅用于调试，不会发布到扩展市场。
 
-扩展源码位于 `packages/vscode-extension`。
+扩展源码位于 `packages/webgal-vscode-extension`。
 
 1. 安装依赖：
    ```bash
-   cd packages/vscode-extension
-   npm install
+   cd packages/webgal-vscode-extension
+   bun install
    ```
 2. 在 VS Code 中打开项目根目录，按 `F5` 并选择 **`Launch VSCode Extension`** 调试配置，将自动编译语言服务器并启动扩展开发窗口。
 
