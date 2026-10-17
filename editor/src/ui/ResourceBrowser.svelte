@@ -21,10 +21,10 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
   import { gitStage } from '../commands/git';
-  import { requestAlert, requestConfirm } from '../confirm';
+  import { requestAlert } from '../confirm';
   import {
-    copyEntryToDirectory,
     copyRelativePathToClipboard,
+    copySourcesToDirectory,
     createFile,
     createFolder,
     deletePath,
@@ -37,8 +37,9 @@
   import { absToRel, buildGitLetterIndex, normalizeRelPath, stageMenuItem } from '../git/util';
   import { refreshGitStatus } from '../git/status';
   import { assetUrlFor } from '../lib/assetUrl';
+  import { kindFor } from '../lib/fileKind';
   import { fs } from '../lib/fs';
-  import { joinPath } from '../lib/paths';
+  import { browserRelativePath, joinPath, projectRelativePath } from '../lib/paths';
   import { previewClient } from '../preview/client';
   import { configPathOf, openProjectConfig, openResourceFile } from '../project';
   import { activeTabOf } from '../state/selectors';
@@ -90,6 +91,46 @@
   const activeTab = $derived(activeTabOf(appStore));
   const selectedPath = $derived(activeTab?.kind === 'resource' || activeTab?.kind === 'config' ? activeTab.path : null);
 
+  /*
+   * 本组件自己发起的一次"定位" (导入后选中新文件)。
+   *
+   * 复用 `FileTree` 的 reveal 链路 —— 切目录、扩页、滚动与高亮都在那里, 自己再实现一套必然
+   * 与"从选项卡栏定位过来"的行为分叉。**id 取负数**: 父级的请求是正数, 回调只拿到 id, 靠符号
+   * 区分才不会把对方的请求清掉。
+   */
+  let localReveal = $state<FileTreeRevealRequest | null>(null);
+  let localRevealSequence = 0;
+  const effectiveReveal = $derived(localReveal ?? revealRequest);
+
+  function revealImported(path: string): void {
+    localRevealSequence += 1;
+    localReveal = { id: -localRevealSequence, path };
+  }
+
+  /** 由路径拼一个列表项 (资源页的"选中"就是右侧预览, 需要一个完整的 `FileNode`)。 */
+  function nodeForPath(path: string): FileNode | null {
+    const root = gameRoot;
+    const name = path.split(/[\\/]/).pop();
+    if (!root || !name) return null;
+    return { name, path, rel: projectRelativePath(root, path), isDirectory: false, kind: kindFor(name) };
+  }
+
+  function handleRevealComplete(id: number): void {
+    const local = localReveal;
+    if (local?.id === id) {
+      localReveal = null;
+      /*
+       * 资源页的"选中"就是右侧预览, 所以导入后直接把它预览出来。
+       *
+       * 必须**等定位完成**再设: 换目录时 `onDirectoryChange` 会清掉选中 (见 `clearPreview`),
+       * 提前设的话会被那次清理吞掉。多个文件时只预览第一个。
+       */
+      previewNode = nodeForPath(local.path);
+      return;
+    }
+    onRevealComplete?.(id);
+  }
+
   // 站点地址在项目/引擎变化后重取
   $effect(() => {
     const path = projectPath;
@@ -129,18 +170,21 @@
 
   /**
    * 「添加资源」= **导入已有文件** (多选对话框 → 逐个拷入当前目录, 重名自动改名), 不是"新建一个
-   * 空文件" —— 资源浏览的主要用法正是从别处把素材拷进来。复制完刷新目录。
+   * 空文件" —— 资源浏览的主要用法正是从别处把素材拷进来。复制完刷新目录并定位到第一个
+   * (与拖入的表现一致)。
    */
   async function addResources(dir: string): Promise<void> {
     try {
       const created = await importFilesToDir(dir);
-      if (created.length > 0) refresh();
+      if (created.length === 0) return;
+      refresh();
+      if (created[0]) revealImported(created[0]);
     } catch (error) {
       requestAlert('添加资源失败', String(error));
     }
   }
 
-  /** 「复制相对路径」: 相对项目根, 实现在 `fileops.ts` (两个浏览器共用这一处口径)。 */
+  /** 「复制相对路径」: 相对项目根, 口径在 `lib/paths.ts` (菜单 / 剪贴板 / 拖进编辑器共用)。 */
   async function copyRelativePath(path: string): Promise<void> {
     const project = projectPath;
     if (!project) return;
@@ -243,49 +287,42 @@
     clearPreview();
   }
 
-  function droppedPaths(event: DragEvent): string[] {
-    const direct = Array.from(event.dataTransfer?.files ?? [])
-      .map((file) => (file as File & { path?: string }).path)
-      .filter((path): path is string => Boolean(path));
-    if (direct.length > 0) return direct;
-
-    const fallback = event.dataTransfer?.getData('text/uri-list') ?? '';
-    return fallback
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('file://'))
-      .map((line) => decodeURIComponent(line.replace(/^file:\/\//, '').replace(/^\\\?\\/, '')));
-  }
-
-  async function handleDropFiles(directory: string, event: DragEvent): Promise<void> {
-    const paths = droppedPaths(event);
+  /**
+   * 系统文件拖进来 = 与「添加资源」**同一套逻辑**: 拷贝进目标目录 (重名自动改名), 然后刷新。
+   *
+   * 路径由 `dnd/external-drop.svelte.ts` 经 webview 的拖放事件给出 (页面收不到系统的 `drop`,
+   * 那里有完整说明)。目标目录可能是目录行 (拖到子目录上), 由 `FileTree` 判定;
+   * 导入后定位到那一项 —— 拖进子目录时会自动打开那一层目录。
+   */
+  async function handleDropPaths(directory: string, paths: string[]): Promise<void> {
     if (paths.length === 0) return;
     try {
-      for (const source of paths) await copyEntryToDirectory(source, directory);
+      const created = await copySourcesToDirectory(paths, directory);
       refresh();
+      // 多个文件时只定位第一个: 用户的目光只需要一个落点
+      if (created[0]) revealImported(created[0]);
     } catch (error) {
       requestAlert('导入失败', `${String(error)}\n\n目标目录：${directory}`);
     }
   }
 
-  function askDelete(node: FileNode): void {
-    requestConfirm({
-      title: '移入回收站',
-      description: `将「${node.name}」移入系统回收站（可恢复）。`,
-      confirmLabel: '移入回收站',
-      danger: true,
-      action: () => {
-        void (async () => {
-          try {
-            await deletePath(node.path);
-            if (previewNode?.path === node.path) previewNode = null;
-            refresh();
-          } catch (error) {
-            requestAlert('移入回收站失败', `${node.name}\n\n${String(error)}`);
-          }
-        })();
-      },
-    });
+  /**
+   * 移入系统回收站,**不弹确认框**。
+   *
+   * 动作本身可恢复 (回收站), 而编辑页里删文件是高频操作, 每次都确认只会训练出"盲点确定";
+   * 菜单项的名字已经把这个后果说清楚了。开始界面里删**整个项目目录**仍然要确认 (范围大得多的
+   * 不可逆动作)。失败必须报出来 —— 静默失败会让人以为已经删掉了。
+   */
+  function removeEntry(node: FileNode): void {
+    void (async () => {
+      try {
+        await deletePath(node.path);
+        if (previewNode?.path === node.path) previewNode = null;
+        refresh();
+      } catch (error) {
+        requestAlert('移入回收站失败', `${node.name}\n\n${String(error)}`);
+      }
+    })();
   }
 
   function askStage(node: FileNode): void {
@@ -396,7 +433,7 @@
             label: '移入回收站',
             iconName: 'Delete',
             danger: true,
-            onClick: () => askDelete(itemMenu!.node),
+            onClick: () => removeEntry(itemMenu!.node),
           },
         ]
       : []
@@ -581,8 +618,8 @@
     {viewStateKey}
     {refreshKey}
     selectedPath={previewNode?.path ?? selectedPath}
-    {revealRequest}
-    {onRevealComplete}
+    revealRequest={effectiveReveal}
+    onRevealComplete={handleRevealComplete}
     {assetUrl}
     excludeTop={isSceneDirectory}
     menu={toolbarMenu}
@@ -593,7 +630,8 @@
     onBlankContextMenu={(dir, event) => (blankMenu = { x: event.clientX, y: event.clientY, dir })}
     onItemContextMenu={(node, event) => (itemMenu = { x: event.clientX, y: event.clientY, node })}
     onDirectoryChange={() => clearPreview()}
-    onDropFiles={(dir, event) => void handleDropFiles(dir, event)}
+    dragText={(node) => (projectPath ? browserRelativePath(projectPath, node.path) : undefined)}
+    onDropPaths={(dir, paths) => void handleDropPaths(dir, paths)}
   />
 {/snippet}
 

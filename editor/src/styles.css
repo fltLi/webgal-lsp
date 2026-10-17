@@ -6438,6 +6438,11 @@ input[type='number'].voice-control {
 .code-editor-host {
   width: 100%;
   min-height: 0;
+  /*
+   * 拖放时那条竖线的定位基准 (`.drop-caret` 是宿主里的绝对定位子元素)。
+   * Monaco 自己的根节点也是 `position: relative` 且铺满宿主, 因此这一条不影响编辑器布局。
+   */
+  position: relative;
 }
 
 /* -------- ContextMenu.svelte -------- */
@@ -6898,4 +6903,78 @@ input[type='number'].voice-control {
   white-space: nowrap;
   text-align: center;
   font-size: 11px;
+}
+
+/* -------- 拖放 (dnd/) -------- */
+
+/*
+ * 拖拽路径时跟着指针的小标签 (见 `ui/PathDragGhost.svelte`)。
+ *
+ * `pointer-events: none` 是**功能性的**, 不是样式偏好: 落点靠 `document.elementFromPoint`
+ * 命中检测, 浮层一旦能被命中就会挡住指针下面的编辑器, 自己变成落点。
+ */
+.path-drag-ghost {
+  position: fixed;
+  z-index: 3000;
+  max-width: 320px;
+  padding: 3px 8px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 4px;
+  background: var(--app-panel);
+  color: var(--app-fg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* 系统文件拖进来的落点: 整层列表 (落进当前目录) */
+.file-tree-list.drop-target {
+  background: var(--app-hover);
+  outline: 1px dashed var(--app-accent);
+  outline-offset: -2px;
+}
+
+/* 落在某个目录行上 (落进那一层目录): 整层与那一行只应亮一个, 因此行上换底色而不是虚线框 */
+.file-tree-dir.drop-target {
+  background: var(--app-selected);
+  outline: 1px solid var(--app-accent);
+  outline-offset: -1px;
+}
+
+/* 路径拖到编辑器上时的落点提示 */
+.code-editor-host.drop-target {
+  outline: 2px solid var(--app-accent);
+  outline-offset: -2px;
+}
+
+/*
+ * 拖动时那条"会插到这里"的竖线 (CodeEditor 在拖动期间创建并逐帧定位它)。
+ *
+ * `position: absolute` 相对 `.code-editor-host` —— 那个宿主带 `position: relative`
+ * (见上面 `.code-editor-host`), 否则竖线会按上面的容器定位, 跑到别处去。
+ * `pointer-events: none` 是功能性的: 落点靠 `document.elementFromPoint` 命中检测, 竖线一旦能被
+ * 命中就会盖住它下面那一列文字。
+ */
+.drop-caret {
+  position: absolute;
+  z-index: 6;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--app-accent);
+  pointer-events: none;
+}
+
+/*
+ * 应用内拖拽期间的鼠标指针 (由 `dnd/path-drag.svelte.ts` 给 `body` 加上这个类)。
+ *
+ * 指针被源元素捕获着、全程跨好几个元素, 逐个元素写 `cursor` 必然有漏, 所以统一压在 `body` 上 ——
+ * 漏掉一段就会变回箭头, 看起来像"拖丢了"。
+ */
+body.path-dragging,
+body.path-dragging * {
+  cursor: copy !important;
 }

@@ -153,6 +153,7 @@ editor/src/                 前端 (Svelte 5 + SvelteKit + Monaco)
     Icon.svelte / icons.ts  图标：一个组件 + 一份显式静态导入清单
   styles.css                全局样式唯一来源（主题变量在 :root 与 [data-theme='dark']）
   commands/*.ts             对后端 invoke 的薄封装（voice / git / snapshot / server / gameConfig / devtools）
+  dnd/                      拖放：应用内"拖路径进编辑器"（指针事件）与系统文件拖进浏览器（webview 事件）
   lib/*.ts                  无 UI 的基础设施：fs、uri、paths、settings、bindings、session、window、engine、theme
   project.ts / fileops.ts / unsaved.ts / confirm.ts   项目生命周期、文件操作、未保存与通用确认框
   lsp/                      LSP 客户端、Monaco 集成、文件监听、重命名、文档链接、高亮回退
@@ -335,6 +336,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 编辑器里注释文字莫名变英文 / 提示失效 | 检查文件是否为 UTF-8；改文件请用读写工具，别用会按 GBK 转码的命令行重定向 |
 | 打开项目后没有高亮、状态栏却显示就绪 | 文件监听事件风暴或握手前丢帧，见第 4 节；用 `--log-level debug` 看语言服务器日志（走 stderr） |
 | 预览白屏或不同步 | 确认静态站点已挂载（`add_static_site` 的项目 / 引擎路径），并检查 `/api/webgalsync` 连接 |
+| **拖放没反应（从资源管理器拖进场景 / 资源，或把资源、选项卡拖进编辑器）** | 页面内的 HTML5 DnD 在本应用里**不可用**：窗口没关 `dragDropEnabled`，Tauri 接管系统拖放后页面的 `dragover` / `drop` 不再派发，`dataTransfer.files[].path` 也不存在。系统文件走 webview 的拖放事件、应用内拖拽用指针事件，见第 3 节 `dnd/` |
 | 单测在新环境跑不起来 | 测试应保持 node 环境纯逻辑，勿引入 jsdom / 真实 Tauri；参照 `editor/tests/lsp-client.test.ts` |
 | ESLint 对 `.svelte` / `.svelte.ts` 报 `Parsing error: parserOptions.project has been provided` 或 `Unexpected token {` | 配置文件里的 `files` 划分错了，见第 2 节的分工说明 |
 | 在 `$props()` 解构里写 JSDoc（`/** */`）导致一整片无关文件报语法 / 类型错 | 解构模式里不能放 JSDoc。注释移到解构**外面**并改用 `/* */`；报错会级联到别的文件，别被吓到 |

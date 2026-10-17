@@ -19,6 +19,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
+  import { externalDrop, registerExternalDropZone } from '../dnd/external-drop.svelte';
+  import { beginPathDrag, isClickAfterDragSuppressed } from '../dnd/path-drag.svelte';
   import { compareNames } from '../lib/collate';
   import { fs, type Unwatch } from '../lib/fs';
   import { JSON_EXT, kindFor, type FileKind } from '../lib/fileKind';
@@ -206,8 +208,14 @@
     side,
     /** 列表空白处右键 */
     onBlankContextMenu,
-    /** 列表空白处释放拖拽的文件/目录 */
-    onDropFiles,
+    /**
+     * 拖动某个文件时, 要插进编辑器的文本 (通常就是那一项「复制相对路径」的结果)。
+     *
+     * 路径口径归调用方 (只有它知道项目根), 返回空字符串则该条目**不参与**拖拽。
+     */
+    dragText,
+    /** 系统文件拖进这个浏览器 (列表或预览栏): 目标目录 + 拖进来的绝对路径。传了才开放系统拖放。 */
+    onDropPaths,
   }: {
     rootPath: string;
     onOpen: (file: FileNode) => void;
@@ -227,7 +235,8 @@
     badge?: Snippet<[FileNode]>;
     side?: Snippet;
     onBlankContextMenu?: (currentDir: string, event: MouseEvent) => void;
-    onDropFiles?: (currentDir: string, event: DragEvent) => void;
+    dragText?: (node: FileNode) => string | undefined;
+    onDropPaths?: (directory: string, paths: string[]) => void;
   } = $props();
 
   /*
@@ -252,6 +261,8 @@
   let flatLoading = $state(false);
 
   let list: HTMLDivElement | undefined = $state();
+  /** 整个浏览区的根 (含右侧预览栏): 系统文件拖到这里都算"落进这个浏览器" */
+  let root: HTMLDivElement | undefined = $state();
   let toolbarMenuButton: HTMLButtonElement | undefined = $state();
   let toolbarMenuOpen = $state(false);
   /**
@@ -275,6 +286,16 @@
 
   const currentAbs = $derived(currentRel ? joinNative(rootPath, currentRel.replace(/\//g, '\\')) : rootPath);
 
+  /**
+   * 目录内容是否正在重列 (含"刷新一次")。
+   *
+   * 与 `loading` 分开: `loading` 只表示"这一层还没读到过", 控制的是"正在读取…"提示; 而这里
+   * 连**重新列一遍**也算 —— 定位请求必须等这一轮回来再判断目标在不在, 否则会拿着上一份列表
+   * 下结论 (刚导入的文件还没出现在列表里, 于是"定位"被当成"找不到"消费掉, 高亮永远不亮)。
+   * 不并进 `loading` 是刻意的: 那会让每次文件监听刷新都闪一下"正在读取…"。
+   */
+  let reloading = $state(false);
+
   /** 加载当前层目录。 */
   $effect(() => {
     const dir = currentAbs;
@@ -282,6 +303,7 @@
     void refreshKey;
 
     let cancelled = false;
+    reloading = true;
     void (async () => {
       try {
         const entries = await fs.readDir(dir);
@@ -309,6 +331,8 @@
           dirEntries = [];
           loadedDirectory = dir;
         }
+      } finally {
+        if (!cancelled) reloading = false;
       }
     })();
 
@@ -419,6 +443,7 @@
 
     // 门禁: 三种"数据还没到"的情况一律先返回, 不下结论
     if (loadedDirectory !== currentAbs) return;
+    if (reloading) return; // 列表正在重列 (例如刚导入文件后刷新): 等这一轮回来再判断
     if (flat && flatLoading) return;
     if (searchResults === null && query.trim() !== '') return;
 
@@ -429,10 +454,17 @@
       return;
     }
 
+    /*
+     * 高亮**不以"这份列表里找没找到"为前提**。
+     *
+     * 高亮是按路径比较出来的 (见 `highlightPath`), 所以行在下一轮刷新之后才出现也照样会亮。
+     * 这一点对"导入后选中新文件"很关键: 刷新与定位几乎同时发生, 万一定位先跑完, 目标还不在
+     * 列表里, 至少高亮不会丢 (只是滚动会跳过)。
+     */
+    revealedPath = request.path;
     if (index >= 0 && list) {
       const row = list.querySelector<HTMLElement>(`[data-file-path="${cssEscape(request.path)}"]`);
       row?.scrollIntoView({ block: 'nearest' });
-      revealedPath = request.path;
     }
 
     // 定位会改变滚动位置, 因此"恢复上次滚动"就此作废, 免得两个 effect 互相拉扯
@@ -619,6 +651,39 @@
   const loading = $derived(loadedDirectory !== currentAbs);
   /** 高亮: 定位优先, 其次是父级给的"当前选中" */
   const highlightPath = $derived(revealedPath ?? selectedPath);
+
+  /**
+   * 系统文件拖进来会落进哪一层目录。
+   *
+   * 落在**目录行**上就是那一层 (拖到 `figure` 上就别丢进场景目录), 落在别处 (文件行 / 空白)
+   * 就是当前目录。判据是行上的 `data-file-directory` 标记: 文件行与目录行都带 `data-file-path`,
+   * 靠它区分才不会把文件当成目录。
+   */
+  function dropDirectoryFor(hit: Element | null): string {
+    const row = hit?.closest<HTMLElement>('[data-file-directory]');
+    return row?.dataset['filePath'] ?? currentAbs;
+  }
+
+  /**
+   * 系统文件拖放的落点登记。
+   *
+   * 页面收不到系统拖放的 `drop` 事件, 落点只能由 webview 的事件 + 坐标命中检测算出来
+   * (见 `dnd/external-drop.svelte.ts`)。这里把"落在哪一层目录"翻译成父级能用的入参。
+   *
+   * 登记在**整个浏览区**而不是只登记列表: 右侧预览栏、工具栏也是"这个浏览器"的一部分,
+   * 只认列表的话把文件丢在预览区上会什么都不发生。
+   */
+  $effect(() => {
+    const element = root;
+    const drop = onDropPaths;
+    if (!element || !drop) return;
+    return registerExternalDropZone(element, (hit, paths) => drop(dropDirectoryFor(hit), paths));
+  });
+
+  /** 拖放中要高亮的目录 (null = 指针不在本浏览器上, 或没有可落的目标) */
+  const dropHoverDirectory = $derived(
+    externalDrop.hit && root?.contains(externalDrop.hit) ? dropDirectoryFor(externalDrop.hit) : null
+  );
 </script>
 
 {#snippet toolbar()}
@@ -685,6 +750,7 @@
 {#snippet listBody()}
   <div
     class="file-tree-list"
+    class:drop-target={dropHoverDirectory !== null && samePath(dropHoverDirectory, currentAbs)}
     bind:this={list}
     role="list"
     onscroll={handleScroll}
@@ -706,15 +772,6 @@
        * 浏览 / 场景浏览。自带一份兜底菜单只会与父级给的条目不一致, 且父级漏传时才出现。
        */
       onBlankContextMenu?.(currentAbs, event);
-    }}
-    ondragover={(event) => {
-      if (!onDropFiles) return;
-      event.preventDefault();
-    }}
-    ondrop={(event) => {
-      if (!onDropFiles) return;
-      event.preventDefault();
-      onDropFiles(currentAbs, event);
     }}
   >
     <!--
@@ -744,10 +801,12 @@
         {#if node.isDirectory}
           <div
             class="file-tree-dir"
+            class:drop-target={dropHoverDirectory !== null && samePath(node.path, dropHoverDirectory)}
             role="button"
             tabindex="0"
             title={node.name}
             data-file-path={node.path}
+            data-file-directory
             onclick={() => openDirectory(node)}
             onkeydown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -775,7 +834,21 @@
             class:active={highlightPath ? samePath(node.path, highlightPath) : false}
             title={node.rel}
             data-file-path={node.path}
-            onclick={() => onOpen(node)}
+            onpointerdown={(event) => {
+              /*
+               * 按下就登记一次"可能的拖拽"(**只有文件**: 目录的路径不是脚本里能直接用的东西,
+               * 而拖目录又极易被误当成"进入目录")。没越过阈值的话什么都不会发生, 单击照常打开。
+               */
+              const text = dragText?.(node);
+              if (text) beginPathDrag(event, text);
+            }}
+            onclick={() => {
+              // 拖拽结束紧跟的那一次 click 是残余, 别顺手把文件也打开 (见 `dnd/path-drag.svelte.ts`)
+              if (isClickAfterDragSuppressed()) return;
+              // 用户自己挑了另一个文件: 上一次「定位」留下的高亮到此为止, 否则它会一直压住选中态
+              revealedPath = null;
+              onOpen(node);
+            }}
             ondblclick={() => onDoubleClick?.(node)}
             oncontextmenu={(event) => {
               event.preventDefault();
@@ -826,7 +899,7 @@
   根容器是必须的: 父级 `.sidebar-content` 是**横向** flex, 三个平级元素 (工具栏 / 面包屑 /
   列表) 会被排成并排的三列, 文件树完全不可用。`.file-tree` 自己就是纵向 flex 列。
 -->
-<div class="file-tree">
+<div class="file-tree" bind:this={root}>
   {@render toolbar()}
   {#if side}
     <!--

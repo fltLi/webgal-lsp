@@ -7,6 +7,9 @@
 
   * **拖拽用指针事件, 不用 HTML5 DnD**: 后者在部分 WebView 中不可靠 (拖拽影像不跟手、
     drop 不触发)。阈值 6px 才判定为拖拽, 否则与"点击选中"冲突。
+  * **一张卡有两种拖拽去向**: 在选项卡栏里 = 排序; 拖到编辑器上 = 把它的相对路径插进去
+    (与右键菜单的「复制相对路径」同一口径, 实现见 `dnd/path-drag.svelte.ts`)。
+    两者靠"指针下面有没有落点"区分, 同时只会显示其中一种反馈。
   * **几何测量是命令式的**: 量出各选项卡相对滚动内容的 left/width 交给纯函数
     (`dropSlot` / `slotToIndex` / `dropIndicator`) 算落点。拖动过程中**不重排** tabs ——
     一旦在 pointermove 里重排, 落点会跟着漂。
@@ -19,6 +22,15 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { onMount } from 'svelte';
 
+  import {
+    clearPathDrag,
+    dropPathAt,
+    findPathDropTarget,
+    isClickAfterDragSuppressed,
+    previewPathDrag,
+    suppressClickAfterDrag,
+  } from '../dnd/path-drag.svelte';
+  import { browserRelativePath } from '../lib/paths';
   import { requestCloseTab } from '../tabs/close';
   import { dropIndicator, dropSlot, slotToIndex, type TabBox } from '../tabs/dnd';
   import type { WorkbenchTabItem } from '../tabs/model';
@@ -35,7 +47,7 @@
   let { onLocateTab }: { onLocateTab?: (path: string, kind: 'scene' | 'resource' | 'config') => void } = $props();
 
   let container: HTMLDivElement | undefined = $state();
-  let dragState: { id: string; startX: number; active: boolean } | null = null;
+  let dragState: { tab: WorkbenchTabItem; startX: number; active: boolean } | null = null;
   let tabSwitch: { ids: string[]; currentId: string | null } | null = null;
   let draggingId = $state<string | null>(null);
   let indicator = $state<{ id: string; side: 'before' | 'after' } | null>(null);
@@ -125,8 +137,21 @@
     const target = event.target as HTMLElement | null;
     // 关闭按钮与模式开关不触发拖拽
     if (target?.closest('.tab-strip-close') || target?.closest('.tab-strip-action')) return;
-    dragState = { id: tab.id, startX: event.clientX, active: false };
+    dragState = { tab, startX: event.clientX, active: false };
     event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  /**
+   * 这张卡能被拖出去时, 松手要插入的文本 (与它那一项「复制相对路径」完全一样)。
+   *
+   * 没有磁盘实体的卡 (工作台 / 说明 / 预处理 / 差异) 返回 null —— 它们没有能在脚本里写出来
+   * 的相对路径。
+   */
+  function dragTextOf(tab: WorkbenchTabItem): string | null {
+    const path = localPathOf(tab);
+    const project = appStore.projectPath;
+    if (!path || !project) return null;
+    return browserRelativePath(project, path);
   }
 
   function onPointerMove(event: PointerEvent) {
@@ -135,25 +160,65 @@
     if (!state.active) {
       if (Math.abs(event.clientX - state.startX) < DRAG_THRESHOLD) return;
       state.active = true;
-      draggingId = state.id;
+      draggingId = state.tab.id;
     }
     const pointerX = pointerInContent(event.clientX);
     if (pointerX === null) return;
-    indicator = dropIndicator(appStore.tabs, state.id, dropSlot(measure(), pointerX));
+
+    /*
+     * 拖到编辑器上 = 把这张卡的相对路径插进去, 此时**不画**排序竖线。
+     *
+     * 两个落点同时出现在眼前时, 用户没法判断松手到底会发生什么; 因此命中编辑器就切到
+     * "插入路径"的表现, 回到选项卡栏再切回排序。
+     */
+    const text = dragTextOf(state.tab);
+    if (text !== null && findPathDropTarget(event.clientX, event.clientY)) {
+      previewPathDrag(text, { x: event.clientX, y: event.clientY });
+      indicator = null;
+      return;
+    }
+    clearPathDrag();
+    indicator = dropIndicator(appStore.tabs, state.tab.id, dropSlot(measure(), pointerX));
   }
 
-  function endDrag(event: PointerEvent) {
+  /**
+   * 结束拖拽。
+   *
+   * `cancelled` (指针被系统取消) 只清状态, 既不排序也不插路径。
+   */
+  function endDrag(event: PointerEvent, cancelled = false) {
     const state = dragState;
     dragState = null;
     draggingId = null;
     indicator = null;
-    if (!state?.active) return;
+    clearPathDrag();
+    if (!state?.active || cancelled) return;
+
+    /*
+     * 拖到编辑器上: 插入相对路径 (与「复制相对路径」同一口径), 并且吞掉紧跟的 click ——
+     * 否则会把用户刚拖进去的那一页切走, 编辑器当场换掉。
+     */
+    const text = dragTextOf(state.tab);
+    if (text !== null && dropPathAt(text, { x: event.clientX, y: event.clientY })) {
+      suppressClickAfterDrag();
+      return;
+    }
 
     const pointerX = pointerInContent(event.clientX);
     if (pointerX === null) return;
+
+    /*
+     * 松手落在选项卡栏**之外**(既不是编辑器落点, 也不是栏内) 就什么都不做。
+     *
+     * 只按 X 算落点的话, 往下拖到编辑区再松手会被算成"移到最右"—— 那个位置与用户看着的地方
+     * 完全无关。上面的"插入相对路径"已经处理掉编辑器这一种, 其余栏外情况一律视为取消。
+     */
+    const strip = container?.getBoundingClientRect();
+    if (strip && (event.clientY < strip.top || event.clientY > strip.bottom)) return;
+
     const slot = dropSlot(measure(), pointerX);
-    const target = slot === null ? null : slotToIndex(appStore.tabs, state.id, slot);
-    if (target !== null) actions.moveTab(state.id, target);
+    const target = slot === null ? null : slotToIndex(appStore.tabs, state.tab.id, slot);
+    if (target !== null) actions.moveTab(state.tab.id, target);
   }
 
   function isDirtyTab(tab: WorkbenchTabItem): boolean {
@@ -218,9 +283,13 @@
       title={tab.tooltip}
       onpointerdown={(event) => onPointerDown(event, tab)}
       onpointermove={onPointerMove}
-      onpointerup={endDrag}
-      onpointercancel={endDrag}
-      onclick={() => actions.activateTab(tab.id)}
+      onpointerup={(event) => endDrag(event)}
+      onpointercancel={(event) => endDrag(event, true)}
+      onclick={() => {
+        // 拖出去插路径之后紧跟的 click 是残余: 别把那一页切走 (见 `dnd/path-drag.svelte.ts`)
+        if (isClickAfterDragSuppressed()) return;
+        actions.activateTab(tab.id);
+      }}
       onkeydown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();

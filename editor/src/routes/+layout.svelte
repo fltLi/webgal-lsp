@@ -21,6 +21,7 @@
   import { MediaQuery } from 'svelte/reactivity';
 
   import { openDevtools } from '../commands/devtools';
+  import { startExternalDropWatcher } from '../dnd/external-drop.svelte';
   import { armWindowRevealFailsafe } from '../lib/boot';
   import { applyTheme, resolveTheme } from '../lib/theme';
   import { lspClient } from '../lsp/client';
@@ -29,6 +30,7 @@
   import { actions, appStore } from '../state/store.svelte';
   import { requestClose, windowCloseAllowed } from '../unsaved';
   import AppConfirmDialog from '../ui/AppConfirmDialog.svelte';
+  import PathDragGhost from '../ui/PathDragGhost.svelte';
   import TitleBar from '../ui/TitleBar.svelte';
   import UnsavedDialog from '../ui/UnsavedDialog.svelte';
   import { voiceController } from '../voice/controller';
@@ -139,8 +141,11 @@
 
     /*
      * 禁止把文件 / 链接拖进窗口, 否则 WebView 会直接**导航**到被拖入的内容, 编辑器连同未保存
-     * 的改动一起消失。场景 / 资源浏览器自己的拖放目标会先 `preventDefault`
-     * (见 `ui/FileTree.svelte` 的 `ondrop`), 所以这里用 `defaultPrevented` 放行它们。
+     * 的改动一起消失。
+     *
+     * ⚠️ 系统文件拖放的**导入**不走这里: Tauri 接管拖放后页面根本收不到 `drop`
+     * (见 `dnd/external-drop.svelte.ts`), 那条链路订阅的是 webview 的拖放事件。这里只是
+     * 兜住"别让 WebView 跳走"。
      */
     const blockDrop = (event: DragEvent) => {
       if (event.defaultPrevented) return;
@@ -149,6 +154,15 @@
     };
     window.addEventListener('dragover', blockDrop);
     window.addEventListener('drop', blockDrop);
+
+    /*
+     * 系统文件拖进窗口: 落在场景 / 资源浏览器上 = 与「添加资源」同一套逻辑 (拷贝进来)。
+     * 订阅是应用级的 (整个窗口一个), 落点由文件树自己登记。
+     */
+    let stopExternalDrop: (() => void) | null = null;
+    void startExternalDropWatcher().then((stop) => {
+      stopExternalDrop = stop;
+    });
 
     /*
      * 吞掉 Monaco 在"编辑器销毁"时逃逸出来的 `Canceled` rejection。
@@ -173,6 +187,7 @@
       window.removeEventListener('dragover', blockDrop);
       window.removeEventListener('drop', blockDrop);
       window.removeEventListener('unhandledrejection', onUnhandledRejection);
+      stopExternalDrop?.();
       stopSessionTracking();
       void unlisten.then((off) => off());
     };
@@ -188,4 +203,7 @@
   <!-- 未保存 / 通用确认对话框是应用级的, 开始界面与编辑页共用 -->
   <UnsavedDialog />
   <AppConfirmDialog />
+
+  <!-- 拖拽路径时跟着指针的浮层 (见 `dnd/path-drag.svelte.ts`) -->
+  <PathDragGhost />
 </div>

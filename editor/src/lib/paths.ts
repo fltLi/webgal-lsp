@@ -37,6 +37,34 @@ export function samePath(a: string, b: string): boolean {
   return toPosix(a).toLowerCase() === toPosix(b).toLowerCase();
 }
 
+/** 项目内的相对路径 (正斜杠)。 */
+export function projectRelativePath(projectPath: string, filePath: string): string {
+  const base = toPosix(stripTrailingSeparator(projectPath));
+  const abs = toPosix(filePath);
+  if (abs === base) return '.';
+  if (abs.toLowerCase().startsWith(`${base.toLowerCase()}/`)) return abs.slice(base.length + 1);
+  return abs;
+}
+
+/**
+ * 浏览器菜单里"复制路径"的取值: 场景去掉 `game/scene/`, 资源去掉 `game/` 与可省略的第一级
+ * 目录 —— 复制出来的是用户写脚本时真正要填的那个相对路径, 而不是磁盘上的完整位置。
+ *
+ * **这是"相对路径"的唯一口径**: 右键菜单、复制到剪贴板、以及"把文件拖进编辑器"都从这里取,
+ * 三处必须给出同一个字符串, 否则用户拖进去的和粘进来的会对不上。
+ */
+export function browserRelativePath(projectPath: string, filePath: string): string {
+  const relative = projectRelativePath(projectPath, filePath).replace(/^\/+/, '');
+  const scenePrefix = 'game/scene/';
+  if (relative.toLowerCase().startsWith(scenePrefix)) return relative.slice(scenePrefix.length);
+
+  const gamePrefix = 'game/';
+  if (!relative.toLowerCase().startsWith(gamePrefix)) return relative;
+  const resourcePath = relative.slice(gamePrefix.length);
+  const segments = resourcePath.split('/');
+  return segments.length > 1 ? segments.slice(1).join('/') : resourcePath;
+}
+
 /** 用平台分隔符拼接目录与名称。 */
 export function joinPath(directory: string, ...segments: string[]): string {
   return [stripTrailingSeparator(directory), ...segments].filter((part) => part !== '').join('\\');

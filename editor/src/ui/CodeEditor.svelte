@@ -20,6 +20,7 @@
   import { untrack } from 'svelte';
 
   import { gitFileChanges, gitFileRegion } from '../commands/git';
+  import { pathDrag, registerPathDropTarget } from '../dnd/path-drag.svelte';
   import { createDocumentSaver } from '../editor/document-saver';
   import { diffGutterMarks } from '../editor/diff-gutter';
   import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
@@ -189,6 +190,75 @@
        * 先后与实例赋值时机问题: 实例一存在, 请求立刻兑现, 与恢复光标是同一步。
        */
       applyPendingReveal(instance, path, model);
+
+      /*
+       * 「拖一份相对路径进来」的落点。
+       *
+       * 从场景/资源浏览器或选项卡栏拖过来的, 是那一项「复制相对路径」的结果 (由源算好传过来),
+       * 落点插入同样的文本 —— 两条入口共用 `lib/paths.ts` 的 `browserRelativePath`, 不在这里再算一遍。
+       *
+       * 落点位置必须自己求: 自定义拖拽没有 HTML5 的原生插入提示, 指针坐标要经
+       * `getTargetAtClientPoint` 换算成缓冲区位置。点不到文字上 (行号槽 / 小地图 / 编辑器边缘)
+       * 时退回当前光标, 而不是干脆不响应 —— 用户按下就落空比落错一行还费解。
+       *
+       * `forceMoveMarkers` 让光标与装饰跟着插入的文本走; 路径里没有换行, 因此结束后直接把列号
+       * 加上长度就是插入内容的末端。
+       */
+
+      /** 拖动时那条"会插到这里"的竖线; 只在拖动期间显示, 由 `hover` 定位 */
+      const dropCaret = document.createElement('div');
+      dropCaret.className = 'drop-caret';
+      dropCaret.hidden = true;
+      container.appendChild(dropCaret);
+
+      /**
+       * 把竖线摆到指针所在的插入位置。
+       *
+       * 坐标取 `getScrolledVisiblePosition`: 它已经把行高、字符宽度、行号槽宽度与滚动都算进去了。
+       * 自己按"字号 × 列号"算会在比例字体、折行与横向滚动上全错。
+       */
+      function placeDropCaret(point: { x: number; y: number } | null): void {
+        const position = point ? instance.getTargetAtClientPoint(point.x, point.y)?.position : null;
+        const visible = position ? instance.getScrolledVisiblePosition(position) : null;
+        if (!visible) {
+          dropCaret.hidden = true;
+          return;
+        }
+        dropCaret.hidden = false;
+        dropCaret.style.left = `${visible.left}px`;
+        dropCaret.style.top = `${visible.top}px`;
+        dropCaret.style.height = `${visible.height}px`;
+      }
+
+      const unregisterPathDrop = registerPathDropTarget(container, {
+        insert: (text, point) => {
+          if (readOnly) return false;
+          const current = instance.getModel();
+          if (!current) return false;
+          const position = instance.getTargetAtClientPoint(point.x, point.y)?.position ?? instance.getPosition();
+          if (!position) return false;
+          instance.executeEdits('drop-relative-path', [
+            { range: monaco.Range.fromPositions(position), text, forceMoveMarkers: true },
+          ]);
+          instance.pushUndoStop();
+          const end = { lineNumber: position.lineNumber, column: position.column + text.length };
+          instance.setPosition(end);
+          instance.revealPositionInCenterIfOutsideViewport(end);
+          instance.focus();
+          return true;
+        },
+        /*
+         * 拖动过程中的"插入位置"提示。
+         *
+         * 自定义拖拽没有原生 caret, 也不方便改鼠标指针 (源元素捕获了指针, 光标由它决定), 所以
+         * 自己画一条竖线 —— 与文本插入符同位置、同行高。
+         */
+        hover: (point) => {
+          if (readOnly) return false; // 插不进去就别给出"可以插"的提示
+          placeDropCaret(point);
+          return true;
+        },
+      });
 
       /*
        * 实时预览指示器 (行号旁那个图标)。
@@ -525,6 +595,8 @@
         escapeSub.dispose();
         document.removeEventListener('click', onHoverLinkClick, true);
         syncRef = null;
+        unregisterPathDrop();
+        dropCaret.remove();
         unbind();
         gutterClickSub.dispose();
         inlineDiff.dispose();
@@ -745,4 +817,4 @@
   }
 </script>
 
-<div class="code-editor-host" bind:this={host}></div>
+<div class="code-editor-host" class:drop-target={pathDrag.target === host} bind:this={host}></div>

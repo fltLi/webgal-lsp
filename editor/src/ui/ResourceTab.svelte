@@ -11,9 +11,9 @@
 -->
 
 <script lang="ts">
-  import { projectRelativePath } from '../fileops';
   import { assetUrlFor } from '../lib/assetUrl';
   import { resolveProjectEnginePath } from '../lib/engine';
+  import { projectRelativePath } from '../lib/paths';
   import { previewClient } from '../preview/client';
   import { appStore, type OpenDocument } from '../state/store.svelte';
   import type { ResourceTab as ResourceTabModel } from '../tabs/model';

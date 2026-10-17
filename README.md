@@ -83,8 +83,7 @@ cargo run -p webgal-language-server -- --log-level debug --disable-hover --disab
 编辑器特性：
 
 - **内置 LSP**：嵌入本项目语言服务器，在编辑器中集成全部功能；
-- 实时预览、**git 版本控制**、资源浏览、深浅色主题（含跟随系统）与编辑器设置；
-- **从命令行打开项目**：`webgal-ink <项目目录>`，目录里有 `game/config.txt` 或 `game/` 时视为 WebGAL 项目；
+- 实时预览、**git 版本控制**、资源浏览、深浅色主题与编辑器设置；
 - **实用工具**：支持 **GSOV 配音工具**、快照打包、小说文本预处理等特性。
 
 ---

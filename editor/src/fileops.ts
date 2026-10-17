@@ -9,6 +9,7 @@
 
 import { copyDirectory, moveToTrash } from './commands/server';
 import { fs } from './lib/fs';
+import { browserRelativePath } from './lib/paths';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
 import { disposeModel } from './lsp/monaco';
@@ -48,31 +49,6 @@ export async function createFolder(dirPath: string, name: string): Promise<strin
   return full;
 }
 
-/** 项目内的相对路径 (正斜杠)。 */
-export function projectRelativePath(projectPath: string, filePath: string): string {
-  const base = projectPath.replace(/[\\/]+$/, '').replace(/\\/g, '/');
-  const abs = filePath.replace(/\\/g, '/');
-  if (abs === base) return '.';
-  if (abs.toLowerCase().startsWith(`${base.toLowerCase()}/`)) return abs.slice(base.length + 1);
-  return abs;
-}
-
-/**
- * 浏览器菜单里"复制路径"的取值: 场景去掉 `game/scene/`, 资源去掉 `game/` 与可省略的第一级
- * 目录 —— 复制出来的是用户写脚本时真正要填的那个相对路径, 而不是磁盘上的完整位置。
- */
-export function browserRelativePath(projectPath: string, filePath: string): string {
-  const relative = projectRelativePath(projectPath, filePath).replace(/^\/+/, '');
-  const scenePrefix = 'game/scene/';
-  if (relative.toLowerCase().startsWith(scenePrefix)) return relative.slice(scenePrefix.length);
-
-  const gamePrefix = 'game/';
-  if (!relative.toLowerCase().startsWith(gamePrefix)) return relative;
-  const resourcePath = relative.slice(gamePrefix.length);
-  const segments = resourcePath.split('/');
-  return segments.length > 1 ? segments.slice(1).join('/') : resourcePath;
-}
-
 /** 在目录里找一个不冲突的目标路径 (加了 ` (1)`、` (2)` 这类后缀)。 */
 export async function uniqueTargetPath(dirPath: string, name: string): Promise<string> {
   const dir = dirPath.replace(/[\\/]+$/, '');
@@ -102,6 +78,18 @@ export async function copyEntryToDirectory(sourcePath: string, targetDir: string
 }
 
 /**
+ * 把一批外部路径 (绝对路径) 复制进某个目录, 返回实际写入的新路径列表。
+ *
+ * 「添加资源」与系统文件拖放**共用这一处**: 两条入口的语义必须完全一致 (拷进来、重名自动
+ * 改名、不动源文件), 各写一份迟早会漂。
+ */
+export async function copySourcesToDirectory(sources: readonly string[], dirPath: string): Promise<string[]> {
+  const created: string[] = [];
+  for (const source of sources) created.push(await copyEntryToDirectory(source, dirPath));
+  return created;
+}
+
+/**
  * 让用户挑若干个文件复制进某个目录 —— 两个浏览器里「添加资源」这一项的动作。
  *
  * 语义是**导入已有的文件/图片/音频** (从别处拷素材进来), 而不是新建一个空文件: 多选对话框
@@ -113,14 +101,12 @@ export async function importFilesToDir(dirPath: string): Promise<string[]> {
   if (!picked) return [];
 
   const sources = Array.isArray(picked) ? picked : [picked];
-  const created: string[] = [];
-  for (const source of sources) created.push(await copyEntryToDirectory(source, dirPath));
-  return created;
+  return copySourcesToDirectory(sources, dirPath);
 }
 
 /**
  * 把"项目内的相对路径"复制到剪贴板 —— 两个浏览器的「复制相对路径」共用这一处: "相对路径怎么算"
- * 只有一个口径 (`browserRelativePath`), 剪贴板被拒 (窗口无焦点 / 无权限) 时静默。
+ * 只有一个口径 (`lib/paths.ts` 的 `browserRelativePath`), 剪贴板被拒 (窗口无焦点 / 无权限) 时静默。
  */
 export async function copyRelativePathToClipboard(projectPath: string, filePath: string): Promise<void> {
   try {

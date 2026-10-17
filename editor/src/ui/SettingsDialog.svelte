@@ -132,16 +132,16 @@
           </section>
 
           <section class="settings-group">
-            <h3>保存与预览</h3>
+            <!--
+              这里**刻意没有**「光标移动时同步预览」: 预览引擎常驻接入, 那个开关只决定"画面是否跟着
+              光标走", 属于边写边调的高频动作, 入口只在预览工具条上 (见 `PreviewPanel.svelte`)。
+              设置里再放一份会让它看起来像"预览总开关"。
+            -->
+            <h3>保存与界面</h3>
             <Checkbox
               checked={settings.autoSave}
               label="自动保存"
               onchange={(checked) => patch({ autoSave: checked })}
-            />
-            <Checkbox
-              checked={settings.autoSyncPreview}
-              label="光标移动时同步预览"
-              onchange={(checked) => patch({ autoSyncPreview: checked })}
             />
             <div class="settings-field">
               <span class="settings-label">诊断列表</span>

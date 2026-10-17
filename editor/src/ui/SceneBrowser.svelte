@@ -11,10 +11,10 @@
 
 <script lang="ts">
   import { gitStage } from '../commands/git';
-  import { requestAlert, requestConfirm } from '../confirm';
+  import { requestAlert } from '../confirm';
   import {
-    copyEntryToDirectory,
     copyRelativePathToClipboard,
+    copySourcesToDirectory,
     createFile,
     createFolder,
     deletePath,
@@ -27,7 +27,7 @@
   import { buildDiagnosticIndex } from '../diagnostics/model';
   import { fs } from '../lib/fs';
   import { absToRel, buildGitLetterIndex, normalizeRelPath, stageMenuItem } from '../git/util';
-  import { joinPath } from '../lib/paths';
+  import { browserRelativePath, joinPath } from '../lib/paths';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { openFile } from '../project';
   import { activeTabOf } from '../state/selectors';
@@ -62,21 +62,47 @@
   const activeTab = $derived(activeTabOf(appStore));
   const selectedPath = $derived(activeTab?.kind === 'scene' ? activeTab.path : null);
 
+  /*
+   * 本组件自己发起的一次"定位" (导入后选中新文件)。
+   *
+   * 复用 `FileTree` 的 reveal 链路 —— 切目录、扩页、滚动与高亮都在那里, 自己再实现一套必然
+   * 与"从选项卡栏定位过来"的行为分叉。**id 取负数**: 父级的请求是正数, 回调只拿到 id, 靠符号
+   * 区分才不会把对方的请求清掉。
+   */
+  let localReveal = $state<FileTreeRevealRequest | null>(null);
+  let localRevealSequence = 0;
+  const effectiveReveal = $derived(localReveal ?? revealRequest);
+
+  function revealImported(path: string): void {
+    localRevealSequence += 1;
+    localReveal = { id: -localRevealSequence, path };
+  }
+
+  function handleRevealComplete(id: number): void {
+    if (localReveal?.id === id) {
+      localReveal = null;
+      return;
+    }
+    onRevealComplete?.(id);
+  }
+
   function refresh(): void {
     refreshKey += 1;
   }
 
-  /** 「添加资源」= 导入已有文件; 复制完刷新目录。 */
+  /** 「添加资源」= 导入已有文件; 复制完刷新目录并定位到第一个 (与拖入的表现一致)。 */
   async function addResources(dir: string): Promise<void> {
     try {
       const created = await importFilesToDir(dir);
-      if (created.length > 0) refresh();
+      if (created.length === 0) return;
+      refresh();
+      if (created[0]) revealImported(created[0]);
     } catch (error) {
       requestAlert('添加资源失败', String(error));
     }
   }
 
-  /** 「复制相对路径」: 相对项目根, 实现在 `fileops.ts` (两个浏览器共用这一处口径)。 */
+  /** 「复制相对路径」: 相对项目根, 口径在 `lib/paths.ts` (菜单 / 剪贴板 / 拖进编辑器共用)。 */
   async function copyRelativePath(path: string): Promise<void> {
     const project = projectPath;
     if (!project) return;
@@ -92,59 +118,40 @@
   }
 
   /**
-   * 从 DOM 拖放事件里取出真实文件路径。
+   * 系统文件拖进来 = 与「添加资源」**同一套逻辑**: 拷贝进目标目录 (重名自动改名), 然后刷新。
    *
-   * WebView2 会把系统拖进来的文件挂在 `dataTransfer.files` 上, 但 `File` 对象**标准里没有
-   * 路径** —— Tauri 在它上面补了一个非标准的 `path`。因此先试它, 再退到 `text/uri-list`
-   * (某些 WebView 只给这个)。
+   * 路径由 `dnd/external-drop.svelte.ts` 经 webview 的拖放事件给出 (页面收不到系统的 `drop`,
+   * 那里有完整说明)。目标目录可能是目录行 (拖到子目录上), 由 `FileTree` 判定;
+   * 导入后定位到那一项 —— 拖进子目录时会自动打开那一层目录。
    */
-  function droppedPaths(event: DragEvent): string[] {
-    const direct = Array.from(event.dataTransfer?.files ?? [])
-      .map((file) => (file as File & { path?: string }).path)
-      .filter((path): path is string => Boolean(path));
-    if (direct.length > 0) return direct;
-
-    const fallback = event.dataTransfer?.getData('text/uri-list') ?? '';
-    return fallback
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('file://'))
-      .map((line) => decodeURIComponent(line.replace(/^file:\/\//, '').replace(/^\\\?\\/, '')));
-  }
-
-  /** 拖进来的文件/目录**复制**到当前目录 (不是移动)。 */
-  async function handleDropFiles(directory: string, event: DragEvent): Promise<void> {
-    const paths = droppedPaths(event);
+  async function handleDropPaths(directory: string, paths: string[]): Promise<void> {
     if (paths.length === 0) return;
     try {
-      for (const source of paths) await copyEntryToDirectory(source, directory);
+      const created = await copySourcesToDirectory(paths, directory);
       refresh();
+      // 多个文件时只定位第一个: 用户的目光只需要一个落点
+      if (created[0]) revealImported(created[0]);
     } catch (error) {
       requestAlert('导入失败', `${String(error)}\n\n目标目录：${directory}`);
     }
   }
 
-  function askDelete(node: FileNode): void {
-    requestConfirm({
-      title: '移入回收站',
-      description: `将「${node.name}」移入系统回收站（可恢复）。`,
-      confirmLabel: '移入回收站',
-      danger: true,
-      action: () => {
-        void (async () => {
-          try {
-            await deletePath(node.path);
-            refresh();
-          } catch (error) {
-            /*
-             * 必须弹出来。文件被占用 / 只读 / 权限不足时删除会失败, 只写 console 的话用户
-             * 点了"移入回收站"却什么都没发生 —— 看起来像按钮坏了。
-             */
-            requestAlert('移入回收站失败', `${node.name}\n\n${String(error)}`);
-          }
-        })();
-      },
-    });
+  /**
+   * 移入系统回收站,**不弹确认框**。
+   *
+   * 动作本身可恢复 (回收站), 而编辑页里删文件是高频操作, 每次都确认只会训练出"盲点确定";
+   * 菜单项的名字已经把这个后果说清楚了。开始界面里删**整个项目目录**仍然要确认 (范围大得多的
+   * 不可逆动作)。失败必须报出来 —— 静默失败会让人以为已经删掉了。
+   */
+  function removeEntry(node: FileNode): void {
+    void (async () => {
+      try {
+        await deletePath(node.path);
+        refresh();
+      } catch (error) {
+        requestAlert('移入回收站失败', `${node.name}\n\n${String(error)}`);
+      }
+    })();
   }
 
   function askStage(node: FileNode): void {
@@ -258,7 +265,7 @@
             label: '移入回收站',
             iconName: 'Delete',
             danger: true,
-            onClick: () => askDelete(itemMenu!.node),
+            onClick: () => removeEntry(itemMenu!.node),
           },
         ]
       : []
@@ -342,15 +349,16 @@
       {viewStateKey}
       {refreshKey}
       {selectedPath}
-      {revealRequest}
-      {onRevealComplete}
+      revealRequest={effectiveReveal}
+      onRevealComplete={handleRevealComplete}
       includeFile={(node) => node.name.toLowerCase().endsWith('.txt')}
       menu={toolbarMenu}
       onOpen={(node) => void openScene(node.path)}
       onDoubleClick={(node) => void openScene(node.path)}
       onBlankContextMenu={(dir, event) => (blankMenu = { x: event.clientX, y: event.clientY, dir })}
       onItemContextMenu={(node, event) => (itemMenu = { x: event.clientX, y: event.clientY, node })}
-      onDropFiles={(dir, event) => void handleDropFiles(dir, event)}
+      dragText={(node) => (projectPath ? browserRelativePath(projectPath, node.path) : undefined)}
+      onDropPaths={(dir, paths) => void handleDropPaths(dir, paths)}
       badge={rowBadge}
     />
   </div>

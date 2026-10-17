@@ -40,6 +40,7 @@ const UNSTYLED_OK = new Set(['icon', 'status-cursor']);
  */
 const PROGRAMMATIC = [
   'cgmr',
+  'drop-caret',
   'editor-block-glyph',
   'diff-gutter-added',
   'diff-gutter-modified',
@@ -56,6 +57,7 @@ const PROGRAMMATIC = [
   'live-preview-line-done',
   'live-preview-line-passed',
   'live-preview-line-failed',
+  'path-dragging',
   'preprocess-block-glyph',
   'preprocess-block-line',
   'resizing',
