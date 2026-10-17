@@ -99,19 +99,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in webgal-language-server webgal-snapshot; do
-            bin="$name"
+          for prefix in server snapshot; do
+            case "$prefix" in
+              server)   crate=webgal-language-server ;;
+              snapshot) crate=webgal-snapshot ;;
+            esac
+            bin="$crate"
             if [ "$RUNNER_OS" = "Windows" ]; then
-              bin="$name.exe"
+              bin="$crate.exe"
             fi
             cp "target/${{ matrix.target }}/release/$bin" "./$bin"
 
             if [ "$RUNNER_OS" = "Windows" ]; then
-              archive="$name-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
+              archive="$prefix-${{ env.VERSION }}-${{ matrix.os-label }}.zip"
               7z a "$archive" "$bin" > /dev/null
             else
               chmod +x "$bin"
-              archive="$name-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
+              archive="$prefix-${{ env.VERSION }}-${{ matrix.os-label }}.tar.gz"
               tar czf "$archive" "$bin"
             fi
             echo "打包: $archive"
