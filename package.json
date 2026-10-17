@@ -1,26 +1,15 @@
 {
-  "workspaces": [
-    "packages/*",
-    "editor"
-  ],
+  "name": "webgal-lsp",
+  "private": true,
   "type": "module",
   "scripts": {
-    "lint": "npm run lint --workspaces --if-present",
-    "type-check": "npm run type-check --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "build:wasm": "npm run build:wasm -w webgal-parse-playground",
-    "lint:all": "npm run build:wasm && npm run lint && npm run type-check",
-    "format": "prettier --write \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"editor/{src/**/*.{ts,svelte,css},tests/**/*.ts,scripts/**/*.mjs,*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\"",
-    "format-check": "prettier --check \"packages/*/{src/**/*.{ts,tsx},*.{json,js,cjs,mjs,ts}}\" \"editor/{src/**/*.{ts,svelte,css},tests/**/*.ts,scripts/**/*.mjs,*.{json,js,cjs,mjs,ts}}\" \"*.{js,cjs,mjs,json}\""
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.23.1",
-    "globals": "^17.9.0",
-    "npm-run-all": "^4.1.5",
-    "prettier": "^3.9.6",
-    "prettier-plugin-svelte": "^4.1.1",
-    "typescript-eslint": "^8.67.0"
+    "install:all": "cd editor && bun install && cd ../packages/webgal-novel-preprocess && bun install && cd ../webgal-vscode-extension && bun install",
+    "build:wasm": "bun run --cwd packages/webgal-parse-playground build:wasm",
+    "format": "bun run --cwd editor format && bun run --cwd packages/webgal-parse-playground format && bun run --cwd packages/webgal-vscode-extension format && bun run --cwd packages/webgal-novel-preprocess format",
+    "format-check": "bun run --cwd editor format-check && bun run --cwd packages/webgal-parse-playground format-check && bun run --cwd packages/webgal-vscode-extension format-check && bun run --cwd packages/webgal-novel-preprocess format-check",
+    "lint": "bun run --cwd editor lint && bun run --cwd packages/webgal-parse-playground lint && bun run --cwd packages/webgal-vscode-extension lint && bun run --cwd packages/webgal-novel-preprocess lint",
+    "type-check": "bun run --cwd editor type-check && bun run --cwd packages/webgal-parse-playground type-check && bun run --cwd packages/webgal-vscode-extension type-check && bun run --cwd packages/webgal-novel-preprocess type-check",
+    "test": "bun run --cwd editor test && bun run --cwd packages/webgal-novel-preprocess test",
+    "check": "bun run build:wasm && bun run format-check && bun run lint && bun run type-check && bun run test"
   }
 }

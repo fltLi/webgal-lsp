@@ -5,7 +5,6 @@
   "trailingComma": "es5",
   "printWidth": 120,
   "endOfLine": "lf",
-  "plugins": ["prettier-plugin-svelte"],
   "overrides": [
     {
       "files": "*.json",

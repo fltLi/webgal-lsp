@@ -16,5 +16,5 @@
     "moduleResolution": "bundler"
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"],
-  "exclude": ["../node_modules/**", "./node_modules/**", "tests"]
+  "exclude": ["./node_modules/**", "tests"]
 }

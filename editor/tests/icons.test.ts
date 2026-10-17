@@ -3,6 +3,7 @@
 // 图标层的校验: 静态导入的 SVG 在包里真实存在, 且类型联合、运行期清单与导入数量三者一致。
 
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,7 +12,9 @@ import { describe, expect, it } from 'vitest';
 import { ICON_NAMES, ICON_SVG } from '../src/ui/icons';
 
 const editorRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const iconsDir = join(editorRoot, '..', 'node_modules', '@fluentui', 'svg-icons', 'icons');
+// 按模块解析包位置, **不要**写死 `<仓库根>/node_modules`: 每个 TS 子模块独立装依赖,
+// 包只落在 editor/node_modules 下, 硬编码仓库根会一个都找不到 (旧布局靠 npm hoisting 才碰巧成立)。
+const iconsDir = join(dirname(createRequire(import.meta.url).resolve('@fluentui/svg-icons/package.json')), 'icons');
 const source = readFileSync(join(editorRoot, 'src', 'ui', 'icons.ts'), 'utf8');
 
 /** 提取源码里所有 `@fluentui/svg-icons/icons/<file>?raw` 引用 (必须读源码而非运行期对象, 才能校验导入的文件真的存在)。 */

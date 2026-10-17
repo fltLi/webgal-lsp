@@ -19,17 +19,17 @@
                 "$rustc"
             ]
         },
-        // -------- parse-playground --------
+        // -------- webgal-parse-playground --------
         {
             "label": "build:playground",
             "type": "shell",
-            "command": "npm",
+            "command": "bun",
             "args": [
                 "run",
                 "build:dev"
             ],
             "options": {
-                "cwd": "${workspaceFolder}/packages/parse-playground"
+                "cwd": "${workspaceFolder}/packages/webgal-parse-playground"
             },
             "group": "build",
             "problemMatcher": [
@@ -39,7 +39,7 @@
         {
             "label": "start:playground-server",
             "type": "shell",
-            "command": "npm",
+            "command": "bun",
             "args": [
                 "run",
                 "dev",
@@ -48,7 +48,7 @@
                 "0.0.0.0"
             ],
             "options": {
-                "cwd": "${workspaceFolder}/packages/parse-playground"
+                "cwd": "${workspaceFolder}/packages/webgal-parse-playground"
             },
             "isBackground": true,
             "problemMatcher": [
@@ -77,17 +77,17 @@
             "dependsOrder": "sequence",
             "problemMatcher": []
         },
-        // -------- vscode-extension --------
+        // -------- webgal-vscode-extension --------
         {
             "label": "build:extension",
             "type": "shell",
-            "command": "npm",
+            "command": "bun",
             "args": [
                 "run",
                 "compile"
             ],
             "options": {
-                "cwd": "${workspaceFolder}/packages/vscode-extension"
+                "cwd": "${workspaceFolder}/packages/webgal-vscode-extension"
             },
             "group": "build",
             "dependsOn": [

@@ -403,7 +403,7 @@ export function setupMonaco(): void {
    */
   registerNovelLanguage(monaco);
 
-  // WebGAL 语言配置 (对齐 packages/vscode-extension/language-configuration.json):
+  // WebGAL 语言配置 (对齐 packages/webgal-vscode-extension/language-configuration.json):
   // 行注释 `;`, 括号 ()/[]/{} 的自动闭合与包围配对, 引号自动闭合 (不在字符串内)。
   monaco.languages.setLanguageConfiguration(LANGUAGE_ID, {
     comments: { lineComment: ';' },

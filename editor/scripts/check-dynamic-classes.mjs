@@ -51,7 +51,7 @@ for (const { file, text } of files) {
    * 模板字符串 `` `prefix-${...}` `` **只在 `class="…"` 属性里才算候选**。
    *
    * 否则任何"短横线 + 插值"的展示字符串 (菜单项的 `` key: `directory-${index}` ``、
-   * 显示文本 `` `v${entry.version}` ``) 都会被当成类名, 护栏误报会让 `npm run lint` 变红。
+   * 显示文本 `` `v${entry.version}` ``) 都会被当成类名, 护栏误报会让 `bun run lint` 变红。
    */
   for (const match of text.matchAll(/`([A-Za-z][A-Za-z0-9-]*)\$\{/g)) {
     if (!inClassAttribute(match.index)) continue;

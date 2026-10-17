@@ -6,7 +6,7 @@
             "type": "msedge",
             "request": "launch",
             "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}/packages/parse-playground",
+            "webRoot": "${workspaceFolder}/packages/webgal-parse-playground",
             "preLaunchTask": "launch:playground",
             "runtimeArgs": [
                 "--disable-web-security"
@@ -21,10 +21,10 @@
             "request": "launch",
             "runtimeExecutable": "${execPath}",
             "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-extension"
+                "--extensionDevelopmentPath=${workspaceFolder}/packages/webgal-vscode-extension"
             ],
             "outFiles": [
-                "${workspaceFolder}/packages/vscode-extension/dist/**/*.js"
+                "${workspaceFolder}/packages/webgal-vscode-extension/dist/**/*.js"
             ],
             "preLaunchTask": "build:extension",
             "env": {
@@ -35,7 +35,7 @@
             "name": "Launch Ink Editor",
             "type": "node",
             "request": "launch",
-            "runtimeExecutable": "npm",
+            "runtimeExecutable": "bun",
             "runtimeArgs": [
                 "run",
                 "dev:desktop"
