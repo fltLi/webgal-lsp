@@ -113,10 +113,10 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
         })
         .collect();
 
-    let has_error_or_warning = diagnostics
-        .iter()
-        .flat_map(|(_, diagnostics)| diagnostics)
-        .any(|diagnostic| diagnostic.level != DiagnosticLevel::Info);
+    // let has_error_or_warning = diagnostics
+    //     .iter()
+    //     .flat_map(|(_, diagnostics)| diagnostics)
+    //     .any(|diagnostic| diagnostic.level != DiagnosticLevel::Info);
 
     // 正式推送诊断
     diagnostics
@@ -125,12 +125,13 @@ pub fn diagnose_scene(scene: &Scene, project: Option<&Project>) -> Vec<Diagnosti
             let sentence = &scene.sentences()[line];
             diagnostics
                 .into_iter()
-                .filter_map(|diagnostic| {
-                    // 含高于 info 级别诊断时, 过滤 info 级别诊断
-                    let reserve =
-                        !has_error_or_warning || diagnostic.level != DiagnosticLevel::Info;
-                    reserve.then(|| diagnostic.into_diagnostic(line, &sentence.primary))
-                })
+                // .filter_map(|diagnostic| {
+                //     // 含高于 info 级别诊断时, 过滤 info 级别诊断
+                //     let reserve =
+                //         !has_error_or_warning || diagnostic.level != DiagnosticLevel::Info;
+                //     reserve.then(|| diagnostic.into_diagnostic(line, &sentence.primary))
+                // })
+                .map(|diagnostic| diagnostic.into_diagnostic(line, &sentence.primary))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -148,14 +149,18 @@ where
         }
     };
 
+    // 格式检查
+    if !sentence.prevents_formatting()
+        && let Some(diagnostic) = diagnose_format(sentence)
+    {
+        diagnose(diagnostic);
+    }
+
     // 语法检查
     for error in &sentence.errors {
         if let Some(diagnostic) = diagnose_sentence_error(&sentence.primary, error) {
             diagnose(diagnostic);
         }
-    }
-    if let Some(diagnostic) = diagnose_format(sentence) {
-        diagnose(diagnostic);
     }
 
     // 环境诊断

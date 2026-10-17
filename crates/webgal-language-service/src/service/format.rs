@@ -12,7 +12,7 @@ pub fn format(scene: &Scene) -> Vec<TextEdit> {
         .sentences()
         .par_iter()
         .enumerate()
-        .filter(|(_, sentence)| !sentence.should_skip_formatting())
+        .filter(|(_, sentence)| !sentence.prevents_formatting())
         .map(|(line, sentence)| TextEdit {
             range: Range {
                 start: Position {

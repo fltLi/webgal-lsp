@@ -72,14 +72,17 @@ impl<'a> SentenceInfo<'a> {
     /// 是否有必要格式化
     ///
     /// 当语句不含语法错误, 且无格式忽略标识时为 `true`.
-    pub fn should_skip_formatting(&self) -> bool {
-        !self.errors.is_empty() || self.contains_nolint("WG001")
+    pub fn prevents_formatting(&self) -> bool {
+        self.errors
+            .iter()
+            .any(|error| !matches!(error, Error::ArgumentMissingDependencies(..)))
+            || self.contains_nolint("WG001")
     }
 }
 
 impl fmt::Display for SentenceInfo<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.should_skip_formatting() {
+        if self.prevents_formatting() {
             f.write_str(self.content.trim_end())?;
             return Ok(());
         }
@@ -102,7 +105,7 @@ impl fmt::Display for SentenceInfo<'_> {
 
 /// 分割注释和 nolint 标记
 ///
-/// nolints 标记会进行排序.
+/// nolints 标记会进行排序与去重.
 /// 仅识别格式规范的 nolint 标记, 形如: `nolint:WG001|WG003; comment`.
 pub fn split_nolints(comment: &str) -> (Vec<&str>, &str) {
     let comment = match comment.strip_prefix("nolint:") {
@@ -112,6 +115,7 @@ pub fn split_nolints(comment: &str) -> (Vec<&str>, &str) {
     let (nolints, comment) = comment.split_once(';').unwrap_or((comment, ""));
     let mut nolints: Vec<_> = nolints.split('|').map(str::trim).collect();
     nolints.sort();
+    nolints.dedup();
     (nolints, comment.trim())
 }
 
@@ -184,6 +188,13 @@ mod tests {
     #[test]
     fn split_nolints_with_comment() {
         let (nolints, comment) = split_nolints("nolint:WG003|WG001; comment");
+        assert_eq!(nolints, vec!["WG001", "WG003"]);
+        assert_eq!(comment, "comment");
+    }
+
+    #[test]
+    fn split_nolints_dedups_after_sorting() {
+        let (nolints, comment) = split_nolints("nolint:WG003|WG001|WG003| WG001 ; comment");
         assert_eq!(nolints, vec!["WG001", "WG003"]);
         assert_eq!(comment, "comment");
     }
