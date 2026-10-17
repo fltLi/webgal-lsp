@@ -24,18 +24,20 @@ export default tseslint.config(
   //
   // 这里**很关键**的一点: `**/*.ts` 会把 `.svelte.ts` (runes 模块) 一起匹配进来 ——
   // 那是对的, 它们就是 TypeScript, 由 `tseslint.parser` 解析。
-  // 反过来, `.svelte` 组件不在这个列表里: 组件不能用 typed linting
-  // (`parserOptions.project`), 因为它们不在任何 tsconfig 的 program 中,
-  // 混进来会直接报 "Parsing error: parserOptions.project has been provided"。
+  // 反过来, `.svelte` 组件不在这个列表里: 组件不在任何 tsconfig 的 program 中。
+  //
+  // **刻意不开** `parserOptions.project`（类型感知 lint）:
+  //   - `tseslint.configs.recommended` 全是语法规则, 没有一条用类型信息, 建 program 纯属白花时间;
+  //   - `editor/tsconfig.json` 的 `extends` 指向 `svelte-kit sync` 生成的 `.svelte-kit/tsconfig.json`,
+  //     那是 gitignore 的产物 —— 干净检出里不存在, tseslint 会把它当解析失败,
+  //     于是 `lint` 变成"必须先跑过 type-check"的顺序依赖（CI 上曾因此 87 个文件全报 parse error）。
+  // 分工是: 类型交给 `svelte-check`（editor 的 `type-check`）, ESLint 只管规则。
+  // 将来真要开 `recommendedTypeChecked`, 用 `projectService: true`, 并保证 lint 前跑过 `svelte-kit sync`。
   {
     files: ['**/*.ts', '**/*.tsx'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       parser: tseslint.parser,
-      parserOptions: {
-        project: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
     },
   },
   // Svelte 组件
