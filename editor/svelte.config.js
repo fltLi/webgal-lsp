@@ -4,6 +4,7 @@
 
 // 用 adapter-static 的 fallback 把站点打成 SPA 模式 (Tauri 没有 Node 服务器)。
 // See: https://svelte.dev/docs/kit/single-page-apps
+
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 

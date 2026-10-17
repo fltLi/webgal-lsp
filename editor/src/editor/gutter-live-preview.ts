@@ -14,6 +14,7 @@
 // 并排独立的两栏, 各画各的, 不会互相顶掉 (git 差异色块用的是 `linesDecorationsClassName`)。
 
 // 只用类型: 装饰区间用字面量构造, 因此这个模块没有 `monaco-editor` 的运行时依赖。
+
 import type * as monaco from 'monaco-editor';
 
 import type { LivePreviewMarker } from '../preview/live-preview';

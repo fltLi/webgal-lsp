@@ -6,7 +6,6 @@
   "scripts": {
     "lint": "eslint src --ext .ts,.svelte && npm run lint:css && npm run lint:dynamic-classes",
     "lint:css": "node scripts/check-css-classes.mjs",
-    "css:dead": "node scripts/find-dead-css.mjs",
     "lint:dynamic-classes": "node scripts/check-dynamic-classes.mjs",
     "type-check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && npm run type-check:tests",
     "type-check:tests": "tsc -p tsconfig.test.json",

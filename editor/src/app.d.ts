@@ -2,6 +2,7 @@
 
 // SvelteKit 的 `App` 命名空间声明, 目前各接口都未实现 (保持文件存在, 供 SvelteKit 生成类型)。
 // See: https://svelte.dev/docs/kit/types#app
+
 declare global {
   namespace App {
     // interface Error {}

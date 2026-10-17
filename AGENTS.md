@@ -105,8 +105,8 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
 - **不要用 `cargo build/test --workspace` 验证编辑器**：`webgal-ink` 缺 `editor/dist` 或系统依赖时会拖垮
   整个工作区。语言侧用 `-p`，或统一加 `--exclude webgal-ink`。CI 也只对 `webgal-ink` 单独设 job。
 - **`editor/scripts/` 的两个类名护栏已接进 `npm run lint`，是致命检查**：`check-css-classes.mjs` 核对模板里
-  用到的类名在 `styles.css` 里都有规则，`check-dynamic-classes.mjs` 核对运行期拼出来的类名。`find-dead-css.mjs`
-  只报告，删死 CSS 前先跑它。
+  用到的类名在 `styles.css` 里都有规则（并报告一遍无人引用的类名，**只报告、不要据此删 CSS**），
+  `check-dynamic-classes.mjs` 核对运行期拼出来的类名。
 - CI 的 `ts-lint` job 会跑 `format-check`、`npm run lint:all`（ESLint + `svelte-check` + 类名护栏）与
   `npm test`（即各 workspace 的 vitest）。本地照这套跑一遍就等于 CI。
 
@@ -163,7 +163,15 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   **不要引入真路由**——那会改变交互流程（URL 可寻址、前进后退）。
 - **`ssr = false`**（`+layout.ts`）；产物经 `adapter-static` 写到 **`dist/`**（`tauri.conf.json` 的
   `frontendDist` 指向 `../dist`）。
-- **窗口显示只有一处**：`+page.svelte` 的 `onMount` 里 `revealWindow()`。多调或少调都会让"启动无白屏"失效。
+- **窗口是「隐藏创建 + 渲染完成后再显示」**：启动时前端要拉模块、装配 Monaco（开发模式下可达数秒），
+  提前显示窗口就是让用户对着空白窗口等。显示动作在 `+page.svelte` 的 `onMount` 调 `revealWindow()`
+  （实现见 `lib/boot.ts`：连等两帧，**刻意不设超时**，否则冷启动时会被兜底逻辑抢在首帧之前）；
+  `+layout.svelte` 还挂了一条 12s 的保险丝兜住「挂载期抛错 / 帧一直不来」。
+  **代价**：前端要是根本没能启动，窗口就永远不出现、也不报错——所以遇到「启动后没有窗口」先按第 7 节
+  的方法直接看 dev server 返回的 HTML，不要猜。
+- **`%sveltekit.head%` / `%sveltekit.body%` 只能出现在 `app.html` 的注入点上**：构建是对整份模板做
+  **字符串替换**的，在任何注释里写一遍这两个占位符，注入内容就会落进注释里，真正的注入点反而留成字面量
+  ——页面永远不启动，而且没有任何报错。故意要提它们时，写成「那两个占位符」。
 - **全局样式只在 `+layout.svelte` import**：它是整份应用的样式来源，写进页面会随页面重写而被静默丢掉。
   应用级接线（F12、拖放拦阻、主题落地顺序）也都在那里。
 - **组件不带 `<style>` 块**，除非它只定义自己的新类名。Svelte 一旦看到 `<style>` 就给模板类名加作用域哈希，
@@ -299,6 +307,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 现象 | 处理 |
 | --- | --- |
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先 `npm run build -w webgal-ink` |
+| **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
+| **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |
 | Linux 上 `webgal-ink` 编译失败 | 装 Tauri 系统依赖（见第 2 节），或只验证语言侧并加 `--exclude webgal-ink` |
 | 编辑器里注释文字莫名变英文 / 提示失效 | 检查文件是否为 UTF-8；改文件请用读写工具，别用会按 GBK 转码的命令行重定向 |
 | 打开项目后没有高亮、状态栏却显示就绪 | 文件监听事件风暴或握手前丢帧，见第 4 节；用 `--log-level debug` 看语言服务器日志（走 stderr） |

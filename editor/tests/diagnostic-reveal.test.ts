@@ -4,6 +4,7 @@
 //
 // 诊断列表只按**起点**调 `requestReveal`, 而编辑器要能选中整段就必须在载荷里拿到**结束位置**;
 // 拿不到时退回"只放光标"。
+
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { LspDiagnostic } from '../src/state/store.svelte';
