@@ -11,6 +11,7 @@ import {
   normalizeRecentProjects,
   projectDisplayName,
   RECENT_PROJECT_LIMIT,
+  recentMetaOf,
   removeRecentProject,
   sortRecentProjects,
   upsertRecentProject,
@@ -91,6 +92,33 @@ describe('upsertRecentProject', () => {
 
   it('元数据缺省时保留原值', () => {
     const next = upsertRecentProject([project('C:\\a', 1, { name: '旧名', titleImg: 'cover.png' })], 'C:\\a');
+    expect(next[0].name).toBe('旧名');
+    expect(next[0].titleImg).toBe('cover.png');
+  });
+});
+
+describe('recentMetaOf', () => {
+  const summary = { name: '星海叙事', description: '科幻', titleImg: 'cover.png' };
+
+  it('摘要齐全时原样记录', () => {
+    expect(recentMetaOf(summary, '忽略')).toEqual(summary);
+  });
+
+  it('配置读不到时用调用方给的名字兜底, 其余字段当作没有', () => {
+    expect(recentMetaOf(null, '新建的项目')).toEqual({
+      name: '新建的项目',
+      description: undefined,
+      titleImg: undefined,
+    });
+  });
+
+  it('摘要里的空串视为没有, 以免抹掉已记录的值', () => {
+    // `upsertRecentProject` 的"缺省字段保留原值"依赖这一点: 传空串会把它覆盖成空
+    const next = upsertRecentProject(
+      [project('C:\\a', 1, { name: '旧名', titleImg: 'cover.png' })],
+      'C:\\a',
+      recentMetaOf({ name: '', description: '', titleImg: '' })
+    );
     expect(next[0].name).toBe('旧名');
     expect(next[0].titleImg).toBe('cover.png');
   });

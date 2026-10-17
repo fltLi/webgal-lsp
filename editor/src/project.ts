@@ -17,8 +17,9 @@ import { fs } from './lib/fs';
 import { resolveProjectEngine, resolveProjectEnginePath } from './lib/engine';
 import { validateEngine } from './lib/engineDir';
 import { createId, validateTemplate } from './lib/engineTemplate';
-import { setGameConfigValues } from './lib/gameConfig';
+import { gameConfigSummary, setGameConfigValues } from './lib/gameConfig';
 import { baseName, joinPath } from './lib/paths';
+import { recentMetaOf, upsertRecentProject } from './lib/recentProjects';
 import { collectLocalTabs, loadSession, saveSession, sessionFromTabs } from './lib/session';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
@@ -161,12 +162,24 @@ export function gameNameOf(config: GameConfigReadResult | null): string | null {
  */
 export async function openProject(projectPath: string, name?: string | null): Promise<void> {
   const config = await readProjectConfig(projectPath);
-  useAppStore.getState().setProject(projectPath, name ?? gameNameOf(config) ?? baseName(projectPath));
+  const store = useAppStore.getState();
+  store.setProject(projectPath, name ?? gameNameOf(config) ?? baseName(projectPath));
+  /*
+   * 记入最近项目。打开项目**只有这一个入口** (开始界面、新建项目、命令行参数都汇到 `openProject`),
+   * 因此记录也只放在这里。换成"带元数据的对象数组"之后漏掉了这一步, 于是打开过的项目从不进列表。
+   * 元数据与开始界面刷新时读的是同一份 `config.txt` 摘要, 名称优先取 `Game_name`。
+   */
+  store.updateSettings({
+    recentProjects: upsertRecentProject(
+      store.settings.recentProjects,
+      projectPath,
+      recentMetaOf(config ? gameConfigSummary(config.entries) : null, name)
+    ),
+  });
 
   await lspClient.start();
   lspClient.changeWorkspaceFolders([projectPath], []);
 
-  const store = useAppStore.getState();
   const enginePath = resolveProjectEnginePath(store.settings, store.projectBindings, projectPath);
   await previewClient.ensureSite(projectPath, enginePath);
   await refreshGitStatus(projectPath);

@@ -116,6 +116,24 @@ export function upsertRecentProject(
   );
 }
 
+/**
+ * 从 `config.txt` 的摘要里取出要记录的元数据。
+ *
+ * 空串一律当作"没有"(`undefined`), 让 [`upsertRecentProject`] 的"缺省字段保留原值"生效:
+ * 读不到 `Title_img` 的项目不该把上一次记下的封面抹掉。`fallbackName` 用于没有 `Game_name`
+ * 的项目 —— 新建时用户填的名字, 比目录名更贴近他看到的标题。
+ */
+export function recentMetaOf(
+  summary: { name?: string; description?: string; titleImg?: string } | null,
+  fallbackName?: string | null
+): RecentProjectMeta {
+  return {
+    name: nonEmpty(summary?.name) ?? nonEmpty(fallbackName),
+    description: nonEmpty(summary?.description),
+    titleImg: nonEmpty(summary?.titleImg),
+  };
+}
+
 /** 从列表中移除一项 (不动磁盘)。 */
 export function removeRecentProject(list: RecentProject[], path: string): RecentProject[] {
   return list.filter((item) => item.path.toLowerCase() !== path.toLowerCase());
