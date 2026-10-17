@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { LspDiagnostic } from '../state/store';
+import type { LspDiagnostic } from '../state/store.svelte';
 import {
   buildDiagnosticsExport,
   codeStats,
@@ -13,9 +13,13 @@ import {
   countEntries,
   defaultFilter,
   describeDiagnostics,
+  diagnosticEndAt,
+  diagnosticSignature,
   filterDiagnosticFiles,
   isFilterPerturbed,
   presentSeverities,
+  severityStats,
+  splitScenePath,
   type DiagnosticFilter,
 } from './model';
 
@@ -94,6 +98,31 @@ describe('诊断码与级别统计', () => {
     const { files } = collectProjectDiagnostics(DATA, PROJECT);
     expect(presentSeverities(files)).toEqual([1, 2, 3]);
   });
+
+  it('筛选条上的数字是全项目各一个级别一个, 不是当前筛选结果', () => {
+    const { files } = collectProjectDiagnostics(
+      {
+        [SCENE]: [diag(0, 0, 1, 'WG007', '错误'), diag(1, 0, 1, 'WG007', '错误'), diag(2, 0, 4, 'WG009', '提示')],
+        [BRANCH]: [diag(0, 0, 4, 'WG009', '提示')],
+      },
+      PROJECT
+    );
+    // 没有出现过的级别不给条目 (筛选条上不会出现一个永远 0 的开关)
+    expect(severityStats(files)).toEqual([
+      { severity: 1, count: 2 },
+      { severity: 4, count: 2 },
+    ]);
+  });
+});
+
+describe('splitScenePath', () => {
+  it('拆出目录与文件名, 目录保留结尾的斜杠', () => {
+    expect(splitScenePath('支线/海边.txt')).toEqual({ dir: '支线/', name: '海边.txt' });
+  });
+
+  it('没有目录时目录部分是空串 (组头仍渲染那两个元素)', () => {
+    expect(splitScenePath('start.txt')).toEqual({ dir: '', name: 'start.txt' });
+  });
 });
 
 describe('defaultFilter', () => {
@@ -134,7 +163,7 @@ describe('filterDiagnosticFiles', () => {
 });
 
 describe('countBySeverity', () => {
-  it('四个级别都数, 包括角标以前漏掉的提示级', () => {
+  it('四个级别都数, 含提示级', () => {
     const { files } = collectProjectDiagnostics(
       {
         [SCENE]: [diag(0, 0, 1, 'WG007', '错误'), diag(1, 0, 4, 'WG009', '提示'), diag(2, 0, 4, 'WG009', '提示')],
@@ -238,5 +267,103 @@ describe('buildDiagnosticsExport', () => {
         },
       ],
     });
+  });
+});
+
+/*
+ * 「点诊断跳转并选中它标出的那一段」用的反查 (1 起算的行列)。
+ *
+ * 诊断列表只给得起起点, 结束位置必须从这里拿, 所以这条纯函数就是那个能力的全部逻辑:
+ * 起点的换算、多诊断落在同一起点时优先选非空的、以及没有对应诊断时返回 null
+ * (调用方据此退回"只放光标")。
+ */
+describe('diagnosticEndAt', () => {
+  it('按 1 起算的起点找到同一条诊断的结束位置', () => {
+    const end = diagnosticEndAt(DATA[SCENE], 12, 16);
+    expect(end).toEqual({ line: 12, column: 20 });
+  });
+
+  it('起点不匹配时返回 null (普通跳转要退回放光标)', () => {
+    expect(diagnosticEndAt(DATA[SCENE], 12, 17)).toBeNull();
+    expect(diagnosticEndAt(DATA[SCENE], 99, 1)).toBeNull();
+    expect(diagnosticEndAt(undefined, 1, 1)).toBeNull();
+    expect(diagnosticEndAt([], 1, 1)).toBeNull();
+  });
+
+  it('同一起点有多条时优先返回非空范围', () => {
+    const empty: LspDiagnostic = {
+      range: { start: { line: 4, character: 2 }, end: { line: 4, character: 2 } },
+      severity: 2,
+      message: '空范围',
+    };
+    const spanned: LspDiagnostic = {
+      range: { start: { line: 4, character: 2 }, end: { line: 4, character: 9 } },
+      severity: 1,
+      message: '有范围',
+    };
+    expect(diagnosticEndAt([empty, spanned], 5, 3)).toEqual({ line: 5, column: 10 });
+  });
+
+  it('全都是空范围时返回空范围本身, 由调用方退回选中整行', () => {
+    const empty: LspDiagnostic = {
+      range: { start: { line: 4, character: 2 }, end: { line: 4, character: 2 } },
+      severity: 2,
+      message: '空范围',
+    };
+    expect(diagnosticEndAt([empty], 5, 3)).toEqual({ line: 5, column: 3 });
+  });
+
+  it('跨行的诊断返回结束行', () => {
+    const multi: LspDiagnostic = {
+      range: { start: { line: 1, character: 0 }, end: { line: 3, character: 4 } },
+      severity: 1,
+      message: '跨行',
+    };
+    expect(diagnosticEndAt([multi], 2, 1)).toEqual({ line: 4, column: 5 });
+  });
+
+  it('缺 range 的脏数据不会抛错', () => {
+    expect(diagnosticEndAt([{ severity: 1, message: 'x' } as LspDiagnostic], 1, 1)).toBeNull();
+  });
+});
+
+/*
+ * `diagnosticSignature`: "这份诊断和上一份是不是同一回事"。
+ *
+ * 守的是"闪"这条线: 语言服务**按项目重推**, 每次推送都会把 `diagnostics[path]` 换成新数组
+ * (内容可能一字未改), 编辑器若按引用判断就会每次都重画一遍波浪线。
+ */
+describe('diagnosticSignature', () => {
+  const diag: LspDiagnostic = {
+    range: { start: { line: 0, character: 2 }, end: { line: 0, character: 6 } },
+    severity: 1,
+    message: '缺少分号',
+    code: 'WG001',
+  };
+
+  it('空 / undefined 都是空签名', () => {
+    expect(diagnosticSignature([])).toBe('');
+    expect(diagnosticSignature(undefined)).toBe('');
+    expect(diagnosticSignature([])).toBe(diagnosticSignature(undefined));
+  });
+
+  it('内容相同的新数组得到同一个签名（这正是要判的情形）', () => {
+    const copy = diag.range ? [{ ...diag, range: { start: { ...diag.range.start }, end: { ...diag.range.end } } }] : [];
+    expect(diagnosticSignature([diag])).toBe(diagnosticSignature(copy));
+    expect(diagnosticSignature([diag])).not.toBe('');
+  });
+
+  it('位置 / 严重度 / 消息 / 错误码 任一变化都会改变签名', () => {
+    const base = diagnosticSignature([diag]);
+    expect(diagnosticSignature([{ ...diag, severity: 2 }])).not.toBe(base);
+    expect(diagnosticSignature([{ ...diag, message: '别的问题' }])).not.toBe(base);
+    expect(diagnosticSignature([{ ...diag, code: 'WG002' }])).not.toBe(base);
+    expect(
+      diagnosticSignature([{ ...diag, range: { start: { line: 1, character: 2 }, end: { line: 1, character: 6 } } }])
+    ).not.toBe(base);
+  });
+
+  it('条数变化会改变签名', () => {
+    expect(diagnosticSignature([diag, diag])).not.toBe(diagnosticSignature([diag]));
   });
 });

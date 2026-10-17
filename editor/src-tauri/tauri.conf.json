@@ -19,18 +19,8 @@
         "minWidth": 800,
         "minHeight": 560,
         "decorations": false,
-        "visible": false
-      },
-      {
-        "label": "splashscreen",
-        "title": "WebGAL Ink",
-        "width": 420,
-        "height": 150,
-        "resizable": false,
-        "center": true,
-        "decorations": false,
-        "url": "splash.html",
-        "visible": true
+        "visible": false,
+        "backgroundColor": "#fafafa"
       }
     ],
     "security": {

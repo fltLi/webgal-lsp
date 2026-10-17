@@ -2,3 +2,6 @@ target/
 dist/
 node_modules/
 __pycache__/
+
+# SvelteKit 的中间产物 (svelte-kit sync 生成: .svelte-kit)
+.svelte-kit/

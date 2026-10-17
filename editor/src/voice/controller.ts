@@ -2,12 +2,10 @@
 
 // 配音队列控制器 (模块级单例)。
 //
-// 设计要点:
-// 1. **严格串行**。GSOV 后端是单进程单 worker 且持有全局 prompt 缓存, 并发请求会互相干扰,
-//    因此这里保证同一时刻最多一个在途请求。优先级完全在客户端实现。
-// 2. **三个队列**。立即队列 (测试 x4)、普通队列 (生成 x32) 各自按角色分组,
-//    组内连续执行, 从而避免服务端频繁重载模型; 立即队列整体优先于普通队列。
-// 3. **配对**。每条任务在发起时记录参数快照与语句身份哈希, 完成后按 id 回填对应历史项。
+// 三个不变量: **严格串行** (GSOV 是单进程单 worker 且持有全局 prompt 缓存, 并发请求会互相
+// 干扰, 因此同一时刻最多一个在途请求, 优先级完全在客户端实现); **分组调度** (立即队列/测试
+// 整体优先于普通队列/生成, 队列内按角色分组连续执行, 避免服务端频繁重载模型); **任务与历史
+// 一一配对** (发起时记录参数快照与语句身份哈希, 完成后按 id 回填)。
 
 import type {
   AudioInfo,
@@ -53,7 +51,7 @@ import {
   type CharacterPatch,
 } from '../commands/voice';
 import { fs } from '../lib/fs';
-import { useAppStore } from '../state/store';
+import { useAppStore } from '../state/store.svelte';
 import { estimator, formatEta } from './estimate';
 import { matchScene, type CharacterMatch } from './match';
 import { pickModel } from './modelPair';
@@ -114,8 +112,8 @@ class VoiceController {
   setCharacters(characters: Character[]): void {
     // 统一按"星标优先, 其次加入顺序"排序。
     //
-    // 这里必须定序: 后端列表本身也是这个顺序, 但本地增删改后的临时数组不会自动有序,
-    // 一旦顺序不稳定, 改一个角色的设置就会让它的卡片跳到别处 (看起来像卡片交换了位置)。
+    // 必须在这里定序: 本地增删改后的临时数组不会自带顺序, 顺序一旦不稳定, 改一个角色的
+    // 设置就会让它的卡片跳到别处 (看起来像卡片交换了位置)。
     this.characters = [...characters].sort(
       (a, b) => Number(b.starred) - Number(a.starred) || a.createdAt - b.createdAt || a.name.localeCompare(b.name)
     );
@@ -141,11 +139,10 @@ class VoiceController {
     const dialogues = await this.parse(content);
     const previous = this.cards.get(id);
     /*
-     * 历史**跨会话存活** (见 `voice/history.rs`)。
+     * 历史**跨会话存活** (落盘见 `service/voice/history.rs`)。
      *
-     * 以前历史只活在内存里, 而 `closeCard` 会把整张卡片从表里删掉 —— 于是"关掉配音卡
-     * (或关掉选项卡) 再打开", 历史就没了: 用户明明生成/应用过, 回来却是空的。这也是
-     * 重新对齐 (`realignCard`) 一直没有意义的原因 (没有东西可对齐)。
+     * `closeCard` 会把整张卡片从表里删掉, 因此再次打开时必须从磁盘读回: 用户生成/应用过
+     * 的记录不能因为关了一次配音卡就消失。
      */
     const history = previous?.history ?? (await this.loadHistory(scenePath));
 
@@ -176,10 +173,9 @@ class VoiceController {
   }
 
   /**
-   * 放弃一张卡片: 撤下它未完成的任务, 再关掉卡片。
+   * 放弃一张卡片: 撤下它未完成的任务, 再关掉卡片 (用于"用户确认关闭选项卡"之后的收尾)。
    *
-   * 用于"用户确认关闭选项卡"之后的收尾 —— 卡片没了以后任务完成也没地方回填, 留着只会
-   * 让服务端白白跑完一次推理。历史已经落盘, 不受影响。
+   * 卡片没了以后任务完成也没地方回填, 留着只会让服务端白白跑完一次推理。历史已经落盘。
    */
   abandonCard(id: string): void {
     for (const task of this.tasks) {
@@ -210,8 +206,18 @@ class VoiceController {
     this.rematch(card);
     this.refreshApplied(card);
     this.syncCard(card);
+    // `dialogues` / `matches` 是**换掉**的, 但 card 对象没换 -> 必须发令牌 (见 `notifyUi`)
+    this.notifyUi();
   }
 
+  /**
+   * 记住"当前是哪一句" (切走再切回时的回退值)。
+   *
+   * **刻意不发 UI 令牌** (见 `notifyUi`): 界面上的"当前这一句"来自独立响应式的
+   * `appStore.cursor`, 不依赖这个字段; 而这里是每次换行都走的热路径, 且
+   * `ui/SceneVoiceEditor.svelte` 里"写 cursorLine 记忆"的 effect 依赖令牌 —— 在这里
+   * 发通知会与它自激。
+   */
   setCursorLine(id: string, line: number | null): void {
     const card = this.cards.get(id);
     if (!card) return;
@@ -242,6 +248,8 @@ class VoiceController {
       if (card.scenePath === scenePath) {
         this.rematch(card);
         this.syncCard(card);
+        // `card.matches` 换掉了 (归属影响整个场景的匹配), 必须发令牌
+        this.notifyUi();
       }
     }
   }
@@ -257,6 +265,9 @@ class VoiceController {
     if (!card) return;
     card.selectedHistoryId = entryId;
     this.syncCard(card);
+    // `selectedHistoryId` 是就地改的字段 (换 Map 不足以让界面重算) —— 必须发令牌, 否则
+    // 点另一条记录"像没反应" (语句面板的状态行 / 「应用」的可用性都不动)。
+    this.notifyUi();
   }
 
   // -------- 参数 --------
@@ -264,12 +275,11 @@ class VoiceController {
   /**
    * 某条对话的当前配音参数 (未选中历史项时为默认值)。
    *
-   * **直接接收对话本身**而不是用 `card.cursorLine` 反查: 调用方 (语句面板) 手上
-   * 已经有那条对话, 再反查一次就会在"光标行号还没同步过来"的窗口里静默返回 null,
-   * 于是测试/生成按钮点了没反应。少一次反查就少一个失配的机会。
+   * **直接接收对话本身**而不是用 `card.cursorLine` 反查: 调用方 (语句面板) 手上已经有那条
+   * 对话, 再反查一次就会在"光标行号还没同步过来"的窗口里返回 null (按钮点了没反应)。
    *
-   * 这里也是**纯查询, 不能有副作用**: 种子必须可重复 (见 `seedForDialogue`),
-   * 随机只发生在用户显式换种子的那一刻。
+   * **纯查询, 不能有副作用**: 种子必须可重复 (见 `seedForDialogue`), 随机只发生在用户
+   * 显式换种子的那一刻。
    */
   currentParams(id: string, line: SayLine): VoiceParams | null {
     const card = this.cards.get(id);
@@ -289,16 +299,11 @@ class VoiceController {
       topK: selected?.params.topK ?? defaults.topK,
       topP: selected?.params.topP ?? defaults.topP,
       repetitionPenalty: selected?.params.repetitionPenalty ?? defaults.repetitionPenalty,
-      /*
-       * 采样步数是"**正式生成**用几档", 因此只认生成记录: 测试记录固定 4 步, 让它
-       * 回填会把面板上的步数带成 x4 —— 点一次测试, 正式生成的档位就掉下去了。
-       */
+      // 采样步数只认**生成**记录: 测试记录固定 4 步, 回填会把面板上的步数带成 x4。
       sampleSteps: (selected?.kind === 'generate' ? selected.params.sampleSteps : null) ?? defaults.generateSampleSteps,
-      /*
-       * 文本是参数的一部分, **可以改** (操作台上的文本框就是干这个的):
-       * 选中历史项时回填它当时合成的文本, 否则默认用场景里的这一句。
-       * 不要在每次取参数时无条件写回 `line.text` —— 那会把用户刚改的文本抹掉。
-       */
+      // 文本是参数的一部分, **可以改** (操作台上的文本框就是干这个的): 选中历史项时回填
+      // 它当时合成的文本, 否则用场景里的这一句。不要在每次取参数时无条件写回 `line.text`,
+      // 那会把用户刚改的文本抹掉。
       text: selected?.params.text ?? line.text,
     };
   }
@@ -332,13 +337,10 @@ class VoiceController {
     const character = this.characterById(params.characterId);
     const reference = character?.references.find((item) => item.hash === params.referenceHash) ?? null;
     /*
-     * 快照 = 用户此刻配置的这一份, **包括文本框里改过的文本**。
+     * 快照 = 用户此刻配置的这一份, **包括文本框里改过的文本**: 用 `line.text` 覆盖会让
+     * 用户在文本框改完再点生成时送进模型的还是场景原文 (界面写着改后的文本, 音频却是原文)。
      *
-     * 步数记录实际使用的档位 (测试固定走测试步数), 因此历史项显示的就是真跑过的;
-     * 步数不参与"配置身份"的比对 (见 `paramsKey`)。
-     *
-     * 刻意不再用 `line.text` 覆盖文本: 那样用户在文本框里改完再点生成, 送进模型的
-     * 还是场景原文 —— 界面上写着改后的文本, 音频却是原文, 属于静默丢输入。
+     * 步数记录实际使用的档位 (测试固定走测试步数), 不参与"配置身份"比对 (见 `paramsKey`)。
      */
     const snapshot: VoiceParams = {
       ...params,
@@ -402,13 +404,12 @@ class VoiceController {
   /**
    * 取消一个未完成的任务。
    *
-   * **运行中也允许取消**: 推理本身没有中断接口, 因此取消的含义是"这一条不要了" ——
-   * 结果返回后直接丢弃 (音频已进缓存, 由缓存清理回收), 队列继续往下跑。若不允许取消
-   * 运行中的任务, 界面上的取消按钮在任务开始后就变成摆设。
+   * **运行中也允许取消**: 推理没有中断接口, 取消的含义是"结果返回后直接丢弃" (音频已进
+   * 缓存, 由缓存清理回收), 队列继续往下跑 —— 否则取消按钮在任务开始后就变成摆设。
    *
-   * 取消后**从历史里删掉这一条** (任务队列里保留, 以便看清"它确实被撤下了"):
-   * 用户主动撤下的东西不该继续以一条"未生成成功"的记录留在操作台上 —— 那既占位置,
-   * 又让人分不清"失败"和"我取消的"。
+   * 取消后**从历史里删掉这一条** (任务队列里保留, 以便看清"它确实被撤下了"): 用户主动
+   * 撤下的东西不该继续以一条"未生成成功"的记录留在操作台上, 那既占位置, 又让人分不清
+   * "失败"和"我取消的"。
    */
   cancel(taskId: string): void {
     const task = this.tasks.find((item) => item.id === taskId);
@@ -482,12 +483,8 @@ class VoiceController {
     }
 
     const refPath = await this.referencePath(character.id, reference.file);
-    /*
-     * 冷启动标记在**请求发出前**取走, 而不是"等到记录样本时再跳过"。
-     *
-     * 取走后这次推理无论成功、取消还是报错都算"冷启动已经用掉" —— 否则标记会一直挂着,
-     * 白白吃掉后面一条正常任务的样本 (那条才是真正该学的东西)。
-     */
+    // 冷启动标记在**请求发出前**取走: 这次推理无论成功、取消还是报错都算"冷启动已经用掉",
+    // 否则标记会一直挂着, 白白吃掉后面一条正常任务的样本。
     const coldStart = estimator.takeColdStart();
     task.status = 'running';
     task.startedAt = Date.now();
@@ -511,9 +508,9 @@ class VoiceController {
       });
 
       /*
-       * 实测响应时间: 从发出请求到拿回响应。**这才是"任务耗时"** —— 响应体里给的
-       * `duration` 是生成出来的音频有多长 (秒), 两者常常差一个量级 (例如响应 48 秒、
-       * 音频 3.96 秒), 混在一起显示会让人以为任务只跑了 4 秒。
+       * **这才是"任务耗时"**: 从发出请求到拿回响应。响应体里的 `duration` 是生成出来的
+       * 音频有多长 (秒), 两者常差一个量级 (响应数十秒、音频几秒), 混在一起显示会让人
+       * 以为任务只跑了几秒。
        */
       task.elapsed = Date.now() - (task.startedAt ?? Date.now());
 
@@ -523,12 +520,8 @@ class VoiceController {
         task.audioHash = result.entry.hash;
         task.audioPath = result.entry.path;
         task.duration = result.duration;
-        /*
-         * 只有**真正跑完、且没被取消**的任务才进估算样本, 且冷启动那一次不算。
-         *
-         * 取消的任务可能只跑了一半就被丢弃, 报错的任务可能是在等超时 —— 它们的耗时没有
-         * 参考价值, 收进样本只会把预估带偏 (报错前干等几分钟, 就被算成"这句话要几分钟")。
-         */
+        // 只有**真正跑完、且没被取消**的任务才进估算样本 (冷启动那次另算): 取消/报错的
+        // 任务耗时没有参考价值, 收进样本只会把预估带偏。
         if (!coldStart) estimator.observe(task.params.sampleSteps, task.params.text.length, task.elapsed);
         this.store().upsertVoiceCache(result.entry);
       }
@@ -548,8 +541,8 @@ class VoiceController {
   /**
    * 任务是否已被取消。
    *
-   * 必须重新查一遍而不是读 `task.status`: 等待推理的这段时间里 `cancel` 会从另一条
-   * 路径改掉它, 而 TypeScript 对 `task.status` 的收窄还停留在赋值那一刻。
+   * 必须重新查一遍而不是读 `task.status`: 等待推理期间 `cancel` 会从另一条路径改掉它,
+   * 而 TypeScript 对 `task.status` 的收窄还停留在赋值那一刻。
    */
   private isCanceled(taskId: string): boolean {
     return this.tasks.find((item) => item.id === taskId)?.status === 'canceled';
@@ -580,9 +573,9 @@ class VoiceController {
    *
    * 数据流刻意是"**后端只改写这一行 -> 前端把它替换进文档**":
    *
-   * * 编辑器里的文档才是唯一真相。直接写盘会出现"文件变了、编辑器没变", 随后磁盘变更
-   *   检测把这次自写当成外部改动, 过一会儿弹出冲突对话框 (这正是之前的毛病);
-   * * 是否落盘完全交给自动保存设置决定, 与普通编辑走同一条路, 不再由配音流程另立规矩;
+   * * 编辑器里的文档才是唯一真相: 直接写盘会出现"文件变了、编辑器没变", 随后磁盘变更
+   *   检测把这次自写当成外部改动, 过一会儿弹出冲突对话框;
+   * * 是否落盘完全交给自动保存设置决定, 与普通编辑走同一条路;
    * * 行号只在这里用一次 (替换哪一行), 后端拿到的只是那一行的文本。
    */
   private async rewriteLine(id: string, lineNumber: number, vocal: string | null): Promise<void> {
@@ -603,13 +596,8 @@ class VoiceController {
     if (store.settings.autoSave) {
       await fs.writeText(card.scenePath, next);
       store.updateDocument(card.scenePath, { content: next, dirty: false });
-      /*
-       * 这次写盘是**我们自己**做的, 必须同步"打开时的磁盘哈希"。
-       *
-       * 不同步的话, 下一次磁盘变更检测 (定时轮询 / 窗口获得焦点) 会拿磁盘上的新内容
-       * 与旧哈希比对, 判定为"被外部修改", 弹出冲突对话框 —— 用户什么都没做, 却要裁决
-       * 一次自己刚点出来的改动。
-       */
+      // 这次写盘是**我们自己**做的, 必须同步"打开时的磁盘哈希": 否则下一次磁盘变更检测
+      // 会把它判成"被外部修改", 弹出一个别无选择的裁决对话框。
       card.diskHash = hashText(normalizeEol(next));
     }
 
@@ -678,8 +666,8 @@ class VoiceController {
   /**
    * 删除**某一条对话**的历史记录 (可选只删测试)。
    *
-   * 历史是按对话组织的 (操作台上看到的就只有当前这一句的记录), 因此批量删除也只在
-   * 这一句的范围内生效 —— 否则"清空"会顺手删掉别的对话的记录, 与眼前所见不符。
+   * 历史按对话组织, 因此批量删除也只在这一句的范围内生效 —— 否则"清空"会顺手删掉别的
+   * 对话的记录, 与眼前所见不符。
    */
   dropHistoryByLine(id: string, line: number, kind?: 'test' | 'generate'): void {
     const card = this.cards.get(id);
@@ -697,8 +685,7 @@ class VoiceController {
   /**
    * 清理"没能对齐到任何语句"的记录。
    *
-   * 历史按当前对话过滤之后, 这类记录不在任何对话的列表里, 需要一个明确的入口回收,
-   * 否则它们只会永远占着内存与"未完成"计数。
+   * 历史按当前对话过滤之后, 这类记录不在任何对话的列表里, 需要一个明确的入口回收。
    */
   dropUnalignedHistory(id: string): void {
     const card = this.cards.get(id);
@@ -749,11 +736,8 @@ class VoiceController {
       const alignment = byId.get(entry.id);
       entry.line = alignment?.index ?? null;
       entry.alignment = alignment?.kind;
-      /*
-       * 只同步**对话者**: 它决定下一次按内容匹配时的键。刻意不动 `text` —— 记录里的
-       * 文本是"当时合成的那一句" (用户可能在操作台里改过它), 拿场景原文覆盖会让记录
-       * 显示的内容与实际音频不符。
-       */
+      // 只同步**对话者** (它决定下一次按内容匹配时的键), 刻意不动 `text`: 记录里的文本是
+      // "当时合成的那一句", 拿场景原文覆盖会让显示内容与实际音频不符。
       if (entry.line !== null) {
         const dialogue = card.dialogues.find((item) => item.line === entry.line);
         if (dialogue) entry.speaker = dialogue.speaker;
@@ -785,10 +769,8 @@ class VoiceController {
     if (config) this.updateSettings({ launch: config });
 
     const store = this.store();
-    /*
-     * 不要清空估算样本: 机器没变, 上一次会话学到的东西仍然有效 (样本已持久化)。
-     * 但要跳过**本次启动后的第一个任务** —— 它包含模型加载, 比正常推理高一个量级。
-     */
+    // 不要清空估算样本 (机器没变, 样本已持久化); 但要跳过**本次启动后的第一个任务** ——
+    // 它包含模型加载, 比正常推理高一个量级。
     estimator.skipNextSample();
     store.setVoiceLogs([]);
     store.setVoiceStatus('starting', null);
@@ -827,23 +809,17 @@ class VoiceController {
       }, PROBE_INTERVAL);
     });
 
-    /*
-     * 服务就绪后**接着跑队列**。
-     *
-     * 队列可能因为服务停了而卡住 (例如手动停过一次服务, 或者上次关闭工作台时留下的
-     * 排队任务), 那时没有新任务入队就不会有人再触发调度 —— 界面上就是"一直排队中"。
-     * 启动服务是"重新具备执行条件"的时刻, 顺手推一把。
-     */
+    // 服务就绪后**接着跑队列**: 队列可能因为服务停过而卡住, 那时没有新任务入队就不会有人
+    // 再触发调度 (界面表现为"一直排队中")。启动服务是"重新具备执行条件"的时刻。
     void this.pump();
   }
 
   /**
    * 停止 GSOV 服务。
    *
-   * 状态先进入 `stopping`: 进程收尾要等一会儿 (服务端还要落盘 `tts_infer.yaml`),
-   * 而关闭配音工作台时选项卡已经不在了 —— 不把这个中间状态显示出来, "服务正在关"
-   * 这段时间在界面上完全不可见 (看起来像卡住)。停止完成后置为 `stopped`, 状态栏随之
-   * 收起这一项。
+   * 状态先进入 `stopping`: 进程收尾要等一会儿 (服务端还要落盘 `tts_infer.yaml`), 不把
+   * 这个中间状态显示出来, "服务正在关"这段时间在界面上完全不可见 (看起来像卡住); 停止
+   * 完成后置为 `stopped`, 状态栏随之收起这一项。
    */
   async stopGsv(): Promise<void> {
     if (this.probeTimer) {
@@ -871,7 +847,7 @@ class VoiceController {
     }
   }
 
-  /** 应用启动时同步一次状态 (进程可能已在运行) */
+  /** 应用启动: 同步一次服务状态, 再拉取角色库与配音缓存 */
   async initialize(): Promise<void> {
     await this.syncStatus();
     try {
@@ -996,9 +972,8 @@ class VoiceController {
     this.emit();
   }
 
-  /** 保存角色并同步到全局列表 */
   /**
-   * 保存角色的**部分字段** (服务端读-改-写)。
+   * 保存角色的**部分字段** (服务端读-改-写), 并同步到全局列表。
    *
    * 这是界面上所有角色修改的入口。不要改成"发整份记录": 那会让两个相邻的修改
    * 互相覆盖 —— 勾选"参与配音"会顺手把星标、模型等字段回写成过时快照。
@@ -1065,13 +1040,11 @@ class VoiceController {
   }
 
   /**
-   * 按角色名给"还没有模型"的角色自动配一套 GSOV 权重。
+   * 按角色名给"还没有模型"的角色自动配一套 GSOV 权重, 返回这次配上的角色数。
    *
-   * 导入进来的角色与整合包里的权重通常同名 (训练产物就是拿这个角色训的), 让用户再逐个
-   * 手选一遍纯属重复劳动。规则见 `modelPair.pickModel`: 只有名称能可信对上才配 ——
-   * 配错的代价是"界面看起来已经选好了, 音色却不对", 比空着更难查。
-   *
-   * 返回这次配上的角色数。
+   * 导入进来的角色与整合包里的权重通常同名, 让用户再逐个手选纯属重复劳动。规则见
+   * `modelPair.pickModel`: 只有名称能可信对上才配 —— 配错的代价是"界面看起来已经选好了,
+   * 音色却不对", 比空着更难查。
    */
   async autoAssignModels(): Promise<number> {
     const models = await this.listModels();
@@ -1167,11 +1140,10 @@ class VoiceController {
   }
 
   /**
-   * 撤下**全部**未完成的任务。
+   * 撤下**全部**未完成的任务 (关闭配音工作台时调用)。
    *
-   * 关闭配音工作台时调用: 服务马上要停, 留在队列里的任务再也等不到结果, 只会变成
-   * "永远排队中" (重开工作台看到它们还在, 却什么都不会发生)。已经生成出来的记录不受
-   * 影响 —— 撤下的只是没产出音频的那几条。
+   * 服务马上要停, 留在队列里的任务再也等不到结果, 只会变成"永远排队中"。已经生成出来的
+   * 记录不受影响 —— 撤下的只是没产出音频的那几条。
    */
   cancelUnfinishedTasks(): void {
     for (const task of [...this.tasks]) {
@@ -1182,13 +1154,9 @@ class VoiceController {
   /**
    * 磁盘内容是否被**外部**改过。
    *
-   * 判据是"磁盘既不同于打开时的基准, 也不同于编辑器里现在这一份":
-   *
-   * * 只比基准是不够的。基准 (`diskHash`) 只在打开卡片时记录, 而文件随时可能被**我们自己**
-   *   写回去 —— 配音「应用」、手动 `Ctrl+S`、自动保存。只比基准的话, 下一次轮询就会把
-   *   这些自写当成"外部修改", 弹出一个别无选择的裁决对话框。
-   * * 只比编辑器内容也不够: 编辑器有未保存的改动时, 磁盘与它本来就不同, 那是脏标记而
-   *   不是冲突。
+   * 判据是"磁盘既不同于打开时的基准 (`diskHash`), 也不同于编辑器里现在这一份": 只比基准
+   * 会把**我们自己**的写盘 (配音「应用」、`Ctrl+S`、自动保存) 当成外部修改, 弹出一个别无
+   * 选择的裁决对话框; 只比编辑器内容则会把"有未保存改动"的脏标记误判成冲突。
    */
   async checkDiskChange(id: string): Promise<boolean> {
     const card = this.cards.get(id);
@@ -1210,6 +1178,12 @@ class VoiceController {
     }
   }
 
+  /**
+   * 把最新卡片表推给 store。
+   *
+   * 调用点很多, 但它**不是**统一发令牌处 —— 只换一份新 Map, 就地改过的字段仍然不会传播
+   * (见 `notifyUi`)。
+   */
   private syncCard(card: SceneVoiceState): void {
     this.store().setSceneVoiceEditors(new Map(this.cards));
     void card;
@@ -1244,8 +1218,8 @@ class VoiceController {
   /**
    * 把历史写回磁盘。
    *
-   * 刻意**不 await**: 历史是旁路信息, 写盘失败 (磁盘满/权限) 不该让"应用一条配音"这种
-   * 操作失败。因此这里吞掉错误 —— 但写是串行的, 后一次一定覆盖前一次, 不会交错。
+   * 刻意**不 await** 并吞掉错误: 历史是旁路信息, 写盘失败 (磁盘满/权限) 不该让"应用一条
+   * 配音"这种操作失败。写是串行的, 后一次一定覆盖前一次, 不会交错。
    */
   private persistHistory(card: SceneVoiceState): void {
     const scenePath = card.scenePath;
@@ -1263,9 +1237,9 @@ class VoiceController {
   /**
    * 重新判断每一条记录"是否已经应用到脚本"。
    *
-   * `applied` 是个**派生**事实 (该行的 `-vocal=` 是否正好指向这条记录的音频), 不是可以
-   * 单独存下来就算数的状态: 用户可能在普通编辑器里删掉了 `-vocal=`, 也可能回滚了文件。
-   * 每次重新解析场景 / 载入历史后按脚本重算, 界面上的"已应用"才不会说谎。
+   * `applied` 是个**派生**事实 (该行的 `-vocal=` 是否正好指向这条记录的音频), 不能单独存
+   * 下来就算数: 用户可能在普通编辑器里删掉了 `-vocal=`, 也可能回滚了文件。每次重新解析
+   * 场景 / 载入历史后按脚本重算, 界面上的"已应用"才不会说谎。
    */
   private refreshApplied(card: SceneVoiceState): void {
     for (const entry of card.history) {
@@ -1281,9 +1255,28 @@ class VoiceController {
     }
   }
 
+  /**
+   * UI 重算令牌 +1 (不动队列角标)。**控制器是它唯一的发出者**, 界面读它
+   * (`appStore.voiceTick`) 才知道哪个派生要重算。
+   *
+   * 为什么需要: 控制器把卡片**就地**改 (换 `dialogues` / `matches`、改 `selectedHistoryId`…),
+   * 而 `sceneVoiceEditors` 是 Map —— Svelte 不代理 Map 的内容, `get(id)` 每次都是同一个
+   * card 对象, 因此"换一份新 Map"不足以让界面重算。
+   *
+   * 只在"卡片字段被就地改、且界面必须看见"处发: `refreshCard` / `assignCharacter` /
+   * `selectHistory`。`setCursorLine` **绝不能发** —— 光标移动是每次换行都走的热路径, 且
+   * `ui/SceneVoiceEditor.svelte` 里"写 cursorLine 记忆"的 effect 依赖令牌, 发在这里会自激。
+   * `openCard` / `closeCard` 让派生读到的值本身变了, 自带传播; 其余 (`updateHistory` /
+   * `dropHistory*` / `cancel` / `setPriority` / `enqueue` / `realignCard` / `apply` /
+   * `remove` / `updateSettings`) 紧跟着就会 `emit()`。
+   */
+  private notifyUi(): void {
+    this.store().setVoiceTick();
+  }
+
   private emit(): void {
     const store = this.store();
-    store.setVoiceTick();
+    this.notifyUi();
     // 配音工作台选项卡角标: 待处理 + 运行中
     const active = this.tasks.filter((task) => task.status === 'pending' || task.status === 'running').length;
     if (store.voiceQueuePending !== active) store.setVoiceQueuePending(active);

@@ -2,13 +2,11 @@
 
 // 实时预览指示器的状态推进规则测试。
 //
-// 这里钉住的是三件"看代码看不出来"的引擎约定, 它们一旦被改错, 表现只是"图标显示得不
-// 太对", 很难从界面上追溯到原因:
-//
-// 1. 引擎上报的 `sentenceId` 是**停止指针**: 执行完第 L 行 (0 起算) 后它是 L,
-//    因此"回灌值 == 目标行号"才是执行完成;
-// 2. 回灌是**异步且会迟到**的 —— 把"回灌值不等于目标行"判成失败, 就会出现"明明抵达了
-//    却说没执行到"的假失败。这一类回灌一律读作"预览已经不在这一行上";
+// 三条"看代码看不出来"的引擎约定, 改错只表现为图标显示得不太对, 很难从界面追溯到原因:
+// 1. 引擎上报的 `sentenceId` 是**停止指针** (执行完第 L 行 0 起算后为 L), 因此"回灌值 == 目标行号"
+//    才算执行完成;
+// 2. 回灌是**异步且会迟到**的: 把"回灌值不等于目标行"判成失败会出现假失败, 这类回灌一律读作
+//    "预览已经不在这一行上";
 // 3. 快进会在上限处为长演出停下 (`preview.event.fast-preview-timeout`), 那才是失败。
 
 import { describe, expect, it } from 'vitest';
@@ -19,6 +17,7 @@ import {
   isFastPreviewTimeoutForLivePreviewMarker,
   isLivePreviewTargetExecuted,
   isStageSnapshotForLivePreviewMarker,
+  sameLivePreviewMarker,
   type LivePreviewMarker,
 } from '../src/preview/live-preview';
 
@@ -60,8 +59,7 @@ describe('applyStageSnapshotToLivePreviewMarker', () => {
   });
 
   it('引擎停在别处 -> 已越过, 而不是失败', () => {
-    // 这一条正是"明明抵达了却说没执行到"的根因: 迟到的旧回灌报的是别的指针,
-    // 旧写法把它判成失败, 于是刚点过去就冒出一个红叉
+    // 迟到的旧回灌报的是别的指针, 把它判成失败就会刚点过去就冒出一个红叉
     for (const sentenceId of [2, 4, 9, 60]) {
       const next = applyStageSnapshotToLivePreviewMarker(executingMarker(), { sceneName: 'start.txt', sentenceId });
       expect(next.phase).toBe('passed');
@@ -173,5 +171,42 @@ describe('isFastPreviewTimeoutForLivePreviewMarker', () => {
 
   it('没有 targetSentenceId 时按场景判定', () => {
     expect(isFastPreviewTimeoutForLivePreviewMarker(executingMarker(), { sceneName: 'start.txt' })).toBe(true);
+  });
+});
+
+/*
+ * `sameLivePreviewMarker`: "值没变就不写 store" 的判据。
+ *
+ * `preview/client.ts` 的 `syncScene` 每次都会新造一个 marker 对象 (原地打字、同一行反复同步也是
+ * 如此), 若 store 无条件接受, 行号旁的指示器装饰就会被拆掉重画 —— 它跟着光标走, 看起来就是
+ * "编辑器一直在闪"。
+ */
+describe('sameLivePreviewMarker', () => {
+  const marker: LivePreviewMarker = { docPath: 'a.txt', line: 5, phase: 'executing', sceneName: 'start.txt' };
+
+  it('内容相同 (新对象) 算没变', () => {
+    expect(sameLivePreviewMarker({ ...marker }, { ...marker })).toBe(true);
+  });
+
+  it('任一项不同就算变了', () => {
+    expect(sameLivePreviewMarker(marker, { ...marker, phase: 'done' })).toBe(false);
+    expect(sameLivePreviewMarker(marker, { ...marker, line: 6 })).toBe(false);
+    expect(sameLivePreviewMarker(marker, { ...marker, docPath: 'b.txt' })).toBe(false);
+    expect(sameLivePreviewMarker(marker, { ...marker, sceneName: 'other.txt' })).toBe(false);
+  });
+
+  it('null 与 undefined 等价, 两者之间算没变', () => {
+    expect(sameLivePreviewMarker(null, null)).toBe(true);
+    expect(sameLivePreviewMarker(undefined, undefined)).toBe(true);
+    expect(sameLivePreviewMarker(null, undefined)).toBe(true);
+  });
+
+  it('有值与 null 互相算变了（清空 / 点亮必须通知）', () => {
+    expect(sameLivePreviewMarker(marker, null)).toBe(false);
+    expect(sameLivePreviewMarker(null, marker)).toBe(false);
+  });
+
+  it('同一个实例算没变', () => {
+    expect(sameLivePreviewMarker(marker, marker)).toBe(true);
   });
 });

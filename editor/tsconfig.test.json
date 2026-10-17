@@ -1,0 +1,13 @@
+{
+  "//": "editor/tests/** 单独一次类型检查: 它们刻意给 normalizeSettings 之类传畸形数据来验证容错, 因此不参与主 type-check (editor/tsconfig.json 里把 tests 排除了)。这里单独跑通, 免得测试文件本身写错。",
+  "//2": "注意 include 必须连带上 ambient 声明: extends 只合并 compilerOptions, include 是整体替换的。",
+  "extends": "./.svelte-kit/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "moduleResolution": "bundler",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["tests/**/*.ts", "src/**/*.test.ts", "src/ambient.d.ts", ".svelte-kit/**/*.d.ts"]
+}

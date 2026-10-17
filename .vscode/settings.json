@@ -1,6 +1,14 @@
 {
-    // Rust
-    "rust-analyzer.check.command": "clippy",
-    // Python
-    "python.analysis.typeCheckingMode": "strict",
+  // Rust
+  "rust-analyzer.check.command": "clippy",
+  // Python
+  "python.analysis.typeCheckingMode": "strict",
+  // SvelteKit 的中间产物: `svelte-kit sync` 每次 dev/build/type-check 都会重写它,
+  // 已经在 .gitignore 里, 这里再让文件树与全局搜索也看不到它。
+  "files.exclude": {
+    "**/.svelte-kit": true
+  },
+  "search.exclude": {
+    "**/.svelte-kit": true
+  }
 }

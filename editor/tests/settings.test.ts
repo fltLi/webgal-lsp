@@ -43,12 +43,14 @@ describe('normalizeSettings', () => {
 
   it('丢弃结构不完整的引擎条目', () => {
     const settings = normalizeSettings({
+      // @ts-expect-error 这里刻意传结构不完整的条目 (缺字段 / null), 验证 normalizeSettings 会丢弃它们
       engines: [{ id: 'eng-1', path: 'C:\\ok', name: 'OK' }, { id: 'eng-2' }, null],
     });
     expect(settings.engines.map((engine) => engine.id)).toEqual(['eng-1']);
   });
 
   it('把旧的最近项目字符串数组升级成记录', () => {
+    // @ts-expect-error 刻意传旧格式 (字符串数组), 验证 normalizeSettings 会把它升级成记录
     const settings = normalizeSettings({ recentProjects: ['C:\\a', 'C:\\b'] });
     expect(settings.recentProjects.map((item) => item.path)).toEqual(['C:\\a', 'C:\\b']);
     expect(settings.recentProjects[0].name).toBeUndefined();
@@ -58,6 +60,7 @@ describe('normalizeSettings', () => {
     const settings = normalizeSettings({
       autoSave: false,
       editorFontSize: 18,
+      // @ts-expect-error 刻意传缺字段的模板条目, 验证 normalizeSettings 会丢弃它
       templates: [{ id: 'tpl-1', name: '深海', path: 'C:\\tpl' }, { name: '缺 id' }],
     });
     expect(settings.autoSave).toBe(false);

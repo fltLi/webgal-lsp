@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# SvelteKit: svelte-kit sync 生成的中间产物 (dev / build / type-check 都会写它)
+/.svelte-kit
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+.env
+.env.*
+!.env.example

@@ -2,7 +2,7 @@
 
 // Git 前端公共工具: 路径转换与状态着色。
 
-import type { GitFileStatus } from '../commands/git';
+import type { GitFileStatus, GitStatus, GitStatusLetter } from '../commands/git';
 
 /** 绝对路径 -> 仓库相对路径 (正斜杠)。 */
 export function absToRel(projectPath: string, abs: string): string {
@@ -41,4 +41,60 @@ export function statusMap(files: GitFileStatus[]): Map<string, GitFileStatus> {
   const map = new Map<string, GitFileStatus>();
   for (const f of files) map.set(f.path, f);
   return map;
+}
+
+/**
+ * 相对路径归一化: 反斜杠转正斜杠、去掉前导斜杠、转小写。
+ *
+ * Windows 上 git 与文件系统给出的分隔符/大小写不一致, 比较前必须统一 —— 这是**唯一**的
+ * 归一化口径, 索引构建与查表都必须用它, 否则两边键不匹配。
+ */
+export function normalizeRelPath(rel: string): string {
+  return rel.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+}
+
+/**
+ * 「归一化相对路径 -> 更改字母」的**一次性**索引。
+ *
+ * 文件行的徽标每行都要查自己的 git 字母, 逐行在 `staged`/`unstaged` 上线性 `find` 是
+ * O(N×M), 文件多时任何一次 `gitStatus` 刷新都会卡住主线程。已暂存优先于未暂存 —— 与徽标
+ * 原本的语义一致 (那一步是用户刚确认过的动作)。
+ */
+export function buildGitLetterIndex(status: GitStatus | null): Map<string, GitStatusLetter> {
+  const index = new Map<string, GitStatusLetter>();
+  if (!status?.initialized) return index;
+  // `GitFileStatus.status` 在后端是字符串; 前端只在这几个字母上着色, 这里收窄成联合类型
+  for (const file of status.unstaged ?? []) index.set(normalizeRelPath(file.path), file.status as GitStatusLetter);
+  // 后写 staged, 于是"两份列表里都有"时以已暂存为准
+  for (const file of status.staged ?? []) index.set(normalizeRelPath(file.path), file.status as GitStatusLetter);
+  return index;
+}
+
+/**
+ * 右键菜单里「暂存」这一项该不该出现、该不该禁用。
+ *
+ * 状态口径来自后端 `service/git.rs`: 它把 libgit2 的状态位拆成两份列表, `staged` 取索引侧
+ * (`index_letter`), `unstaged` 取工作区侧 (`worktree_letter`), 并且 `include_untracked(true)`
+ * —— **未跟踪文件因此落在 `unstaged` 里、字母是 `U`** (来自 `WT_NEW`, 不是 git porcelain 的
+ * `??`), 判断"未跟踪"要看 `unstaged` 的 `U`。
+ *
+ * 三条规则: 没有仓库 → 整组 git 菜单项都不给; 未跟踪 → 不给「暂存」; 已暂存且工作区没有额外
+ * 改动 → **显示但禁用** (位置固定的菜单比忽隐忽现的好按)。"已跟踪但完全干净"同理显示但禁用,
+ * 因为 `git add` 对它也是空操作。
+ */
+export function stageMenuItem(
+  status: GitStatus | null,
+  projectPath: string,
+  absPath: string
+): { visible: boolean; disabled: boolean } {
+  if (!status?.initialized) return { visible: false, disabled: true };
+
+  const rel = absToRel(projectPath, absPath);
+  const staged = status.staged.some((file) => file.path === rel);
+  const unstaged = status.unstaged.find((file) => file.path === rel);
+
+  if (unstaged?.status === 'U' && !staged) return { visible: false, disabled: true };
+
+  // 工作区侧没有这条记录 = 没有可暂存的改动 (已暂存待提交 / 已跟踪且干净)
+  return { visible: true, disabled: !unstaged };
 }

@@ -2,19 +2,15 @@
 
 // 配音编辑模式的可见性与开关规则测试。
 //
-// 规则来自用户的明确要求, 必须精确遵守:
-// * 没开全局配音 (配音工作台) 时, 一律不显示场景卡上的麦克风开关;
-// * 开了之后, 只显示**处于配音编辑模式**的场景卡上的麦克风开关;
-// * 普通场景卡上的划线麦克风不显示 —— 除非该卡已被选中;
-// * 进入 / 退出配音编辑模式只有一个入口: 那个麦克风开关本身。
+// 规则: 没开全局配音 (配音工作台) 时一律不显示场景卡上的麦克风开关; 开了之后只显示**处于配音编辑
+// 模式**的场景卡; 普通场景卡上的划线麦克风只在被选中时显示; 进入 / 退出配音编辑模式只有麦克风开关
+// 这一个入口。
 //
-// "没有任何自动进入" 是这里的核心: 打开工作台或切换选项卡都不得改变任何场景的
-// 配音编辑模式, 否则会出现"切到的每个场景都变成配音卡"以及"点了麦克风没反应
-// (被自动规则覆盖), 切走再切回来才发现生效"。
+// 核心是"没有任何自动进入": 打开工作台或切换选项卡都不得改变任何场景的配音编辑模式。
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { shouldShowVoiceToggle, useAppStore } from '../src/state/store';
+import { shouldShowVoiceToggle, useAppStore } from '../src/state/store.svelte';
 import { makeSceneTab } from '../src/tabs/model';
 import {
   activeSceneInVoiceMode,

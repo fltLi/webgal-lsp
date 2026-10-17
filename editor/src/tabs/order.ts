@@ -5,6 +5,7 @@
 // 抽出来的原因: 新增/关闭/重排的顺序规则容易被后续改动破坏, 而这些规则都是
 // "给定序列与操作, 得出新序列与新的活动项"的纯逻辑, 适合单测覆盖。
 
+import { compareNames } from '../lib/collate';
 import type { WorkbenchTabItem } from './model';
 
 /** 记住最近激活的 tab id，保证历史不重复且最新项在末尾 */
@@ -87,7 +88,8 @@ export function orderTabs(tabs: WorkbenchTabItem[]): WorkbenchTabItem[] {
       const diffDelta = diffRank[left.diffKind] - diffRank[right.diffKind];
       if (diffDelta !== 0) return diffDelta;
     }
-    return (left.title ?? '').localeCompare(right.title ?? '', undefined, { numeric: true, sensitivity: 'base' });
+    // 共享 collator (见 `lib/collate.ts`): 带选项的 `localeCompare` 每次比较都要构造排序器
+    return compareNames(left.title ?? '', right.title ?? '');
   });
 }
 

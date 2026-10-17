@@ -3,20 +3,18 @@
 // 编辑器行号旁的实时预览指示器 (Monaco glyph margin)。
 //
 // 风格对齐 VS Code 的调试模式: **实心箭头踩在所在行上**, 并且整行带淡色高亮 ——
-// 一眼就能看出"预览现在停在哪一行", 与调试器停在断点上是一样的读法。
+// 一眼就能看出"预览现在停在哪一行"。
 //
-// 四种状态各画成一个图标, 全部由 CSS 提供 (见 styles.css):
-// * 等待中: 中性色箭头 —— "预览正指向这一行";
-// * 已执行: 箭头变绿 —— "这一行已经跑完";
-// * 已越过: 箭头变黄 —— 预览已经不在这一行上了 (引擎自己走过去了, 或者用户在预览里
-//   点去了别处), 不当作错误;
-// * 未能执行: 箭头变红并加一道斜杠 —— 快进超时, 点一下可以重跑。
+// 四种状态各画成一个图标, 全部由 CSS 提供 (见 styles.css): 等待中=中性色箭头, 已执行=变绿,
+// 已越过=变黄 (引擎自己走过去了, 或者用户在预览里点去了别处, 不当作错误), 未能执行=变红加
+// 一道斜杠 (快进超时, 点一下可以重跑)。这里只做渲染与交互, 状态本身在 `preview/live-preview.ts`
+// 里演化。
 //
-// 这里只做渲染与交互, 状态本身在 `preview/live-preview.ts` 里演化。图标放行号**右侧的
-// 字形栏** (glyph margin) 而不是行号左侧的差异色块栏: 两者是 Monaco 里并排独立的两栏,
-// 各画各的, 不会互相顶掉 (git 差异色块用的是 `linesDecorationsClassName`)。
+// 图标放行号**右侧的字形栏** (glyph margin) 而不是行号左侧的差异色块栏: 两者是 Monaco 里
+// 并排独立的两栏, 各画各的, 不会互相顶掉 (git 差异色块用的是 `linesDecorationsClassName`)。
 
 // 只用类型: 装饰区间用字面量构造, 因此这个模块没有 `monaco-editor` 的运行时依赖。
+
 import type * as monaco from 'monaco-editor';
 
 import type { LivePreviewMarker } from '../preview/live-preview';
@@ -28,8 +26,7 @@ type LivePreviewPhase = LivePreviewMarker['phase'];
  * 构造装饰区间。
  *
  * 用字面量而不是 `new monaco.Range(...)`: `IRange` 是结构化接口, 字面量完全够用 ——
- * 这样这个模块就没有 `monaco-editor` 的**运行时**依赖 (只剩类型), 于是它可以在没有
- * Monaco 的测试环境里直接跑 (见 `tests/live-preview-gutter.test.ts`)。
+ * 于是它可以在没有 Monaco 的测试环境里直接跑 (见 `tests/live-preview-gutter.test.ts`)。
  */
 function lineRange(startLineNumber: number, startColumn: number, endLineNumber: number, endColumn: number) {
   return { startLineNumber, startColumn, endLineNumber, endColumn };
@@ -78,7 +75,21 @@ export function createLivePreviewGutterController(options: LivePreviewGutterCont
   const { editor } = options;
   const decorations = editor.createDecorationsCollection();
 
+  /**
+   * 上一次真正画出去的内容签名。
+   *
+   * `sync()` 的触发源**又密又重复**: `livePreviewMarker` 换一个新对象时会被调一次 (而
+   * `syncScene` 每次同步都构造新 marker), 本模块自己的 `onDidChangeModelContent` 更是每次
+   * 按键都调。而 `decorations.set()` 会拆掉旧装饰、重新插 DOM —— 对同一行、同一状态重复画
+   * 一遍, 视觉上就是指示器与整行底色在闪。因此只在"画出来的东西真的会变"时才重画。
+   *
+   * 签名里必须带 `model.uri` 与行数: 配音卡与普通场景卡**共用同一份 model**, 换卡时 Monaco
+   * 会把装饰清掉 (那时签名里的 uri 也变了, 于是照常重画); 文本变短时行号要重新夹。
+   */
+  let lastKey: string | null = null;
+
   function clear() {
+    lastKey = null;
     if (decorations.length === 0) return;
     decorations.clear();
   }
@@ -93,16 +104,20 @@ export function createLivePreviewGutterController(options: LivePreviewGutterCont
 
     // 文档可能被别处改短, 夹到实际行数内, 避免装饰落在不存在的行上
     const line = Math.min(Math.max(marker.line, 1), Math.max(1, model.getLineCount()));
-    const hover = PRESENTATION[marker.phase](marker.line, options.isReplayAvailable());
+    const replay = options.isReplayAvailable();
+    const key = `${model.uri?.toString() ?? ''}|${marker.docPath}|${marker.line}|${marker.phase}|${model.getLineCount()}|${replay}`;
+    if (key === lastKey) return;
+    lastKey = key;
+
+    const hover = PRESENTATION[marker.phase](marker.line, replay);
     decorations.set([
       /*
        * 图标与整行高亮是两条装饰, 这是为了自动换行:
        *
        * * 整行高亮走 `isWholeLine`, 一条长语句折成几行时**每一行都该有底色**(它本来就是
        *   一整行);
-       * * 图标只走一个零长度区间。零长度区间落在第一行第一个字符上, Monaco 因此只在
-       *   **第一个视觉行**画一次图标 —— 用 `isWholeLine` 的话字形栏会被折出来的每一行
-       *   各画一个箭头。
+       * * 图标只走一个零长度区间, Monaco 因此只在**第一个视觉行**画一次图标 —— 用
+       *   `isWholeLine` 的话字形栏会被折出来的每一行各画一个箭头。
        */
       {
         range: lineRange(line, 1, line, 1),

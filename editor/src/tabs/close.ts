@@ -2,14 +2,14 @@
 
 // 选项卡关闭的统一入口。
 //
-// 不同种类的选项卡关闭前要做的事不同 (未保存确认、未完成配音任务确认、清理
-// Monaco model / 预处理器会话 / 配音卡), 但都必须走同一条路径, 否则容易出现
-// "关掉了 DOM 却留下状态"这类不一致。这里集中处理。
+// 各类选项卡关闭前要做的事不同 (未保存确认、未完成配音任务确认、清理 Monaco model /
+// 预处理器会话 / 配音卡), 但都必须走同一条路径, 否则容易出现"关掉了 DOM 却留下状态"。
+// 这里集中处理。
 
 import { requestConfirm } from '../confirm';
 import { disposeModel } from '../lsp/monaco';
 import { disposeNovelTab } from '../novel/registry';
-import { useAppStore } from '../state/store';
+import { useAppStore } from '../state/store.svelte';
 import { WORKBENCH_TAB_ID, type WorkbenchTabItem } from './model';
 import { confirmClose } from '../unsaved';
 import { closeVoiceWorkbench } from '../voice/mode';
