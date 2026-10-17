@@ -176,6 +176,9 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   **不要引入真路由**——那会改变交互流程（URL 可寻址、前进后退）。
 - **`ssr = false`**（`+layout.ts`）；产物经 `adapter-static` 写到 **`dist/`**（`tauri.conf.json` 的
   `frontendDist` 指向 `../dist`）。
+- **版本只有一个源**：`tauri.conf.json` 的 `version` 指向 `../package.json`（即 `editor/package.json`），
+  release 时再由 `--config` 覆盖成 tag 上的版本。**改版本请改 `editor/package.json`**，别在
+  `tauri.conf.json` 里写回字面量。
 - **窗口是「隐藏创建 + 渲染完成后再显示」**：启动时前端要拉模块、装配 Monaco（开发模式下可达数秒），
   提前显示窗口就是让用户对着空白窗口等。显示动作在 `+page.svelte` 的 `onMount` 调 `revealWindow()`
   （实现见 `lib/boot.ts`：连等两帧，**刻意不设超时**，否则冷启动时会被兜底逻辑抢在首帧之前）；
@@ -223,6 +226,11 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
 - **依赖版本**：`tower`、`tower-http`、`tower-lsp`、`lsp-types` 在根 `Cargo.toml` 里用 `=` 精确锁定，因为编辑器
   后端与语言服务器在**同一进程**里共享 `lsp-types`；要升级必须让 `[workspace.dependencies]` 与相关 crate
   同时对齐并跑通编辑器编译。其余依赖是下限声明，具体版本以 `Cargo.toml` / `Cargo.lock` / `package.json` 为准。
+- **Tauri 的前端包与 crate 必须同主次版本**：`tauri build` 会校验 `@tauri-apps/api` / `@tauri-apps/plugin-*`
+  与 `Cargo.lock` 里 `tauri` / `tauri-plugin-*` 的主次版本，不一致**直接退出**（四个平台一起失败，报
+  "Found version mismatched Tauri packages"）。所以 `editor/package.json` 里那几个 `@tauri-apps/*`
+  **写精确版本**，别用 `^`——宽范围在换锁文件或重新解析时会漂到更高的次版本。升级时两边一起动：
+  改 `editor/src-tauri/Cargo.toml` 的 crate 版本 + `cargo update`，再把 JS 侧对齐到同一主次版本。
 
 ## 4. 语言服务接入（Ink 侧最容易踩的地方）
 
@@ -337,6 +345,7 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 用 PowerShell 数文件行数，结果比实际少 | Windows PowerShell 5.1 的 `Get-Content` 按 GBK 解码无 BOM 的 UTF-8，会丢行并产生乱码。用 `[System.IO.File]::ReadAllLines($p, [System.Text.UTF8Encoding]::new($false)).Count` |
 | PowerShell 里 `$bytes[16..19]` 读出的字节序是反的 | PowerShell 的数组切片对反向区间会倒序返回，`[16..19]` 拿到的是 big-endian。二进制解析用 `[BitConverter]`，别手工下标 |
 | playground 行为与源码不一致 | `pkg/` 是旧产物，重跑 `bun run build:wasm` |
+| `tauri build` 报 `Found version mismatched Tauri packages` | 前端包与 crate 的主次版本不一致，见第 3 节「Tauri 的前端包与 crate 必须同主次版本」 |
 | **任何构建报 "Tsconfig not found … editor/.svelte-kit/tsconfig.json"** | 说明有任务在转换 `editor/` 下的源码：`editor/tsconfig.json` 的 `extends` 指向 `svelte-kit sync` 的生成物，而只构建其它模块的任务里不会有它。**别从别的子模块 import `editor/src/**`**——Playground 曾经这么做，代价是 CI 里要放一个占位 tsconfig（已移除）。确实要共享，就把那份代码提成独立子模块 |
 | **ESLint 对全部文件报 `Unable to parse the specified 'tsconfig' file`** | 配置里开了 `parserOptions.project` 而它要读的 tsconfig 不存在。现在的 `editor/eslint.config.js` 刻意不开类型感知 lint，别再加回去（见第 2 节的分工说明） |
 | **Windows 上 `format-check` 报一大片文件不符合格式** | 本机 `core.autocrlf=true` 让工作树是 CRLF，而配置要求 LF。用 `git ls-files --eol <文件>` 看索引侧是否为 `i/lf`（是就没问题，Linux CI 检出的是 LF），或临时加 `--end-of-line auto` 复核内容 |
