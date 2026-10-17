@@ -24,7 +24,7 @@ pub fn document(scene: &Scene, position: Position) -> Option<Hover> {
     };
     let documentation = match primary.locate(position.character as usize) {
         SentenceLocation::Command(..) => document_command(command),
-        SentenceLocation::Content(..) => document_content(command),
+        SentenceLocation::Content(..) => None, // 主参数不弹出悬浮文档, 减少干扰
         SentenceLocation::ArgumentName(_, name, ..) => document_argument(command, name),
         SentenceLocation::ArgumentValue(..) => None,
         SentenceLocation::Comment(..) => None,
@@ -48,6 +48,7 @@ pub(crate) fn document_command(command: &str) -> Option<&'static Document> {
     DOCUMENT.get(command).map(|sentence| &sentence.command)
 }
 
+#[allow(dead_code)]
 pub(crate) fn document_content(command: &str) -> Option<&'static Document> {
     DOCUMENT.get(command).map(|sentence| &sentence.content)
 }

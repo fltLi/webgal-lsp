@@ -25,6 +25,7 @@
   import { diffGutterMarks } from '../editor/diff-gutter';
   import { createLivePreviewGutterController } from '../editor/gutter-live-preview';
   import { createInlineDiffZoneController } from '../editor/inline-diff-zone';
+  import { shouldRetriggerSuggest, isDeletionOnly, isSuggestableAfterDelete } from '../editor/suggest-retrigger';
   import { fs } from '../lib/fs';
   import { lspClient } from '../lsp/client';
   import { applyDiagnostics, bindModel, LANGUAGE_ID, openModel, TRIGGER_CHARACTERS } from '../lsp/monaco';
@@ -145,11 +146,11 @@
     // 唯一的显式依赖: 是哪个文档。
     const path = doc.path;
     /*
-     * `host` 是 `$state` 变量, 在 `untrack` 回调里 TS 保留不了上面那句的收窄 —— 先取出一个
-     * 不可变引用再进回调。读取 `host` 本身仍留在外面: 宿主节点被换掉时必须重建编辑器。
+     * `host` 是 `$state` 变量, 在 `untrack` 回调里 TS 保留不了收窄 —— 先在外面挡掉空值, 再取出
+     * 一个类型已经收窄的不可变引用。读取 `host` 本身仍留在这里: 宿主节点被换掉时必须重建编辑器。
      */
+    if (!host) return;
     const container = host;
-    if (!container) return;
 
     /*
      * 从这里往下**整块不追踪** —— 这是"只依赖实例标识"这条规矩的落地方式。
@@ -503,16 +504,79 @@
       }
 
       /*
-       * 补全后的自动重新触发: 语言服务补齐 `key:value;` 这类片段后, 用户接着要写下一个参数, 而
-       * Monaco 不会自己再弹一次 —— 这里在刚输入触发字符时补一次。
+       * 补全的"再补一次": 插入触发字符之后, 以及**删除字符**之后。
+       *
+       * 两种入口的来源不同:
+       *
+       * * 插入: 语言服务补齐 `key:value;` / `-motion=` 这类片段后, 用户接着要写下一个参数或
+       *   参数值, 而 Monaco 不会自己再弹一次;
+       * * 删除: Monaco 只在**输入字符**时快速补全 (`quickSuggestions` 挂在 `onDidType` 上),
+       *   退格不会弹列表 —— 而"删到 `-motion=smi` 时该看见 smile"是这里的预期行为。
+       *
+       * 四条约束缺一不可 (都踩过, 别按"更直觉"的样子改写):
+       *
+       * 1. **不能同步触发**: 确认补全时 Monaco 正在 `insertSuggestion`, 它随后会在一个**微任务**
+       *    里 `model.clear()` 取消这一轮补全请求 (suggestController 的
+       *    `Promise.all(tasks).finally(...)`) —— 同步 `triggerSuggest` 等于白发一次请求, 表现就是
+       *    "确认补全后动作列表不再自动弹出, 得手动删掉 `=` 再敲一次"。
+       * 2. **不能无脑 `triggerSuggest`**: 它是**显式**触发, 服务端在该位置没有候选项时 Monaco 会把
+       *    「No suggestions」显示出来。所以先问一次语言服务, 有候选才弹 (一次本地往返)。
+       * 3. **已经弹出就跳过**: 原生触发已经弹出列表时再补一次会把那次请求顶掉; 两个请求交错时
+       *    后到的空结果还会把好好的列表换成「No suggestions」。
+       * 4. **删除要防抖**: 按住退格会连续删除, 每个字符都问一次语言服务没有必要。
+       *
+       * 另外: **删除退到行首就不补了** (`isSuggestableAfterDelete`)。行首前面没有可补的上下文,
+       * 弹出的列表只会盖住上一行、还挡着用户继续退格。判的是**触发那一刻**的光标位置, 不是删除
+       * 发生时的位置 —— 中间隔着 80ms 防抖, 用户可能已经把光标移走了。
        */
-      const suggestSub = model.onDidChangeContent(() => {
-        if (pushingExternal) return;
+      const INSERT_SUGGEST_DELAY = 0;
+      const DELETE_SUGGEST_DELAY = 80;
+
+      let suggestTimer: ReturnType<typeof setTimeout> | null = null;
+
+      /** 当前位置有没有候选项 —— 决定要不要真的冒出一个列表 (见上面第 2 条)。 */
+      async function hasCompletions(): Promise<boolean> {
+        if (!isScene) return false;
         const position = instance.getPosition();
-        if (!position) return;
-        const line = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
-        if (!TRIGGER_SET.has(line.at(-1) ?? '')) return;
-        instance.trigger('keyboard', 'editor.action.triggerSuggest', null);
+        if (!position) return false;
+        try {
+          const items = await lspClient.completion(path, {
+            line: position.lineNumber - 1,
+            character: position.column - 1,
+          });
+          return Boolean(items && items.length > 0);
+        } catch {
+          return false;
+        }
+      }
+
+      /**
+       * 排一次"再补一次"。
+       *
+       * `afterDelete` 区分两种入口: 插入触发字符之后 (0ms) 与退格之后 (防抖 80ms)。后者多一道判据
+       * —— 光标退到行首时没有可补的上下文 (`suggest-retrigger.ts` 的 `isSuggestableAfterDelete`)。
+       */
+      function scheduleSuggest(delay: number, afterDelete = false): void {
+        if (suggestTimer) clearTimeout(suggestTimer);
+        suggestTimer = setTimeout(() => {
+          suggestTimer = null;
+          void (async () => {
+            // 等待期间可能已经切文档 / 销毁编辑器: 别对着已失效的实例发触发
+            if (model.isDisposed() || instance.getModel() !== model) return;
+            if (afterDelete && !isSuggestableAfterDelete(instance.getPosition())) return;
+            if (container.querySelector('.suggest-widget.visible')) return;
+            if (!(await hasCompletions())) return;
+            if (model.isDisposed() || instance.getModel() !== model) return;
+            if (container.querySelector('.suggest-widget.visible')) return;
+            instance.trigger('keyboard', 'editor.action.triggerSuggest', null);
+          })();
+        }, delay);
+      }
+
+      const suggestSub = model.onDidChangeContent((event) => {
+        if (pushingExternal) return;
+        if (shouldRetriggerSuggest(event.changes, TRIGGER_SET)) scheduleSuggest(INSERT_SUGGEST_DELAY);
+        else if (isDeletionOnly(event.changes)) scheduleSuggest(DELETE_SUGGEST_DELAY, true);
       });
 
       /*
@@ -582,6 +646,7 @@
       return () => {
         if (saveTimer) clearTimeout(saveTimer);
         if (syncTimer) clearTimeout(syncTimer);
+        if (suggestTimer) clearTimeout(suggestTimer);
         settingsWatcher.stop();
         fontSizeWatcher.stop();
         wrapWatcher.stop();
