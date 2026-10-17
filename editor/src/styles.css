@@ -3390,15 +3390,22 @@ body.resizing {
   background: #f85149;
 }
 
-/* 编辑器内联差异 (view zone, 插入在两行之间) */
+/* 编辑器内联差异 (view zone, 插入在两行之间)
+ *
+ * 上下两条边界用 `inset box-shadow` 而不是 border: 区域高度由 Monaco 按行数预留 (行数 × 编辑器
+ * 行高), 而 border 会额外占掉 2px, 把最后一行裁掉一点 (panel 是 overflow: hidden)。
+ */
 .inline-diff-zone {
   background: var(--app-bg);
-  border-top: 1px solid var(--app-border);
-  border-bottom: 1px solid var(--app-border);
+  box-shadow:
+    inset 0 1px 0 var(--app-border),
+    inset 0 -1px 0 var(--app-border);
   overflow: hidden;
   user-select: text;
 }
 
+/* 字体三项只是兜底: 生效值由 `editor/inline-diff-zone.ts` 写到**每一行**的内联样式上 (取自编辑器
+ * 设置)。别指望写在 `.inline-diff-zone` 上靠继承 —— 子元素这里的声明会盖过继承值。 */
 .inline-diff-zone-del,
 .inline-diff-zone-add {
   padding: 0 8px;
@@ -3406,6 +3413,7 @@ body.resizing {
   word-break: break-all;
   font-family: Consolas, 'Courier New', monospace;
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .inline-diff-zone-del {

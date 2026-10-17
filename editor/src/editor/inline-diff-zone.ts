@@ -2,11 +2,17 @@
 
 // 编辑器里的**行内差异区域** (Monaco view zone)。
 //
-// 交互: 点行号旁的 git 色块 -> 在那一行下方展开一个小面板, 显示这一处改动的原始内容
-// (`-` 行) 与当前内容 (`+` 行), 再点一次或点面板上的关闭收起。
+// 交互: 点行号旁的 git 色块 -> 在这一整段连续改动的**下方**展开一个小面板, 显示这一处改动的原始
+// 内容 (`-` 行) 与当前内容 (`+` 行), 再点一次或点面板上的关闭收起。
 //
-// 两条必须守住的规矩:
+// 四条必须守住的规矩:
 //
+//  * **锚在连续块的末行** (`InlineDiffRegion.anchor`), 不是点中的那一行: 一段改动常常连着好几行
+//    (行号旁是一串色块), 锚在点中的那一行会把这段劈成两半, 看起来像"上面几行改了、下面几行没改";
+//  * **高度用行数给, 行高用 Monaco 给的值**: 区域高度 = `行数 × 编辑器行高` (Monaco 的
+//    `getOption(EditorOption.lineHeight)`, 已含缩放), 因此每行必须**恰好**这么高 —— 字体度量一律
+//    写在**行元素自己的内联样式**上, 而不是外层的容器上: 子元素样式表里的 `font-size` /
+//    `line-height` 会盖过从容器继承来的内联值, 高度就会差出一截, 面板底下露出空带;
 //  * **同时只展开一个**: 差异区域会撑高文档、改变滚动高度, 展开多个会让"我刚看的那一行"跑掉;
 //  * **行号会漂移**: view zone 按行号锚定, 用户一打字它下面的行号就变了, 因此内容变化时把已
 //    展开的区域收掉, 而不是让它挂在一个已经不对应的位置。
@@ -24,6 +30,15 @@ export interface InlineDiffRegion {
   anchor: number;
 }
 
+/** 区域文字要与编辑器一致的三项度量 (都取自编辑器当前的选项)。 */
+export interface InlineDiffZoneStyle {
+  fontFamily: string;
+  /** px */
+  fontSize: number;
+  /** px, 已含缩放与行高倍率 */
+  lineHeight: number;
+}
+
 export interface InlineDiffZoneControllerOptions {
   editor: Monaco.editor.IStandaloneCodeEditor;
   /**
@@ -33,6 +48,13 @@ export interface InlineDiffZoneControllerOptions {
    * 东西。返回 null 表示这一行没有可展示的差异。
    */
   loadRegion: (line: number) => Promise<InlineDiffRegion | null>;
+  /**
+   * 取编辑器当前的字体度量。
+   *
+   * 由调用方给 (它拿得到 `monaco.editor.EditorOption`), 本模块因此不依赖 Monaco 的运行时。
+   * 不提供时退回 `styles.css` 里的默认字体 —— 单测就是这种情况。
+   */
+  getStyle?: () => InlineDiffZoneStyle;
 }
 
 export interface InlineDiffZoneController {
@@ -40,23 +62,54 @@ export interface InlineDiffZoneController {
   toggle: (line: number) => Promise<void>;
   /** 收起当前展开的区域。 */
   close: () => void;
+  /** 字体 / 字号变了: 已展开区域的行跟着改 (Monaco 会按新的行高重算区域高度)。 */
+  restyle: () => void;
   /** 当前展开的行号 (1 基), 没有则为 null。 */
   openLine: () => number | null;
   dispose: () => void;
 }
 
 export function createInlineDiffZoneController(options: InlineDiffZoneControllerOptions): InlineDiffZoneController {
-  const { editor, loadRegion } = options;
+  const { editor, loadRegion, getStyle } = options;
 
   let zoneId: string | null = null;
   let openLine: number | null = null;
+  /** 装差异行的元素 (重挂区域时复用同一批节点) */
+  let rowNodes: HTMLDivElement[] = [];
+  /** 当前用的字体度量, 重挂/改设置时用 */
+  let style: InlineDiffZoneStyle | null = null;
   /** 防止"点了 A 又点 B"时 A 的异步结果后到, 把 B 覆盖掉 */
   let requestToken = 0;
 
-  function close(): void {
-    if (zoneId) editor.changeViewZones((accessor) => accessor.removeZone(zoneId as string));
+  function removeZone(): void {
+    if (!zoneId) return;
+    const id = zoneId;
     zoneId = null;
+    editor.changeViewZones((accessor) => accessor.removeZone(id));
+  }
+
+  function close(): void {
+    removeZone();
     openLine = null;
+    rowNodes = [];
+    style = null;
+  }
+
+  /**
+   * 把字体度量写到**每一行**上。
+   *
+   * 不能只写在数组容器上: `.inline-diff-zone-del/add` 自己声明了 `font-size` / `line-height`,
+   * 子元素自己的声明优先于继承来的内联样式 —— 字号会悄悄退回 12px、行高变矮, 而区域高度仍按
+   * 编辑器行高预留, 面板底下就空出一条背景色带。
+   */
+  function applyStyle(): void {
+    if (!style) return;
+    const { fontFamily, fontSize, lineHeight } = style;
+    for (const row of rowNodes) {
+      row.style.fontFamily = fontFamily;
+      row.style.fontSize = `${fontSize}px`;
+      row.style.lineHeight = `${lineHeight}px`;
+    }
   }
 
   async function toggle(line: number): Promise<void> {
@@ -68,18 +121,23 @@ export function createInlineDiffZoneController(options: InlineDiffZoneController
     close();
 
     const token = ++requestToken;
-    let region: InlineDiffRegion | null = null;
-    try {
-      region = await loadRegion(line);
-    } catch {
-      // 拿不到差异 (文件不在 git 里 / 后端出错) 就当没有这一处, 不弹任何东西
-      return;
-    }
+    /*
+     * 拿不到差异 (文件不在 git 里 / 后端出错) 就当没有这一处, 不弹任何东西 —— git 出错不该
+     * 打断编辑。
+     */
+    const region = await loadRegion(line).catch(() => null);
     if (token !== requestToken || !region || region.rows.length === 0) return;
 
     // 内容可能已经变了, 重新确认这一行还在
     const model = editor.getModel();
-    if (!model || line > model.getLineCount()) return;
+    if (!model) return;
+    const lineCount = model.getLineCount();
+    if (line > lineCount) return;
+    /*
+     * 锚在连续块的末行而不是点中的那一行: 一段改动常常连着好几行, 锚在中间会把这段劈成两半。
+     * 差异来源比文档长 (块被删短了) 时夹回文档范围内。
+     */
+    const anchor = Math.min(Math.max(1, region.anchor || line), lineCount);
 
     const domNode = document.createElement('div');
     domNode.className = 'inline-diff-zone';
@@ -90,6 +148,7 @@ export function createInlineDiffZoneController(options: InlineDiffZoneController
       close();
     });
 
+    const rows: HTMLDivElement[] = [];
     for (const row of region.rows) {
       const rowNode = document.createElement('div');
       rowNode.className = `inline-diff-zone-${row.kind === '+' ? 'add' : 'del'}`;
@@ -105,20 +164,32 @@ export function createInlineDiffZoneController(options: InlineDiffZoneController
 
       rowNode.append(sign, text);
       domNode.append(rowNode);
+      rows.push(rowNode);
     }
 
-    const anchorLine = Math.min(line, editor.getModel()?.getLineCount() ?? line);
     openLine = line;
+    rowNodes = rows;
+    style = getStyle?.() ?? null;
+    applyStyle();
 
     editor.changeViewZones((accessor) => {
+      // 高度按行数给: 每行正好是编辑器行高, 于是内容与预留高度一致
       zoneId = accessor.addZone({
-        afterLineNumber: anchorLine,
+        afterLineNumber: anchor,
         heightInLines: Math.max(1, region.rows.length),
         domNode,
         // 区域不参与"跳到下一处改动"的导航, 它只是展示
         suppressMouseDown: false,
       });
     });
+  }
+
+  /** 字体 / 字号变了: 重写每行的字体度量 (区域高度由 Monaco 按新行高重算)。 */
+  function restyle(): void {
+    const next = getStyle?.() ?? null;
+    if (!next) return;
+    style = next;
+    applyStyle();
   }
 
   /** 用户一打字就收起: 行号漂移后它指向的内容已经不对了。 */
@@ -129,6 +200,7 @@ export function createInlineDiffZoneController(options: InlineDiffZoneController
   return {
     toggle,
     close,
+    restyle,
     openLine: () => openLine,
     dispose: () => {
       contentSub.dispose();

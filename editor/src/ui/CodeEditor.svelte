@@ -337,13 +337,23 @@
       }
 
       /*
-       * 行内差异区域: 点行号旁的 git 色块就地在下一行展开"改了什么"。
+       * 行内差异区域: 点行号旁的 git 色块, 在这一**整段**连续改动的下方展开"改了什么"
+       * (锚点是后端给的 `region.anchor` 而不是点中的那一行, 见 `editor/inline-diff-zone.ts`)。
        *
        * 差异内容现拉现取 (`git_file_region`) 而不是跟着色块一起算: 色块每条改动都要画, 而展开
        * 是极低频的操作, 没必要为它把整份差异常驻在内存里。
        */
       const inlineDiff = createInlineDiffZoneController({
         editor: instance,
+        /*
+         * 区域里的文字要与编辑器本体保持一致: 字号 / 行高对不上时, 按行数预留的高度与真实内容
+         * 差一截, 面板底下会空出一条背景色带 (预留多了) 或裁掉最后一行 (预留少了)。
+         */
+        getStyle: () => ({
+          fontFamily: instance.getOption(monaco.editor.EditorOption.fontFamily),
+          fontSize: instance.getOption(monaco.editor.EditorOption.fontSize),
+          lineHeight: instance.getOption(monaco.editor.EditorOption.lineHeight),
+        }),
         loadRegion: async (line) => {
           const projectPath = untrack(() => appStore.projectPath);
           if (!projectPath) return null;
@@ -612,11 +622,18 @@
        */
       const settingsWatcher = watchValues({
         select: () => [appStore.settings.editorFontFamily],
-        onChange: () => instance.updateOptions({ fontFamily: appStore.settings.editorFontFamily }),
+        onChange: () => {
+          instance.updateOptions({ fontFamily: appStore.settings.editorFontFamily });
+          // 已展开的行内差异跟着换字体 (行高与预留高度也一并重算)
+          inlineDiff.restyle();
+        },
       });
       const fontSizeWatcher = watchValues({
         select: () => [appStore.settings.editorFontSize],
-        onChange: () => instance.updateOptions({ fontSize: appStore.settings.editorFontSize }),
+        onChange: () => {
+          instance.updateOptions({ fontSize: appStore.settings.editorFontSize });
+          inlineDiff.restyle();
+        },
       });
       const wrapWatcher = watchValues({
         select: () => [appStore.settings.editorWordWrap],
@@ -662,9 +679,16 @@
         },
       });
 
-      // 初始状态: 诊断与指示器都按当前值画一次
+      // 初始状态: 诊断、指示器与 git 色块都按当前值画一次
       applyDiagnostics(model, path);
       previewGutter.sync();
+      /*
+       * git 色块要在这里补画一次。
+       *
+       * 实例之外的触发源是 `appStore.gitStatus` 的变化, 而**切走再切回来**时它没有变过 —— 新建的
+       * 实例装饰集合是空的, 不补这一下就再也等不到重画, 表现是"切回标签页后色块消失"。
+       */
+      void applyGitGutter();
 
       return () => {
         if (saveTimer) clearTimeout(saveTimer);

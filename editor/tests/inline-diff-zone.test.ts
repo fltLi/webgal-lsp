@@ -2,9 +2,10 @@
 
 // 行内差异区域控制器的测试。
 //
-// 三条语义都会**静默**出错 (不抛异常, 只是行为不对), 因此值得固定下来: 同时只展开一个 (多个会让
-// 滚动高度跳变, 用户正在看的那一行跑掉); 同一行再点一次是收起; 内容一变就收起 (view zone 按行号
-// 锚定, 打字之后它指向的内容已经不对了)。
+// 四条语义都会**静默**出错 (不抛异常, 只是行为不对), 因此值得固定下来: 锚在整段连续改动的末行
+// (锚在点中的那一行会把这段劈成两半); 同时只展开一个 (多个会让滚动高度跳变, 用户正在看的那一行
+// 跑掉); 同一行再点一次是收起; 内容一变就收起 (view zone 按行号锚定, 打字之后它指向的内容已经
+// 不对了)。字体度量则决定面板高度会不会与内容差一截。
 //
 // 不引入 jsdom: 只给 `document.createElement` 一个最小替身, 走的是真实代码路径。
 
@@ -18,6 +19,8 @@ function installFakeDocument(): void {
     className = '';
     textContent = '';
     children: FakeElement[] = [];
+    /** 行内样式: 字体度量写在这里 (真实元素上是 CSSStyleDeclaration, 这里只要收得住赋值) */
+    style: Record<string, string> = {};
     append(...nodes: FakeElement[]) {
       this.children.push(...nodes);
     }
@@ -28,7 +31,7 @@ function installFakeDocument(): void {
 
 /** 最小 Monaco 替身: 记下增删的 view zone, 并能触发内容变化。 */
 function createFakeEditor(lineCount = 100) {
-  const zones = new Map<string, { afterLineNumber: number; domNode: unknown }>();
+  const zones = new Map<string, { afterLineNumber: number; heightInLines?: number; domNode: unknown }>();
   const listeners: Array<() => void> = [];
   let nextId = 0;
 
@@ -36,7 +39,7 @@ function createFakeEditor(lineCount = 100) {
     getModel: () => ({ getLineCount: () => lineCount }),
     changeViewZones: (callback: (accessor: unknown) => void) => {
       callback({
-        addZone: (zone: { afterLineNumber: number; domNode: unknown }) => {
+        addZone: (zone: { afterLineNumber: number; heightInLines?: number; domNode: unknown }) => {
           nextId += 1;
           const id = `zone-${nextId}`;
           zones.set(id, zone);
@@ -90,8 +93,58 @@ describe('createInlineDiffZoneController', () => {
 
     await controller.toggle(5);
 
-    expect([...zones.values()][0]).toMatchObject({ afterLineNumber: 5 });
+    expect([...zones.values()][0]).toMatchObject({ afterLineNumber: 5, heightInLines: 2 });
     expect(controller.openLine()).toBe(5);
+  });
+
+  it('锚在连续块的末行，而不是点中的那一行', async () => {
+    // 一段改动连着 3~8 行, 点第 6 行: 面板要展开在整段之后 (第 8 行), 否则会把这段劈成两半
+    const { editor, zones } = createFakeEditor();
+    const controller = createInlineDiffZoneController({
+      editor,
+      loadRegion: async () => ({ rows: REGION.rows, anchor: 8 }),
+    });
+
+    await controller.toggle(6);
+
+    expect([...zones.values()][0]).toMatchObject({ afterLineNumber: 8 });
+    expect(controller.openLine()).toBe(6);
+  });
+
+  it('锚点超出文档时夹回最后一行', async () => {
+    const { editor, zones } = createFakeEditor(10);
+    const controller = createInlineDiffZoneController({
+      editor,
+      loadRegion: async () => ({ rows: REGION.rows, anchor: 999 }),
+    });
+
+    await controller.toggle(5);
+
+    expect([...zones.values()][0]).toMatchObject({ afterLineNumber: 10 });
+  });
+
+  it('字体度量写到每一行上（子元素样式会盖过继承值）', async () => {
+    const { editor, zones } = createFakeEditor();
+    let style = { fontFamily: 'Consolas', fontSize: 14, lineHeight: 21 };
+    const controller = createInlineDiffZoneController({
+      editor,
+      getStyle: () => style,
+      loadRegion: async () => REGION,
+    });
+
+    await controller.toggle(5);
+
+    const node = [...zones.values()][0].domNode as { children: Array<{ style: Record<string, string> }> };
+    expect(node.children[0].style.fontSize).toBe('14px');
+    expect(node.children[0].style.lineHeight).toBe('21px');
+    expect(node.children[1].style.lineHeight).toBe('21px');
+
+    style = { fontFamily: 'Consolas', fontSize: 18, lineHeight: 27 };
+    controller.restyle();
+
+    expect([...zones.values()][0].domNode).toBe(node);
+    expect(node.children[0].style.fontSize).toBe('18px');
+    expect(node.children[0].style.lineHeight).toBe('27px');
   });
 
   it('同一行再点一次是收起', async () => {
