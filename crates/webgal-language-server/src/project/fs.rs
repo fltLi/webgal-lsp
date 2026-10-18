@@ -128,13 +128,17 @@ impl FileSystem for Client {
             uri: path.to_string(),
         };
         let entries = self.send_request::<ReadDirectoryRequest>(params).await?;
-        Ok(entries
+
+        let mut entries: Vec<_> = entries
             .into_iter()
             .map(|entry| DirEntry {
                 name: entry.name,
                 is_directory: entry.file_type == FileType::Directory,
             })
-            .collect())
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(entries)
     }
 
     /// 读取文件
