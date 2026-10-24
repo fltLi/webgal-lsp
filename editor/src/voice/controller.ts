@@ -47,8 +47,10 @@ import {
   voiceTakeLogs,
   voiceTrimSuggestion,
   voiceUpdateCharacter,
+  voiceUpdateReference,
   voiceWriteHistory,
   type CharacterPatch,
+  type ReferencePatch,
 } from '../commands/voice';
 import { noteDiskContent } from '../editor/disk-sync.svelte';
 import { fs } from '../lib/fs';
@@ -62,10 +64,11 @@ import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './sett
 import {
   createId,
   defaultParams,
+  paramCharacterId,
+  paramsForDialogue,
   paramsKey,
   priorityOf,
   randomSeed,
-  seedForDialogue,
   type HistoryEntry,
   type SceneVoiceState,
   type TaskPriority,
@@ -283,26 +286,9 @@ class VoiceController {
     if (!card) return null;
 
     const selected = this.selectedHistory(id);
-    const defaults = this.settings.defaults;
     const match = card.matches?.get(line.line);
-    const character = this.characterById(selected?.characterId ?? match?.characterId ?? null);
-
-    const base = defaultParams(character, line.text, selected?.params.seed ?? seedForDialogue(line));
-    return {
-      ...base,
-      language: selected?.params.language ?? defaults.language,
-      temperature: selected?.params.temperature ?? defaults.temperature,
-      speedFactor: selected?.params.speedFactor ?? defaults.speedFactor,
-      topK: selected?.params.topK ?? defaults.topK,
-      topP: selected?.params.topP ?? defaults.topP,
-      repetitionPenalty: selected?.params.repetitionPenalty ?? defaults.repetitionPenalty,
-      // 采样步数只认**生成**记录: 测试记录固定 4 步, 回填会把面板上的步数带成 x4。
-      sampleSteps: (selected?.kind === 'generate' ? selected.params.sampleSteps : null) ?? defaults.generateSampleSteps,
-      // 文本是参数的一部分, **可以改** (操作台上的文本框就是干这个的): 选中历史项时回填
-      // 它当时合成的文本, 否则用场景里的这一句。不要在每次取参数时无条件写回 `line.text`,
-      // 那会把用户刚改的文本抹掉。
-      text: selected?.params.text ?? line.text,
-    };
+    const character = this.characterById(paramCharacterId(line, selected, match?.characterId ?? null));
+    return paramsForDialogue(character, line, selected, this.settings.defaults);
   }
 
   /** 找一个与给定参数完全一致的历史项 (用于判断"是否已是新配置") */
@@ -974,6 +960,18 @@ class VoiceController {
    */
   async updateCharacter(id: string, patch: CharacterPatch): Promise<Character> {
     const saved = await voiceUpdateCharacter(id, patch);
+    this.applyCharacter(saved);
+    return saved;
+  }
+
+  /**
+   * 修改某条参考音频的字段 (目前只有收藏标记)。
+   *
+   * 与角色修改走同一条"服务端读-改-写"路径: 只发送 `starred`, 不会把别条参考音频或
+   * 角色的其它字段回写成前端可能已经过时的快照。
+   */
+  async updateReference(id: string, hash: string, patch: ReferencePatch): Promise<Character> {
+    const saved = await voiceUpdateReference(id, hash, patch);
     this.applyCharacter(saved);
     return saved;
   }

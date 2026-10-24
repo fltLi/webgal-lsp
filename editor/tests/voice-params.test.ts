@@ -2,19 +2,98 @@
 
 // 参数身份与报错显示的处理规则测试。
 //
-// 这里钉住两条曾经出过问题的规则:
+// 这里钉住几条曾经出过问题的规则:
 // 1. **默认种子必须可重复**。种子以前在"取当前参数"时现随机, 于是刷新令牌一变种子
 //    就换掉 —— 测试记录里是 3274716390, 紧接着的生成用的却是另一个种子。
 // 2. **报错只留一行摘要**。GSOV 的原始报错几十行, 铺在历史卡片里会把整栏撑爆。
+// 3. **参考音频必须跟随选中的历史项**, 且历史选中项要按语句过滤 —— 否则切到另一位
+//    说话者时会沿用上一条的角色与参考音频 (自动识别失效)。
+// 4. **收藏的参考音频优先作为默认参考音频**。
 
 import { describe, expect, it } from 'vitest';
 
-import type { SayLine } from '../src/commands/voice';
+import type { Character, ReferenceAudio, SayLine } from '../src/commands/voice';
 import { errorDetail, errorHint, errorSummary } from '../src/voice/errorText';
-import { paramsKey, seedForDialogue, type VoiceParams } from '../src/voice/types';
+import {
+  DEFAULT_VOICE_DEFAULTS,
+  historyForLine,
+  paramCharacterId,
+  paramsForDialogue,
+  paramsKey,
+  preferredReference,
+  seedForDialogue,
+  sortReferences,
+  type HistoryEntry,
+  type VoiceDefaults,
+  type VoiceParams,
+} from '../src/voice/types';
 
 function say(text: string, speaker: string | null = '爱音', line = 0): SayLine {
   return { line, lineCount: 1, speaker, speakerInherited: false, text, vocal: null, figure: null, hash: `${line}` };
+}
+
+function reference(hash: string, starred = false, createdAt = 0): ReferenceAudio {
+  return {
+    file: `ref_${hash}.wav`,
+    hash,
+    duration: 5,
+    sampleRate: 16000,
+    text: `文本 ${hash}`,
+    language: 'ja',
+    tags: [],
+    starred,
+    createdAt,
+  };
+}
+
+function character(references: ReferenceAudio[], id = 'anon', name = '千早爱音'): Character {
+  return {
+    id,
+    name,
+    description: '',
+    language: 'auto',
+    references,
+    model: null,
+    starred: false,
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
+
+function historyEntry(
+  line: number,
+  patch: Partial<VoiceParams> = {},
+  kind: 'test' | 'generate' = 'generate'
+): HistoryEntry {
+  const params: VoiceParams = {
+    characterId: 'anon',
+    referenceHash: 'a',
+    language: 'auto',
+    text: '台词',
+    seed: 1,
+    temperature: 1,
+    speedFactor: 1,
+    topK: 40,
+    topP: 0.9,
+    repetitionPenalty: 1.2,
+    sampleSteps: 32,
+    ...patch,
+  };
+  return {
+    id: `entry-${line}`,
+    kind,
+    priority: 'normal',
+    status: 'done',
+    line,
+    speaker: '爱音',
+    text: params.text,
+    characterId: params.characterId,
+    characterName: '千早爱音',
+    params,
+    createdAt: 0,
+    applied: false,
+  };
 }
 
 describe('seedForDialogue', () => {
@@ -38,6 +117,87 @@ describe('seedForDialogue', () => {
   it('台词或对话者不同即为不同种子', () => {
     expect(seedForDialogue(say('第一句'))).not.toBe(seedForDialogue(say('第二句')));
     expect(seedForDialogue(say('同一句', '爱音'))).not.toBe(seedForDialogue(say('同一句', '素世')));
+  });
+});
+
+describe('historyForLine', () => {
+  it('只认属于当前语句的历史项 (切换语句不能沿用上一句)', () => {
+    const entry = historyEntry(3);
+    expect(historyForLine(entry, 3)).toBe(entry);
+    expect(historyForLine(entry, 4)).toBeNull();
+  });
+
+  it('未对齐到任何语句的记录不会被当成当前语句', () => {
+    const entry = { ...historyEntry(3), line: null };
+    expect(historyForLine(entry, 3)).toBeNull();
+    expect(historyForLine(null, 0)).toBeNull();
+  });
+});
+
+describe('preferredReference', () => {
+  it('显式 hash 仍存在时优先它', () => {
+    const owner = character([reference('a'), reference('b')]);
+    expect(preferredReference(owner, 'b')?.hash).toBe('b');
+  });
+
+  it('显式 hash 已不存在 / 未给出时, 收藏的条目优先于第一条', () => {
+    const owner = character([reference('a', false, 1), reference('b', true, 2)]);
+    expect(preferredReference(owner, 'missing')?.hash).toBe('b');
+    expect(preferredReference(owner)?.hash).toBe('b');
+  });
+
+  it('没有收藏时退回第一条 (按添加时间)', () => {
+    const owner = character([reference('late', false, 20), reference('early', false, 10)]);
+    expect(preferredReference(owner)?.hash).toBe('early');
+    expect(preferredReference(null)).toBeNull();
+  });
+
+  it('排序只产出新数组, 不改角色里的原始顺序', () => {
+    const references = [reference('a'), reference('b', true)];
+    const owner = character(references);
+    expect(sortReferences(owner.references).map((item) => item.hash)).toEqual(['b', 'a']);
+    // 原数组顺序不变: "添加后最后一条就是新条目"这类调用方约定仍然成立
+    expect(owner.references.map((item) => item.hash)).toEqual(['a', 'b']);
+  });
+});
+
+describe('paramsForDialogue', () => {
+  const defaults: VoiceDefaults = { ...DEFAULT_VOICE_DEFAULTS };
+
+  it('选中历史项时, 参考音频跟着它走 (不能退回第一条)', () => {
+    const owner = character([reference('a'), reference('b')]);
+    const line = say('台词', '爱音', 0);
+    const selected = historyEntry(0, { referenceHash: 'b' });
+    const params = paramsForDialogue(owner, line, selected, defaults);
+    expect(params.referenceHash).toBe('b');
+    expect(params.text).toBe(selected.params.text);
+  });
+
+  it('历史项里的参考音频已被删除时退回收藏 / 第一条', () => {
+    const owner = character([reference('a'), reference('b', true)]);
+    const selected = historyEntry(0, { referenceHash: 'deleted' });
+    expect(paramsForDialogue(owner, say('台词', '爱音', 0), selected, defaults).referenceHash).toBe('b');
+  });
+
+  it('切到另一句时忽略上一句的选中项, 改用当前语句的角色与默认参数', () => {
+    const owner = character([reference('soyo-ref')], 'soyo', '长崎素世');
+    const line = say('另一句', '长崎素世', 1);
+    const previous = historyEntry(0, { characterId: 'anon', referenceHash: 'anon-ref', language: 'ja' });
+
+    // 控制器用 paramCharacterId 先选角色, 参数再由 paramsForDialogue 推导
+    expect(paramCharacterId(line, previous, 'soyo')).toBe('soyo');
+    const params = paramsForDialogue(owner, line, previous, defaults);
+    expect(params.characterId).toBe('soyo');
+    expect(params.referenceHash).toBe('soyo-ref');
+    expect(params.language).toBe(defaults.language);
+  });
+
+  it('同一句的选中项仍然生效 (切回来不丢配置)', () => {
+    const owner = character([reference('a'), reference('b')]);
+    const line = say('台词', '爱音', 0);
+    const selected = historyEntry(0, { characterId: 'anon', referenceHash: 'b', language: 'ja' });
+    expect(paramCharacterId(line, selected, 'other')).toBe('anon');
+    expect(paramsForDialogue(owner, line, selected, defaults).language).toBe('ja');
   });
 });
 

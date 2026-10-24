@@ -3770,10 +3770,12 @@ body.resizing {
   border-radius: 3px;
 }
 
-/* 试听中: 进入 active 态, 一眼看出正在播放哪一个 */
-.audio-button.playing.ui-button {
+/*
+ * 试听中的按钮: 与相邻的图标按钮一样走 `.ui-button-bare` (同尺寸、同悬停底色),
+ * 只把图标改成强调色; 播放/停止的图标形状本身也参与区分。
+ */
+.audio-button.playing.ui-button-bare {
   color: var(--app-accent);
-  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
 }
 
 /* 图标型危险按钮 (删除角色): 平时保持中性, 悬停才变红 */
@@ -4635,6 +4637,18 @@ input[type='number'].voice-control {
 .reference-meta {
   font-size: 11px;
   color: var(--app-muted);
+}
+
+/*
+ * 收藏星标: 未收藏是普通前景色的空心星, 收藏后变成与角色列表同一档金色的实心星。
+ * 两档都走 `.ui-button-bare`, 尺寸与相邻的试听 / 删除按钮一致。
+ */
+.reference-star.ui-button-bare {
+  color: var(--app-fg);
+}
+
+.reference-star.starred.ui-button-bare {
+  color: #d18f00;
 }
 
 .cache-list {
@@ -5965,38 +5979,6 @@ input[type='number'].voice-control {
   font-size: 11px;
   font-weight: 700;
   text-align: center;
-}
-
-.git-file-action {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--app-muted);
-  font: inherit;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.git-file-action:hover {
-  background: var(--app-hover);
-  color: var(--app-fg);
-}
-
-.git-file-action.playing {
-  color: var(--app-accent);
-  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
-}
-
-.git-file-action:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 .history-row {

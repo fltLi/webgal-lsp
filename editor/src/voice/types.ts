@@ -2,7 +2,7 @@
 
 // 配音工作流的通用类型与常量。
 
-import type { Character, SayLine } from '../commands/voice';
+import type { Character, ReferenceAudio, SayLine } from '../commands/voice';
 import type { CharacterMatch } from './match';
 
 /** 采样步数: v4 官方仅支持 4/8/16/32 (WebUI 的选项集) */
@@ -257,6 +257,41 @@ export function isDialogueLine(dialogues: SayLine[], line: number): boolean {
 }
 
 /**
+ * 只认属于指定语句的历史记录。
+ *
+ * 一张卡片只有**一个** `selectedHistoryId`, 切换语句时光标变了、它还指着上一句的记录。
+ * 参数推导若直接读它, 换到另一个说话者时会沿用上一句的角色、参考音频与参数, 也就是
+ * "自动识别对话者失效" —— 所以所有"这一句的参数/状态"都必须先过这一层过滤。
+ */
+export function historyForLine<T extends { line: number | null }>(entry: T | null, line: number): T | null {
+  return entry && entry.line === line ? entry : null;
+}
+
+/**
+ * 参考音频的展示顺序: 收藏优先, 其次按添加时间 (与原顺序一致)。
+ *
+ * 只影响展示与"默认取哪一条", **不重排**角色里存下来的 `references`: 添加后"最后一条
+ * 就是新条目"这类调用方约定仍然成立。
+ */
+export function sortReferences(references: ReferenceAudio[]): ReferenceAudio[] {
+  return [...references].sort((a, b) => Number(b.starred) - Number(a.starred) || a.createdAt - b.createdAt);
+}
+
+/**
+ * 解析一条参考音频: 给定 hash 仍存在就用它, 否则退回**收藏的第一条**, 再退回第一条。
+ *
+ * "收藏"不只是列表排序: 没有显式选择时, 它就是该角色的默认参考音频 (见 `defaultParams`)。
+ */
+export function preferredReference(character: Character | null, hash?: string | null): ReferenceAudio | null {
+  if (!character) return null;
+  if (hash) {
+    const matched = character.references.find((item) => item.hash === hash);
+    if (matched) return matched;
+  }
+  return sortReferences(character.references)[0] ?? null;
+}
+
+/**
  * 构造默认参数。
  *
  * `seed` 由调用方显式给出, **不在这里随机**: 随机种子会让"取一次参数"变成副作用
@@ -266,7 +301,7 @@ export function isDialogueLine(dialogues: SayLine[], line: number): boolean {
 export function defaultParams(character: Character | null, text: string, seed: number): VoiceParams {
   return {
     characterId: character?.id ?? null,
-    referenceHash: character?.references[0]?.hash ?? null,
+    referenceHash: preferredReference(character)?.hash ?? null,
     language: character?.language ?? 'auto',
     text,
     seed,
@@ -276,6 +311,50 @@ export function defaultParams(character: Character | null, text: string, seed: n
     topP: PARAM_TICKS.topP.default,
     repetitionPenalty: PARAM_TICKS.repetitionPenalty.default,
     sampleSteps: GENERATE_SAMPLE_STEPS,
+  };
+}
+
+/**
+ * 参数所用的角色: 属于这一句的历史记录优先, 否则用自动匹配结果。
+ *
+ * 与 `paramsForDialogue` 分开是因为调用方要先拿到角色、再查它的参考音频。
+ */
+export function paramCharacterId(line: SayLine, selection: HistoryEntry | null, matched: string | null): string | null {
+  return historyForLine(selection, line.line)?.characterId ?? matched;
+}
+
+/**
+ * 某条对话的当前配音参数 (未选中历史项时为默认值)。
+ *
+ * 两个必须钉住的点:
+ * * **历史选中项按语句过滤** —— 切到另一位说话者时不能沿用上一句的角色 (见 `historyForLine`);
+ * * **参考音频也要从选中项回填** —— 之前漏了这一项, 于是无论选了哪条参考音频, 只要选中项一变
+ *   (入队后就会变) 面板与下一次入队都会退回角色的第一条参考音频。
+ */
+export function paramsForDialogue(
+  character: Character | null,
+  line: SayLine,
+  selection: HistoryEntry | null,
+  defaults: VoiceDefaults
+): VoiceParams {
+  const selected = historyForLine(selection, line.line);
+  const base = defaultParams(character, line.text, selected?.params.seed ?? seedForDialogue(line));
+  return {
+    ...base,
+    // 历史记录里的参考音频可能已被删除 -> 退回收藏 / 第一条
+    referenceHash: preferredReference(character, selected?.params.referenceHash)?.hash ?? null,
+    language: selected?.params.language ?? defaults.language,
+    temperature: selected?.params.temperature ?? defaults.temperature,
+    speedFactor: selected?.params.speedFactor ?? defaults.speedFactor,
+    topK: selected?.params.topK ?? defaults.topK,
+    topP: selected?.params.topP ?? defaults.topP,
+    repetitionPenalty: selected?.params.repetitionPenalty ?? defaults.repetitionPenalty,
+    // 采样步数只认**生成**记录: 测试记录固定 4 步, 回填会把面板上的步数带成 x4。
+    sampleSteps: (selected?.kind === 'generate' ? selected.params.sampleSteps : null) ?? defaults.generateSampleSteps,
+    // 文本是参数的一部分, **可以改** (操作台上的文本框就是干这个的): 选中历史项时回填
+    // 它当时合成的文本, 否则用场景里的这一句。不要在每次取参数时无条件写回 `line.text`,
+    // 那会把用户刚改的文本抹掉。
+    text: selected?.params.text ?? line.text,
   };
 }
 

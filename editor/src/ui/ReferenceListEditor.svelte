@@ -9,7 +9,8 @@
 
   交互约定: 「添加参考音频」走同一个 `AddReferenceDialog`, **加完就地刷新列表、父对话框不退出**
   (补齐一个角色的语料往往要连着加好几条); 选择器场景 (`onPick` 存在) 里点条目即选中并交给调用方;
-  除参考音频的选择外没有批量操作。
+  收藏用星标 (与「选择角色」里给角色加星同一套交互), 收藏的条目排在前面, 并成为该角色的
+  默认参考音频; 除参考音频的选择与收藏外没有批量操作。
 
   ⚠️ 不带 `<style>` 块 —— 类名来自全局 `styles.css`。
 -->
@@ -19,7 +20,7 @@
   import { appStore } from '../state/store.svelte';
   import { voiceController } from '../voice/controller';
   import { errorSummary } from '../voice/errorText';
-  import { LANGUAGE_LABELS } from '../voice/types';
+  import { LANGUAGE_LABELS, sortReferences } from '../voice/types';
   import AddReferenceDialog from './AddReferenceDialog.svelte';
   import Button from './Button.svelte';
   import TakePlayer from './TakePlayer.svelte';
@@ -66,7 +67,8 @@
   });
 
   const references = $derived.by(() => {
-    const list = character.references;
+    // 收藏优先 (与角色列表的星标同一套排序); 搜索只过滤, 不改变已定的顺序
+    const list = sortReferences(character.references);
     const needle = query.trim().toLowerCase();
     if (!needle) return list;
     return list.filter(
@@ -77,6 +79,25 @@
   });
 
   const total = $derived(character.references.length);
+
+  /**
+   * 收藏 / 取消收藏。
+   *
+   * 收藏既是排序依据, 也是"没有显式选择时用哪条参考音频"的默认值 —— 只改排序而不改
+   * 默认选择的话, 这个标记对实际生成毫无影响。
+   */
+  async function toggleStarred(reference: ReferenceAudio): Promise<void> {
+    busy = true;
+    error = null;
+    try {
+      await voiceController.updateReference(character.id, reference.hash, { starred: !reference.starred });
+      onChanged();
+    } catch (caught) {
+      error = errorSummary(String(caught));
+    } finally {
+      busy = false;
+    }
+  }
 
   async function removeReference(reference: ReferenceAudio): Promise<void> {
     busy = true;
@@ -140,6 +161,15 @@
             </span>
           </div>
         {/if}
+
+        <Button
+          appearance="bare"
+          className={reference.starred ? 'reference-star starred' : 'reference-star'}
+          icon={reference.starred ? 'StarFilled' : 'Star'}
+          title={reference.starred ? '取消收藏' : '收藏（收藏的参考音频靠前，并作为默认参考音频）'}
+          disabled={busy}
+          onclick={() => void toggleStarred(reference)}
+        />
 
         <TakePlayer
           path={voiceController.referencePathFor(character.id, reference.file)}

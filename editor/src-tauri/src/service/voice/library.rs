@@ -40,6 +40,9 @@ pub struct ReferenceAudio {
     pub language: LanguageCode,
     /// 风格标签
     pub tags: Vec<StyleTag>,
+    /// 是否收藏 (收藏的参考音频排在前面, 并作为该角色的默认参考音频)
+    #[serde(default)]
+    pub starred: bool,
     /// 添加时间 (Unix 毫秒)
     pub created_at: i64,
 }
@@ -84,6 +87,14 @@ pub struct CharacterPatch {
     pub model: Option<Option<ModelChoice>>,
     pub starred: Option<bool>,
     pub enabled: Option<bool>,
+}
+
+/// 参考音频字段修改 (只包含要改的字段)
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferencePatch {
+    /// 收藏: 收藏的参考音频靠前, 并作为该角色的默认参考音频
+    pub starred: Option<bool>,
 }
 
 /// 本地模型选择
@@ -365,6 +376,30 @@ impl Library {
         }
         if let Some(enabled) = patch.enabled {
             character.enabled = enabled;
+        }
+        self.save(character)
+    }
+
+    /// 按字段修改某条参考音频 (目前只有收藏标记)。
+    ///
+    /// 与 [`Library::patch`] 同理: 只改动声明要改的字段, 其余以磁盘上的当前内容为准,
+    /// 因此"收藏某一条"不会顺带把相邻条目的改动回写成前端那份可能过时的快照。
+    pub fn patch_reference(
+        &self,
+        id: &str,
+        hash: &str,
+        patch: ReferencePatch,
+    ) -> Result<Character> {
+        let mut character = self.load(id)?;
+        let Some(reference) = character
+            .references
+            .iter_mut()
+            .find(|reference| reference.hash == hash)
+        else {
+            return Err(LibraryError::Invalid(format!("参考音频 {hash} 不存在")));
+        };
+        if let Some(starred) = patch.starred {
+            reference.starred = starred;
         }
         self.save(character)
     }
@@ -671,6 +706,7 @@ impl Library {
             text,
             language,
             tags,
+            starred: false,
             created_at: now_millis(),
         })
     }
@@ -949,6 +985,82 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.to_string().contains("角色名"));
+    }
+
+    fn reference(hash: &str, text: &str) -> ReferenceAudio {
+        ReferenceAudio {
+            file: format!("ref_{hash}.wav"),
+            hash: hash.into(),
+            duration: 5.0,
+            sample_rate: 16000,
+            text: text.into(),
+            language: "ja".into(),
+            tags: Vec::new(),
+            starred: false,
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn patch_reference_changes_only_the_starred_flag() {
+        // 收藏必须走字段补丁: 只改目标条目, 别条参考音频与角色其它字段原样保留。
+        let library = temp_library("patch-reference");
+        let mut owner = character("anon", "千早爱音");
+        owner.references.push(reference("a", "第一条"));
+        owner.references.push(reference("b", "第二条"));
+        library.save(owner).unwrap();
+
+        let patched = library
+            .patch_reference(
+                "anon",
+                "b",
+                ReferencePatch {
+                    starred: Some(true),
+                },
+            )
+            .unwrap();
+        assert!(!patched.references[0].starred);
+        assert!(patched.references[1].starred);
+        assert_eq!(patched.references[1].text, "第二条");
+
+        let reloaded = library.load("anon").unwrap();
+        assert!(reloaded.references[1].starred);
+    }
+
+    #[test]
+    fn patch_reference_rejects_unknown_hash() {
+        let library = temp_library("patch-reference-missing");
+        let mut owner = character("anon", "千早爱音");
+        owner.references.push(reference("a", "第一条"));
+        library.save(owner).unwrap();
+
+        let error = library
+            .patch_reference(
+                "anon",
+                "missing",
+                ReferencePatch {
+                    starred: Some(true),
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("不存在"));
+    }
+
+    #[test]
+    fn reference_without_starred_field_loads_as_not_favorite() {
+        // 旧版本落盘的参考音频没有 `starred` 字段, 必须能继续读出来 (默认不收藏)。
+        let json = r#"{
+            "file": "ref_a.wav",
+            "hash": "a",
+            "duration": 5.0,
+            "sampleRate": 16000,
+            "text": "第一条",
+            "language": "ja",
+            "tags": [],
+            "createdAt": 1
+        }"#;
+        let reference: ReferenceAudio = serde_json::from_str(json).unwrap();
+        assert!(!reference.starred);
     }
 
     #[test]

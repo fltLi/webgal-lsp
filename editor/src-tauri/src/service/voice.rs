@@ -724,6 +724,19 @@ pub async fn voice_update_character(
         .map_err(|error| error.to_string())
 }
 
+/// 按**字段**修改某条参考音频 (目前只有收藏标记)。
+#[tauri::command]
+pub async fn voice_update_reference(
+    app: tauri::AppHandle,
+    id: String,
+    hash: String,
+    patch: library::ReferencePatch,
+) -> Result<library::Character, String> {
+    library_of(&app)?
+        .patch_reference(&id, &hash, patch)
+        .map_err(|error| error.to_string())
+}
+
 /// 删除角色
 #[tauri::command]
 pub async fn voice_remove_character(app: tauri::AppHandle, id: String) -> Result<(), String> {
