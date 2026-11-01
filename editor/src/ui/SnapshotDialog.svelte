@@ -14,7 +14,7 @@
 
 <script lang="ts">
   import { save } from '@tauri-apps/plugin-dialog';
-  import { openPath } from '@tauri-apps/plugin-opener';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
   import { packSnapshot, type SnapshotEvent, type SnapshotResult } from '../commands/snapshot';
   import { appStore } from '../state/store.svelte';
@@ -145,10 +145,9 @@
     const target = result ? destination : destination;
     if (!target) return;
     try {
-      // 没有"在文件管理器里选中文件"的 command, 打开所在目录是等价且够用的做法
-      const separator = target.includes('\\') ? '\\' : '/';
-      const parent = target.slice(0, target.lastIndexOf(separator));
-      await openPath(parent || target);
+      // 与资源浏览器的「在文件夹中显示」同一个 API: open_path 需要额外 scope,
+      // revealItemInDir 走的是插件默认放行的命令。
+      await revealItemInDir(target);
     } catch (error) {
       errors = [...errors, String(error)];
     }

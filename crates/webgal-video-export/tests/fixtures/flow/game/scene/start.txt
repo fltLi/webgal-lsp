@@ -1,0 +1,6 @@
+:开始;
+callScene:sub.txt;
+label:after;
+:返回后;
+end;
+

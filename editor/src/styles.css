@@ -6726,7 +6726,8 @@ input[type='number'].voice-control {
 }
 
 .select-menu {
-  z-index: 40;
+  /* 菜单是 portal 到 body 的: 必须高于 .modal-backdrop (2000), 否则被对话框盖住 */
+  z-index: 3100;
   min-width: 140px;
   /*
    * 上限同时受"可用高度"约束: bits-ui 的 `size` 中间件把划给菜单的空间写成
@@ -7084,4 +7085,272 @@ input[type='number'].voice-control {
 body.path-dragging,
 body.path-dragging * {
   cursor: copy !important;
+}
+
+/* ------------------------------------------------------------------ *
+/* ------------------------------------------------------------------ *
+ * 视频导出对话框 (ui/VideoExportDialog.svelte)
+ *
+ * 只补这个对话框特有的三块结构: 表单容器、紧凑参数网格、路线卡片。控件外观仍然复用
+ * `.ui-input` / `.select` / `.ui-checkbox` / `.ui-button`。
+ * ------------------------------------------------------------------ */
+
+.video-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/*
+ * 紧凑参数网格: 分辨率 / 帧率 / 码率 / 编码这类字段各占一格, 一行能放几个由宽度决定。
+ * `minmax(0, 1fr)` 让子项能收缩 —— 默认的 `1fr` 会被内容撑开, 输入框就溢出对话框。
+ */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px 16px;
+}
+
+.settings-grid .settings-field {
+  min-width: 0;
+}
+
+/* 分辨率是两个数字框并排, 让它们等宽 */
+.settings-grid .input-row > .ui-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 演出页固定四列: 导出内容 / 字号 / 自动速度 / 文字速度 同一排。 */
+.video-performance-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/*
+ * 路线卡片: 每行最多 3 张, 每张"类型 | 位置 | 目标/操作"三列。
+ * 卡片变窄后信息仍然完整, 只是少占横向空间。
+ */
+.video-route-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.video-route-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 112px);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.video-route-kind {
+  padding: 1px 6px;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-panel);
+  color: var(--app-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.video-route-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-route-arrow {
+  color: var(--app-muted);
+}
+
+.video-route-control {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* 下拉菜单要占满"操作"那一列, 不然同一列里宽窄不一 */
+.video-route-control .select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 非 choose 的路线项: 右侧是"目标 + 场景名"的胶囊, 不再用裸箭头文字 */
+.video-route-target {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--app-fg);
+}
+
+.video-route-target-label {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+
+.video-route-target-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 起始场景只占左半边, 不跟着整个对话框拉满 */
+.video-start-scene {
+  max-width: 320px;
+}
+
+/* 一排普通按钮 (设置页里的"导入 / 重新检测"): `.input-row` 会把首个子项拉满, 不适合这里 */
+.settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.video-errors {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--app-hover);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #d13438;
+}
+
+[data-theme='dark'] .video-errors {
+  color: #f1707b;
+}
+
+.video-errors ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* 开关也走同一套网格: 每格只放一个复选框, 与输入框对齐 */
+/* 开关行: 从左往右排, 换行后仍与标题左对齐 (不放进参数网格, 否则每格居中) */
+.video-switches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 40px;
+}
+
+/*
+ * 导出进行中的双栏: 左边预览 + 进度, 右边参数摘要。
+ * 右侧独立滚动, 左侧固定; 导出完成后仍停在这一屏。
+ */
+.video-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.video-progress-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.video-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+
+.video-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-preview-empty {
+  border-style: dashed;
+}
+
+.video-preview-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+}
+
+.video-progress-track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--app-hover);
+  border-radius: 3px;
+}
+
+.video-progress-fill {
+  height: 100%;
+  background: var(--app-accent);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.video-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--app-muted);
+  font-size: 12px;
+}
+
+.video-summary {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.video-summary h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.video-summary dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.video-summary dt {
+  color: var(--app-muted);
+  white-space: nowrap;
+}
+
+.video-summary dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  /* 路径与"内容"可能很长: 允许换行, 不要裁成省略号 */
+  white-space: normal;
+}
+
+/* 路线链: `start.txt → 1.txt`, 允许换行 */
+.video-route-chain {
+  line-height: 1.5;
 }

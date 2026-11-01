@@ -7,4 +7,5 @@ pub mod lsp;
 pub mod preview;
 pub mod snapshot;
 pub mod startup;
+pub mod video_export;
 pub mod voice;

@@ -1,5 +1,10 @@
 target/
+build/
+out/
 dist/
 node_modules/
 .svelte-kit/
 __pycache__/
+*.log
+**/Live2DCubismCore.dll
+**/Live2DCubismCore.lib

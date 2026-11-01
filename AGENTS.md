@@ -72,6 +72,10 @@
   （`vite` / `vitest` / `tauri` 的 bin 都带 `#!/usr/bin/env node`），所以别用 `bun --bun run`。
 - Tauri 2 系统依赖：Windows 用 WebView2；Linux 的包名清单以 `.github/workflows/ci.yml` 的
   `editor-native` job 为准（会随发行版改动），照抄它安装即可。
+- **Windows 上编译 `webgal-ink` 还需要原生工具链**：CMake ≥ 3.28、Ninja、Vulkan SDK、vcpkg。
+  默认特性 `video-export` 会在 `crates/webgal-video-render-sys/build.rs` 里现场构建并静态链接
+  C++ 渲染器（见下方"视频导出"）。没有这些工具链时用 `--no-default-features` 关掉视频导出，
+  其余功能照常编译。
 - 需要 wasm 时（playground / 浏览器侧）额外装 `wasm32-unknown-unknown` 与 `wasm-pack`，见第 5 节。
 - `editor/dist` **不在版本控制里**，但 Tauri 构建要求它存在：第一次编译前先在 `editor/` 跑
   `bun run build`（或手工放一个占位 `editor/dist/index.html`），否则构建脚本直接失败。
@@ -101,6 +105,13 @@ bun run check                        # build:wasm + format-check + lint + type-c
 cargo check -p webgal-ink            # 只查编辑器后端；需要 editor/dist 与系统依赖
 cargo clippy -p webgal-ink -- --deny warnings
 
+# 视频导出：Rust 编译计划 + C++ 静态库（由 sys crate 的 build.rs 链接，没有独立渲染器进程）
+cargo check -p webgal-video-export
+cargo test -p webgal-video-export
+cargo test -p webgal-video-render-sys   # 需要 CMake + Vulkan SDK + vcpkg；dev 下 C++ 用 RelWithDebInfo
+# 只改 C++ 时：仓库根是唯一的 CMake workspace（子目录没有 presets）
+cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
+
 # 改了 crates/webgal-language-service/src/wasm.rs 时额外跑（它只随 wasm32 编译，宿主目标查不到）
 cargo check -p webgal-language-service --features simulate-diagnose --target wasm32-unknown-unknown
 ```
@@ -119,9 +130,13 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
 - **`editor/scripts/` 的两个类名护栏已接进 `lint`，是致命检查**：`check-css-classes.mjs` 核对模板里
   用到的类名在 `styles.css` 里都有规则（并报告一遍无人引用的类名，**只报告、不要据此删 CSS**），
   `check-dynamic-classes.mjs` 核对运行期拼出来的类名。
-- CI 分四个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
-  type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、`playground`
-  （wasm + 构建）。本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
+- CI 分五个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
+  type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、
+  `video-export-cpp`（根 workspace 的 format-check + build + tidy + ctest）、`playground`（wasm + 构建）。
+  本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
+- **视频导出没有 CLI、没有 JSON、没有独立渲染器进程**：`webgal-video-export` 只产出计划，
+  `webgal-video-render-sys` 用 C ABI（`native/webgal-video-render/include/webgal-video-render.h`）
+  把计划写进 C++ 侧再同步导出。想加单帧/调试渲染时扩展这个 ABI，**不要**恢复命令行或 plan.json。
 
 ### 测试写在哪儿
 
@@ -168,6 +183,10 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
+crates/webgal-video-export/ 视频导出: 读取 WebGAL 项目并编译成时间线计划 (纯 Rust, 不渲染)
+crates/webgal-video-render-sys/ C ABI 绑定; build.rs 构建并静态链接 C++ 渲染器 (仅 Windows)
+native/webgal-video-render/ C++ Vulkan 离屏渲染器 (静态库; 仓库根是唯一的 CMake workspace)
+CMakeLists.txt / CMakePresets.json / vcpkg.json  原生代码 workspace 入口 (只服务 native/)
 ```
 
 上面只列稳定结构，具体文件名与内容以实际目录为准（`ls editor/src` 比记忆可靠）。
@@ -336,6 +355,9 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 现象 | 处理 |
 | --- | --- |
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
+| `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器 |
+| `cargo` 报 `RuntimeLibrary` 不匹配 / `_calloc_dbg` 未解析 | 渲染器的 C++ 运行时和 rustc 不一致。`build.rs` 已把 dev 配置映到 `RelWithDebInfo`（rustc 在 MSVC 上始终用 release CRT）；自己手动 CMake 构建时要跟着用 Release/RelWithDebInfo，别用 Debug |
+| 仓库里出现 `target-xxx/` 之类的目录 | 设了自定义 `CARGO_TARGET_DIR`（例如验证 `+crt-static` 时）。`.gitignore` 的 `target-*/` 已覆盖；不需要就删掉，它会占几 GB |
 | **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
 | **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |
 | Linux 上 `webgal-ink` 编译失败 | 装 Tauri 系统依赖（见第 2 节），或只验证语言侧并加 `--exclude webgal-ink` |

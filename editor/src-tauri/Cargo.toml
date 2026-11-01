@@ -13,11 +13,21 @@ repository.workspace = true
 name = "webgal_ink_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["video-export"]
+# Windows 上静态链接 C++ 视频渲染器 (Vulkan / Media Foundation)。
+# 关掉后 `video-export` 相关命令返回“未启用”，可用于只调前端或没有 C++ 工具链的构建。
+video-export = ["dep:webgal-video-render-sys"]
+
+[target.'cfg(windows)'.dependencies]
+webgal-video-render-sys = { workspace = true, optional = true }
+
 [dependencies]
 webgal-language-core.workspace = true
 webgal-language-server.workspace = true
 webgal-language-service.workspace = true
 webgal-snapshot.workspace = true
+webgal-video-export.workspace = true
 
 thiserror.workspace = true
 
@@ -64,6 +74,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "query",
     "rustls",
+    "stream",
     "rustls-native-certs",
 ] }
 

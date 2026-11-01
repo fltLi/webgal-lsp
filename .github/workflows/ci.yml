@@ -110,6 +110,58 @@ jobs:
       - name: Clippy
         run: cargo clippy -p webgal-ink -- --deny warnings
 
+  # C++ 渲染器: 只构建 + CPU 测试; GPU 测试留给 self-hosted.
+  video-export-cpp:
+    name: Video export (C++ / Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Verify Vulkan SDK
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) {
+            throw "Vulkan SDK 未安装或 VULKAN_SDK 未设置"
+          }
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm --no-progress -y
+
+      - name: Configure
+        run: cmake --preset windows-msvc-ci
+
+      - name: Format check
+        run: cmake --build --preset windows-msvc-ci --target format-check
+
+      - name: Build
+        run: cmake --build --preset windows-msvc-ci
+
+      - name: Tidy
+        run: cmake --build --preset windows-msvc-ci --target tidy
+
+      - name: Test
+        run: ctest --preset windows-msvc-ci
+
   # Playground 是唯一需要 wasm 的 TS 模块, 所以单独一个 job, 不拖累其它检查
   playground:
     name: Parse playground (wasm + build)

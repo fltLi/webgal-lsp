@@ -46,6 +46,7 @@
   import SceneBrowser from './SceneBrowser.svelte';
   import SceneVoiceEditor from './SceneVoiceEditor.svelte';
   import SnapshotDialog from './SnapshotDialog.svelte';
+  import VideoExportDialog from './VideoExportDialog.svelte';
   import StatusBar from './StatusBar.svelte';
   import VoiceGuidePane from './VoiceGuidePane.svelte';
   import TabStrip from './TabStrip.svelte';
@@ -66,6 +67,8 @@
   let novelSequence = 0;
   /** 快照打包对话框 */
   let snapshotOpen = $state(false);
+  /** 视频导出对话框 */
+  let videoDialogOpen = $state(false);
 
   /*
    * 文件树的视图状态缓存。
@@ -223,6 +226,13 @@
       title="生成快照"
       onclick={() => confirmClose(() => (snapshotOpen = true), undefined, '生成快照前是否保存未保存的更改？')}
     />
+    <Button
+      appearance="bare"
+      icon="Video"
+      iconSize={20}
+      title="导出视频"
+      onclick={() => confirmClose(() => (videoDialogOpen = true), undefined, '导出视频前是否保存未保存的更改？')}
+    />
   </div>
 
   <div class="editor-main">
@@ -350,6 +360,10 @@
 
   {#if snapshotOpen}
     <SnapshotDialog onClose={() => (snapshotOpen = false)} />
+  {/if}
+
+  {#if videoDialogOpen}
+    <VideoExportDialog onClose={() => (videoDialogOpen = false)} />
   {/if}
 
   {#if appStore.diagnosticsOpen && appStore.settings.diagnosticsView === 'modal'}
