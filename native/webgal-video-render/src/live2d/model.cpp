@@ -426,13 +426,12 @@ void Model::build_drawables(const CoreApi& api) {
         drawables_.push_back(drawable);
     }
 
-    std::stable_sort(drawables_.begin(), drawables_.end(), [](const auto& left, const auto& right) {
-        return left.render_order < right.render_order;
-    });
-    drawable_lookup_.assign(static_cast<std::size_t>(count), -1);
+    // 先按 Core 的原始下标存一份; 当前帧的 renderOrder 在 `update_drawables`
+    // 里刷新并重排。renderOrder 会随 motion 的 arm layer 参数变化, 不能只在加载
+    // 时排序一次, 否则抬手后手臂仍停留在旧层 (表现为手被身体挡住)。
+    drawable_lookup_.resize(static_cast<std::size_t>(count));
     for (std::size_t index = 0; index < drawables_.size(); ++index) {
-        drawable_lookup_[static_cast<std::size_t>(drawables_[index].original_index)] =
-            static_cast<int>(index);
+        drawable_lookup_[index] = static_cast<int>(index);
     }
     update_drawables(api);
 }
@@ -446,11 +445,13 @@ void Model::update_drawables(const CoreApi& api) {
     const csmVector4* multiply_colors = api.drawable_multiply_colors(model_);
     const csmVector4* screen_colors = api.drawable_screen_colors(model_);
     const int* parent_parts = api.drawable_parent_part_indices(model_);
+    const int* render_orders = api.render_orders(model_);
     float* part_opacities = api.part_opacities(model_);
     const int part_count = api.part_count(model_);
 
     for (auto& drawable : drawables_) {
         const int index = drawable.original_index;
+        drawable.render_order = render_orders != nullptr ? render_orders[index] : index;
         drawable.opacity = opacities != nullptr ? opacities[index] : 1.0F;
         drawable.multiply_alpha = multiply_colors != nullptr ? multiply_colors[index].w : 1.0F;
         if (multiply_colors != nullptr) {
@@ -470,6 +471,17 @@ void Model::update_drawables(const CoreApi& api) {
                 drawable.part_opacity = part_opacities[part];
             }
         }
+    }
+
+    // 每帧 `csmUpdateModel` 之后 renderOrder 都可能重排 (arm layer 参数会切换
+    // 手臂所在的绘制层), 所以绘制顺序必须以 Core 当前返回的值为准。
+    std::stable_sort(drawables_.begin(), drawables_.end(), [](const auto& left, const auto& right) {
+        return left.render_order < right.render_order;
+    });
+    drawable_lookup_.assign(static_cast<std::size_t>(count), -1);
+    for (std::size_t index = 0; index < drawables_.size(); ++index) {
+        drawable_lookup_[static_cast<std::size_t>(drawables_[index].original_index)] =
+            static_cast<int>(index);
     }
 }
 
