@@ -45,6 +45,11 @@ constexpr std::size_t kMaxQuads = 32768;
 constexpr std::size_t kMaxMeshIndices = 262144;
 constexpr int kAtlasSize = 2048;
 
+/// 两个时间戳之间的非负微秒差; 时间戳可能来自较早/较晚的姿态事件。
+std::uint64_t elapsed_us(std::uint64_t now, std::uint64_t start) {
+    return now > start ? now - start : 0;
+}
+
 struct Vec2Like {
     float x;
     float y;
@@ -2241,12 +2246,15 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
     if (current_pose != nullptr) {
         current_motion = current_pose->motion;
         current_expression = current_pose->expression;
-        pose_time = static_cast<float>(t_us - current_pose->t_us) / 1000000.0F;
+        // motion 的进度从它真正起播的时刻算起; 只改表情的姿态事件不会重置进度。
+        pose_time =
+            static_cast<float>(elapsed_us(t_us, current_pose->motion_start_us)) / 1000000.0F;
         if (previous_pose != nullptr) {
             previous_motion = previous_pose->motion;
             previous_expression = previous_pose->expression;
             previous_time =
-                static_cast<float>(current_pose->t_us - previous_pose->t_us) / 1000000.0F;
+                static_cast<float>(elapsed_us(current_pose->t_us, previous_pose->motion_start_us)) /
+                1000000.0F;
             const float linear =
                 std::clamp(static_cast<float>(t_us - current_pose->t_us) / 1000000.0F, 0.0F, 1.0F);
             blend = 0.5F - 0.5F * std::cos(linear * 3.14159265358979323846F);

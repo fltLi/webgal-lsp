@@ -159,6 +159,9 @@ pub struct FigureTrack {
 #[serde(rename_all = "camelCase")]
 pub struct FigurePose {
     pub t_us: u64,
+    /// 当前 motion 的起播时间; 只改表情时沿用旧值, 动作不会倒回第一帧。
+    #[serde(default)]
+    pub motion_start_us: u64,
     #[serde(default)]
     pub motion: Option<String>,
     #[serde(default)]

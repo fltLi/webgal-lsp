@@ -407,7 +407,8 @@ int webgal_plan_add_figure_key(WebgalPlan* plan, const char* figure_id, uint64_t
 }
 
 int webgal_plan_add_figure_pose(WebgalPlan* plan, const char* figure_id, uint64_t t_us,
-                                const char* motion, const char* expression) {
+                                uint64_t motion_start_us, const char* motion,
+                                const char* expression) {
     if (plan == nullptr) {
         return WEBGAL_STATUS_INVALID_ARGUMENT;
     }
@@ -418,6 +419,7 @@ int webgal_plan_add_figure_pose(WebgalPlan* plan, const char* figure_id, uint64_
         }
         webgal::job::FigurePose pose;
         pose.t_us = t_us;
+        pose.motion_start_us = motion_start_us;
         pose.motion = optional_string(motion);
         pose.expression = optional_string(expression);
         track->poses.push_back(std::move(pose));

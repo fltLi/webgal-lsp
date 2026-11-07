@@ -14,6 +14,9 @@
 
 namespace webgal::live2d {
 
+/// 按 Cubism expression 的 `Blend` 数值融合参数: 0=Add, 1=Multiply, 2=Overwrite。
+float blend_expression_value(float value, float expression, int blend);
+
 /// Cubism Core 拥有的 drawable 视图。
 ///
 /// 顶点/索引数组由 Core 原地更新，这里只保存指针与数量，避免每帧把整模型的
@@ -58,7 +61,6 @@ class Model {
                           const std::optional<std::string>& expression,
                           const std::optional<std::string>& motion, float time, float blend,
                           float mouth, std::string& error);
-    bool apply_expression(const CoreApi& api, const std::string& name, std::string& error);
 
     const std::vector<Drawable>& drawables() const {
         return drawables_;
@@ -79,9 +81,6 @@ class Model {
     }
     bool ready() const {
         return model_ != nullptr;
-    }
-    const std::string& idle_motion() const {
-        return idle_motion_;
     }
     csmModel* core_model() const {
         return model_;
@@ -137,9 +136,6 @@ class Model {
     const float* parameter_maximums_ = nullptr;
     float* parameter_values_ = nullptr;
     int parameter_count_ = 0;
-    std::string idle_motion_;
-    float last_motion_duration_ = 0.0F;
-    bool applying_idle_ = false;
 };
 
 } // namespace webgal::live2d

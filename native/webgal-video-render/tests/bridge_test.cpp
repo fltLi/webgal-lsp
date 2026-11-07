@@ -107,7 +107,8 @@ TEST_CASE("plan builder records the fields the renderer consumes") {
     REQUIRE(webgal_plan_add_figure_key(raw, "fig", 0, "figure/fig.png", nullptr, nullptr, nullptr,
                                        &transform, 1.0F, 1, 500, 0, 0, "easeInOut",
                                        0) == WEBGAL_STATUS_OK);
-    REQUIRE(webgal_plan_add_figure_pose(raw, "fig", 0, "motion", "expression") == WEBGAL_STATUS_OK);
+    REQUIRE(webgal_plan_add_figure_pose(raw, "fig", 0, 0, "motion", "expression") ==
+            WEBGAL_STATUS_OK);
 
     REQUIRE(webgal_plan_add_text(raw, 0, 1'000'000, "speaker", "medium", 30, 200, "fig") ==
             WEBGAL_STATUS_OK);
@@ -206,7 +207,7 @@ TEST_CASE("builder rejects out-of-order calls") {
     REQUIRE(webgal_plan_add_figure_key(raw, "missing", 0, nullptr, nullptr, nullptr, nullptr,
                                        nullptr, 1.0F, 1, 0, 0, 0, nullptr,
                                        0) == WEBGAL_STATUS_PLAN_INCOMPLETE);
-    REQUIRE(webgal_plan_add_figure_pose(raw, "missing", 0, nullptr, nullptr) ==
+    REQUIRE(webgal_plan_add_figure_pose(raw, "missing", 0, 0, nullptr, nullptr) ==
             WEBGAL_STATUS_PLAN_INCOMPLETE);
 }
 

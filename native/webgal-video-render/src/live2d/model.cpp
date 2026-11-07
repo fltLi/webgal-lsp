@@ -7,11 +7,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
-#include <numbers>
 #include <utility>
 
 namespace webgal::live2d {
@@ -60,13 +58,6 @@ bool read_json(const std::filesystem::path& path, nlohmann::json& value, std::st
         error = "JSON 解析失败 (" + to_utf8(path) + "): " + exception.what();
         return false;
     }
-}
-
-std::string lower_ascii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return value;
 }
 
 /// 求一条 Cubism motion 曲线在 `at` 秒处的值。
@@ -167,9 +158,6 @@ void Model::release() {
     parameter_maximums_ = nullptr;
     parameter_values_ = nullptr;
     parameter_count_ = 0;
-    idle_motion_.clear();
-    last_motion_duration_ = 0.0F;
-    applying_idle_ = false;
 }
 
 bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::string& error) {
@@ -288,26 +276,6 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
     } catch (const std::exception& exception) {
         error = "model3.json 的 Motion/Expression 清单无效: " + std::string(exception.what());
         return false;
-    }
-
-    const std::string outfit = to_utf8(model3.parent_path().filename());
-    const std::string character = [&] {
-        const auto parent = model3.parent_path().parent_path();
-        return to_utf8(parent.parent_path().filename()) + "/" + to_utf8(parent.filename());
-    }();
-    for (const auto& [name, motion] : motions_) {
-        (void)motion;
-        if (lower_ascii(name).find("idle") == std::string::npos) {
-            continue;
-        }
-        if (name.find(character) != std::string::npos && name.size() >= outfit.size() &&
-            name.compare(name.size() - outfit.size(), outfit.size(), outfit) == 0) {
-            idle_motion_ = name;
-            break;
-        }
-        if (idle_motion_.empty()) {
-            idle_motion_ = name;
-        }
     }
 
     build_drawables(api);
@@ -496,8 +464,15 @@ const Drawable* Model::drawable_by_original(int original_index) const {
     return &drawables_[static_cast<std::size_t>(index)];
 }
 
-bool Model::apply_expression(const CoreApi& api, const std::string& name, std::string& error) {
-    return apply_pose(api, name, std::nullopt, 0.0F, 0.0F, error);
+float blend_expression_value(float value, float expression, int blend) {
+    switch (blend) {
+    case 1:
+        return value * expression;
+    case 2:
+        return expression;
+    default:
+        return value + expression;
+    }
 }
 
 void Model::set_parameter(const char* id, float value) {
@@ -520,74 +495,60 @@ bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string
         parameter_values_[index] = 0.0F;
     }
 
-    set_parameter("ParamAngleX", std::sin(time * 0.72F) * 7.0F);
-    set_parameter("ParamAngleY", std::sin(time * 0.53F) * 3.5F);
-    set_parameter("ParamAngleZ", std::sin(time * 0.41F) * 1.5F);
-    set_parameter("ParamBodyAngleX", std::sin(time * 0.72F) * 2.0F);
-    set_parameter("ParamBodyAngleY", std::sin(time * 0.45F) * 1.2F);
-    set_parameter("ParamBreath", 0.5F + (0.5F * std::sin(time * 1.1F)));
-
+    const Motion* motion_data = nullptr;
+    float at = std::max<float>(time, 0.0F);
     if (motion) {
         const auto found = motions_.find(*motion);
         if (found == motions_.end()) {
             error = "model3.json 中不存在 motion: " + *motion;
             return false;
         }
-        const Motion& data = found->second;
-        last_motion_duration_ = data.duration;
-        float at = std::max<float>(time, 0.0F);
-        if (data.duration > 0.0F) {
-            at = std::min<float>(at, data.duration);
+        motion_data = &found->second;
+        if (motion_data->duration > 0.0F) {
+            // 动作结束后停在最后一帧; WebGAL 不会自动切回 idle。
+            at = std::min<float>(at, motion_data->duration);
         }
-        for (const auto& curve : data.curves) {
+    }
+
+    // 姿态时间同样使用夹取后的 `at`, 否则动作结束后呼吸/摆头还会继续漂移。
+    set_parameter("ParamAngleX", std::sin(at * 0.72F) * 7.0F);
+    set_parameter("ParamAngleY", std::sin(at * 0.53F) * 3.5F);
+    set_parameter("ParamAngleZ", std::sin(at * 0.41F) * 1.5F);
+    set_parameter("ParamBodyAngleX", std::sin(at * 0.72F) * 2.0F);
+    set_parameter("ParamBodyAngleY", std::sin(at * 0.45F) * 1.2F);
+    set_parameter("ParamBreath", 0.5F + (0.5F * std::sin(at * 1.1F)));
+
+    if (motion_data != nullptr) {
+        for (const auto& curve : motion_data->curves) {
             if (curve.parameter >= 0 && curve.parameter < parameter_count_) {
                 parameter_values_[curve.parameter] = evaluate_curve(curve.segments, at);
             }
         }
     }
 
-    set_parameter("ParamMouthOpenY", mouth);
     if (expression) {
         const auto found = expressions_.find(*expression);
         if (found == expressions_.end()) {
-            error = "model3.json 中不存在表情: " + *expression;
-            return false;
-        }
-        for (const auto& parameter : found->second.parameters) {
-            float& value = parameter_values_[parameter.parameter];
-            if (parameter.blend == 2) {
-                value *= parameter.value;
-            } else if (parameter.blend == 3) {
-                value = parameter.value;
-            } else {
-                value += parameter.value;
+            // 某些模型用名为 `default` 的表情回到默认脸; 没有该表情时按“清除覆盖”处理。
+            if (*expression != "default") {
+                error = "model3.json 中不存在表情: " + *expression;
+                return false;
             }
-            if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
-                value = std::clamp(value, parameter_minimums_[parameter.parameter],
-                                   parameter_maximums_[parameter.parameter]);
+        } else {
+            for (const auto& parameter : found->second.parameters) {
+                float& value = parameter_values_[parameter.parameter];
+                value = blend_expression_value(value, parameter.value, parameter.blend);
+                if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
+                    value = std::clamp(value, parameter_minimums_[parameter.parameter],
+                                       parameter_maximums_[parameter.parameter]);
+                }
             }
         }
     }
 
-    if (motion && !applying_idle_ && !idle_motion_.empty() && *motion != idle_motion_ &&
-        last_motion_duration_ > 0.0F && time > last_motion_duration_) {
-        std::vector<float> final_values(parameter_values_, parameter_values_ + parameter_count_);
-        const float idle_time = time - last_motion_duration_;
-        applying_idle_ = true;
-        const bool ok = apply_parameters(api, expression, idle_motion_, idle_time, mouth, error);
-        applying_idle_ = false;
-        if (!ok) {
-            return false;
-        }
-        float weight = std::clamp(idle_time, 0.0F, 1.0F);
-        weight = 0.5F - (0.5F * std::cos(weight * std::numbers::pi_v<float>));
-        for (int index = 0; index < parameter_count_; ++index) {
-            parameter_values_[index] =
-                final_values[static_cast<std::size_t>(index)] +
-                ((parameter_values_[index] - final_values[static_cast<std::size_t>(index)]) *
-                 weight);
-        }
-    }
+    // 口型在表情之后写入, 否则表情里的 `ParamMouthOpenY` (常见为 Multiply 0)
+    // 会把正在说话的嘴型压回去。
+    set_parameter("ParamMouthOpenY", mouth);
     return true;
 }
 

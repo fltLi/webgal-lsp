@@ -81,6 +81,7 @@ pub fn from_plan(plan: &Plan) -> Result<PlanBuilder, Error> {
             builder.add_figure_pose(
                 &track.id,
                 pose.t_us,
+                pose.motion_start_us,
                 pose.motion.as_deref(),
                 pose.expression.as_deref(),
             )?;

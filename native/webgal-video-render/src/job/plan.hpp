@@ -81,6 +81,8 @@ struct FigureKey {
 
 struct FigurePose {
     std::uint64_t t_us = 0;
+    /// 当前 motion 的起播时间; 只改表情时沿用旧值。
+    std::uint64_t motion_start_us = 0;
     std::optional<std::string> motion;
     std::optional<std::string> expression;
 };

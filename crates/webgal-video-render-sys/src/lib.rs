@@ -344,6 +344,7 @@ unsafe extern "C" {
         plan: *mut WebgalPlan,
         figure_id: *const c_char,
         t_us: u64,
+        motion_start_us: u64,
         motion: *const c_char,
         expression: *const c_char,
     ) -> c_int;
@@ -600,6 +601,7 @@ impl PlanBuilder {
         &mut self,
         figure_id: &str,
         t_us: u64,
+        motion_start_us: u64,
         motion: Option<&str>,
         expression: Option<&str>,
     ) -> Result<(), Error> {
@@ -611,6 +613,7 @@ impl PlanBuilder {
                 self.raw,
                 figure_id.as_ptr(),
                 t_us,
+                motion_start_us,
                 motion.as_ptr(),
                 expression.as_ptr(),
             )

@@ -58,6 +58,8 @@ struct FigureState {
     live2d: Option<String>,
     expression: Option<String>,
     motion: Option<String>,
+    /// 当前 motion 的起播时间; 只改表情时不重置。
+    motion_start_us: u64,
     side: FigureSide,
     transform: Transform,
 }
@@ -605,19 +607,49 @@ impl<'a> Compiler<'a> {
                 self.time_us = self.time_us.saturating_add(Timing::ms(enter_ms));
             }
         }
-        if visible && (sentence.motion.is_some() || sentence.expression.is_some()) {
-            let motion = sentence
-                .motion
+        let requested_expression = sentence
+            .expression
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let requested_motion = sentence
+            .motion
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        // 同一身份下, 未写 `-expression/-motion` 时保留旧状态; 换模型时清空。
+        // 只改表情的语句不能把 motion 状态一起清掉, 否则后续动作会从默认姿势开始。
+        let expression = if identity_same {
+            requested_expression
                 .clone()
-                .or_else(|| previous.and_then(|state| state.motion.clone()));
-            let expression = sentence
-                .expression
+                .or_else(|| previous.and_then(|state| state.expression.clone()))
+        } else {
+            requested_expression.clone()
+        };
+        let motion = if identity_same {
+            requested_motion
                 .clone()
-                .or_else(|| previous.and_then(|state| state.expression.clone()));
+                .or_else(|| previous.and_then(|state| state.motion.clone()))
+        } else {
+            requested_motion.clone()
+        };
+        // 只有显式 `-motion` 才重新起播; 表情事件沿用已有 motion 的起点,
+        // 否则动作会在每次改表情时倒回第一帧。
+        let motion_start_us = if motion.is_none() {
+            0
+        } else if requested_motion.is_some() {
+            self.time_us
+        } else {
+            previous
+                .map(|state| state.motion_start_us)
+                .unwrap_or(self.time_us)
+        };
+        if visible && (requested_motion.is_some() || requested_expression.is_some()) {
             self.plan.figures[track].poses.push(FigurePose {
                 t_us: self.time_us,
-                motion,
-                expression,
+                motion_start_us,
+                motion: motion.clone(),
+                expression: expression.clone(),
             });
         }
         if asset.is_some() || live2d.is_some() {
@@ -627,8 +659,9 @@ impl<'a> Compiler<'a> {
                     track,
                     asset,
                     live2d,
-                    expression: sentence.expression.clone(),
-                    motion: sentence.motion.clone(),
+                    expression,
+                    motion,
+                    motion_start_us,
                     side: effective_side,
                     transform,
                 },
