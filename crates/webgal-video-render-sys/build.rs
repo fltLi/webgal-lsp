@@ -32,7 +32,11 @@ fn main() {
         "CMakeLists.txt",
         "vcpkg.json",
         "cmake",
-        "native/webgal-video-render",
+        "native/webgal-video-render/CMakeLists.txt",
+        "native/webgal-video-render/src",
+        "native/webgal-video-render/include",
+        "native/webgal-video-render/shaders",
+        "native/webgal-video-render/cmake",
     ] {
         println!(
             "cargo:rerun-if-changed={}",

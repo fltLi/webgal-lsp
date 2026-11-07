@@ -7,18 +7,22 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "live2d/core_loader.hpp"
 
 namespace webgal::live2d {
 
+/// Cubism Core 拥有的 drawable 视图。
+///
+/// 顶点/索引数组由 Core 原地更新，这里只保存指针与数量，避免每帧把整模型的
+/// 几何复制一遍。`Model` 存活期间指针有效。
 struct Drawable {
-    std::string id;
+    const char* id = "";
     int texture = 0;
     unsigned int flags = 0;
     int original_index = 0;
-    bool is_mask = false;
     int draw_order = 0;
     int render_order = 0;
     float opacity = 1.0F;
@@ -28,13 +32,15 @@ struct Drawable {
     float screen_rgb[3] = {0.0F, 0.0F, 0.0F};
     int blend_mode = 0;
     int mask_count = 0;
-    std::vector<int> masks;
-    std::vector<csmVector2> positions;
-    std::vector<csmVector2> uvs;
-    std::vector<unsigned short> indices;
+    const int* masks = nullptr;
+    int vertex_count = 0;
+    const csmVector2* positions = nullptr;
+    const csmVector2* uvs = nullptr;
+    int index_count = 0;
+    const unsigned short* indices = nullptr;
 };
 
-/// 一个 moc3 模型, 只做静态默认姿势.
+/// 一个 moc3 模型：参数、motion/expression 与 drawable 视图。
 class Model {
   public:
     Model();
@@ -57,6 +63,8 @@ class Model {
     const std::vector<Drawable>& drawables() const {
         return drawables_;
     }
+    /// 按 Core 的原始 drawable 下标取视图；不存在时返回 nullptr。
+    const Drawable* drawable_by_original(int original_index) const;
     const std::vector<std::filesystem::path>& textures() const {
         return textures_;
     }
@@ -80,8 +88,34 @@ class Model {
     }
 
   private:
+    struct MotionCurve {
+        int parameter = -1;
+        std::vector<float> segments;
+    };
+    struct Motion {
+        float duration = 0.0F;
+        bool loop = false;
+        std::vector<MotionCurve> curves;
+    };
+    struct ExpressionParameter {
+        int parameter = -1;
+        float value = 0.0F;
+        int blend = 1;
+    };
+    struct Expression {
+        std::vector<ExpressionParameter> parameters;
+    };
+
     void release();
-    bool refresh_drawables(const CoreApi& api, std::string& error);
+    void build_drawables(const CoreApi& api);
+    void update_drawables(const CoreApi& api);
+    bool load_motion(const std::filesystem::path& path, Motion& motion, std::string& error) const;
+    bool load_expression(const std::filesystem::path& path, Expression& expression,
+                         std::string& error) const;
+    bool apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
+                          const std::optional<std::string>& motion, float time, float mouth,
+                          std::string& error);
+    void set_parameter(const char* id, float value);
 
     void* moc_memory_ = nullptr;
     void* model_memory_ = nullptr;
@@ -91,9 +125,18 @@ class Model {
     csmVector2 canvas_origin_{};
     float pixels_per_unit_ = 1.0F;
     std::vector<Drawable> drawables_;
+    /// Core 原始 drawable 下标 → `drawables_` 中的位置。
+    std::vector<int> drawable_lookup_;
     std::vector<std::filesystem::path> textures_;
-    std::map<std::string, std::filesystem::path> expressions_;
-    std::map<std::string, std::filesystem::path> motions_;
+    std::map<std::string, Motion> motions_;
+    std::map<std::string, Expression> expressions_;
+    std::unordered_map<std::string, int> parameter_index_;
+    std::vector<int> mouth_parameters_;
+    const float* parameter_defaults_ = nullptr;
+    const float* parameter_minimums_ = nullptr;
+    const float* parameter_maximums_ = nullptr;
+    float* parameter_values_ = nullptr;
+    int parameter_count_ = 0;
     std::string idle_motion_;
     float last_motion_duration_ = 0.0F;
     bool applying_idle_ = false;

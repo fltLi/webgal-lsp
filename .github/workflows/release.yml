@@ -73,6 +73,21 @@ jobs:
           restore-keys: |
             vcpkg-release-${{ runner.os }}-
 
+      - name: Verify native toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not $env:VULKAN_SDK -or -not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) {
+            throw "Vulkan SDK 未安装或 VULKAN_SDK 未设置"
+          }
+          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+            throw "缺少 CMake"
+          }
+          if (-not $env:VCPKG_INSTALLATION_ROOT -and
+              -not (Get-Command vcpkg -ErrorAction SilentlyContinue)) {
+            throw "找不到 vcpkg（VCPKG_INSTALLATION_ROOT 或 PATH）"
+          }
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

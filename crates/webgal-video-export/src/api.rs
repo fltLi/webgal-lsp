@@ -15,13 +15,12 @@ use crate::{
     script::{self, ChoicePolicy, StartOptions},
 };
 
-/// 一次导出的项目与编排参数 (与编码/输出相关的参数在渲染阶段给)。
+/// 一次导出的项目与编排参数（编码/输出参数在渲染阶段给）。
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
     pub project_root: PathBuf,
     pub start_scene: Option<String>,
     pub start_label: Option<String>,
-    pub no_ui: bool,
     pub config: ExportConfig,
 }
 
@@ -32,7 +31,6 @@ impl ExportOptions {
             project_root: project_root.into(),
             start_scene: None,
             start_label: None,
-            no_ui: false,
             config: ExportConfig::default(),
         }
     }
@@ -59,14 +57,36 @@ pub fn build_plan(options: &ExportOptions) -> Result<plan::Plan> {
         label: options.start_label.clone(),
     };
     let mut plan = script::compile_with(&project, &config, &policy, &start)?;
-    plan.meta.ui = !options.no_ui;
+    plan.meta.ui = config.layers.ui;
     plan.meta.output_w = config.video.width;
     plan.meta.output_h = config.video.height;
+    apply_layer_filters(&mut plan, &config);
     let speed = options.config.playback_speed;
     if speed > 0.0 && (speed - 1.0).abs() > f32::EPSILON {
         scale_time(&mut plan, speed);
     }
     Ok(plan)
+}
+
+/// 按导出配置裁剪图层。
+///
+/// 编译阶段仍然完整遍历脚本：文本时长、BGM 起止和 `wait` 都会影响时间线，
+/// 不能因为某一层不导出就跳过。这里在计划完成后统一裁掉不输出的内容。
+fn apply_layer_filters(plan: &mut plan::Plan, config: &ExportConfig) {
+    if !config.layers.background {
+        plan.background.clear();
+    }
+    if !config.layers.figures {
+        plan.figures.clear();
+    }
+    if !config.layers.ui {
+        plan.texts.clear();
+        plan.choices.clear();
+        plan.intros.clear();
+    }
+    if !config.include_audio {
+        plan.audio.clear();
+    }
 }
 
 /// 由目标高度与舞台宽高比推导输出宽度; 结果取偶数 (H.264 的 yuv420p 要求)。
@@ -128,7 +148,10 @@ pub fn route_preview(
         match &info.sentence {
             Sentence::Choose(choose) => {
                 let key = format!("{scene_name}:{line_number}");
-                let selection = selected.get(&key).copied();
+                let selection = selected
+                    .get(&key)
+                    .copied()
+                    .filter(|index| *index < choose.choices.len());
                 let options = choose
                     .choices
                     .iter()
@@ -207,7 +230,7 @@ fn label_line(entry: &crate::project::SceneEntry, label: &str) -> Option<usize> 
     entry
         .sentences()
         .find_map(|(line, info)| match &info.sentence {
-            Sentence::Label(value) if value.label == label => Some(line),
+            Sentence::Label(value) if value.label == label => Some(line - 1),
             _ => None,
         })
 }

@@ -27,7 +27,7 @@ std::wstring quote(const std::filesystem::path& path) {
     return L"\"" + path.wstring() + L"\"";
 }
 
-bool run_process(const std::wstring& command, std::string& error) {
+bool run_process(const std::wstring& command, const run::Context& context, std::string& error) {
     std::wstring mutable_command = command;
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -38,11 +38,34 @@ bool run_process(const std::wstring& command, std::string& error) {
         return false;
     }
 
-    WaitForSingleObject(process.hProcess, INFINITE);
+    bool cancelled = false;
+    for (;;) {
+        const DWORD wait = WaitForSingleObject(process.hProcess, 200);
+        if (wait == WAIT_OBJECT_0) {
+            break;
+        }
+        if (wait == WAIT_FAILED) {
+            error = "等待 ffmpeg 失败";
+            TerminateProcess(process.hProcess, 1);
+            WaitForSingleObject(process.hProcess, INFINITE);
+            break;
+        }
+        if (context.cancel_requested()) {
+            cancelled = true;
+            TerminateProcess(process.hProcess, 1);
+            WaitForSingleObject(process.hProcess, INFINITE);
+            break;
+        }
+    }
+
     DWORD exit_code = 1;
     GetExitCodeProcess(process.hProcess, &exit_code);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+    if (cancelled) {
+        error = "已取消";
+        return false;
+    }
     if (exit_code != 0) {
         error = "ffmpeg 退出码: " + std::to_string(exit_code);
         return false;
@@ -65,18 +88,20 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
         error = "plan 时长或帧率无效";
         return false;
     }
-    const std::uint32_t fps = std::max<std::uint32_t>(1U, plan.fps_num / plan.fps_den);
+    const double fps = static_cast<double>(plan.fps_num) / static_cast<double>(plan.fps_den);
     const bool has_audio = !plan.audio.empty();
     const std::uint32_t bitrate =
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
 
     media::MfEncoder encoder;
-    if (!encoder.init(output, plan.output_w, plan.output_h, fps, bitrate, has_audio, error)) {
+    if (!encoder.init(output, plan.output_w, plan.output_h, plan.fps_num, plan.fps_den, bitrate,
+                      has_audio, error)) {
         return false;
     }
+    context.report_encoder("Media Foundation");
 
     if (!stage::render_sequence(
-            plan, 0, plan.duration_us, fps, context,
+            plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
             [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
                 const std::vector<std::uint8_t>& pixels, std::string& frame_error) {
                 if (context.cancel_requested()) {
@@ -93,18 +118,27 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
     }
 
     if (has_audio) {
+        media::AudioMixer mixer(plan, context);
+        if (!mixer.prepare(error)) {
+            return false;
+        }
+        constexpr std::uint32_t kChunkFrames = 48000;
         std::vector<float> mixed;
-        std::uint64_t frames = 0;
-        if (!media::mix_audio(plan, mixed, frames, context, error)) {
-            return false;
-        }
-        std::vector<std::int16_t> pcm(mixed.size());
-        for (std::size_t index = 0; index < mixed.size(); ++index) {
-            pcm[index] = static_cast<std::int16_t>(
-                std::lround(std::clamp(mixed[index], -1.0F, 1.0F) * 32767.0F));
-        }
-        if (!encoder.write_audio(0, pcm, error)) {
-            return false;
+        std::vector<std::int16_t> pcm;
+        for (std::uint64_t start = 0; start < mixer.frames(); start += kChunkFrames) {
+            const auto frames = static_cast<std::uint32_t>(
+                std::min<std::uint64_t>(kChunkFrames, mixer.frames() - start));
+            if (!mixer.mix(start, frames, mixed, error)) {
+                return false;
+            }
+            pcm.resize(mixed.size());
+            for (std::size_t index = 0; index < mixed.size(); ++index) {
+                pcm[index] = static_cast<std::int16_t>(
+                    std::lround(std::clamp(mixed[index], -1.0F, 1.0F) * 32767.0F));
+            }
+            if (!encoder.write_audio(start, pcm, error)) {
+                return false;
+            }
         }
     }
 
@@ -121,9 +155,9 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
         error = "plan fps 无效";
         return false;
     }
-    const std::uint32_t fps = std::max<std::uint32_t>(1U, plan.fps_num / plan.fps_den);
     const std::uint32_t bitrate =
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
+    const bool has_audio = !plan.audio.empty();
 
     const auto frame_dir = temp_frame_dir();
     std::error_code code;
@@ -134,11 +168,12 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
     }
 
     const auto audio_path = frame_dir / "audio.wav";
-    if (!stage::render_frames(plan, 0, plan.duration_us, fps, frame_dir, context, error)) {
+    if (!stage::render_frames(plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, frame_dir,
+                              context, error)) {
         std::filesystem::remove_all(frame_dir, code);
         return false;
     }
-    if (!media::render_audio(plan, audio_path, context, error)) {
+    if (has_audio && !media::render_audio(plan, audio_path, context, error)) {
         std::filesystem::remove_all(frame_dir, code);
         return false;
     }
@@ -154,12 +189,17 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
 
     const std::wstring ffmpeg_path = context.ffmpeg.empty() ? L"ffmpeg" : quote(context.ffmpeg);
     const auto pattern = frame_dir / "frame_%06d.png";
-    std::wstring command = ffmpeg_path + L" -y -loglevel error -framerate " + std::to_wstring(fps) +
-                           L" -start_number 0 -i " + quote(pattern) + L" -i " + quote(audio_path) +
-                           L" -c:v libx264 -pix_fmt yuv420p -b:v " + std::to_wstring(bitrate) +
-                           L"k -c:a aac -b:a 192k -shortest -movflags +faststart " + quote(output);
+    std::wstring command = ffmpeg_path + L" -y -loglevel error -framerate " +
+                           std::to_wstring(plan.fps_num) + L"/" + std::to_wstring(plan.fps_den) +
+                           L" -start_number 0 -i " + quote(pattern);
+    if (has_audio) {
+        command += L" -i " + quote(audio_path) + L" -c:a aac -b:a 192k";
+    }
+    command += L" -c:v libx264 -pix_fmt yuv420p -b:v " + std::to_wstring(bitrate) +
+               L"k -shortest -movflags +faststart " + quote(output);
 
-    const bool ok = run_process(command, error);
+    context.report_encoder("外部 ffmpeg");
+    const bool ok = run_process(command, context, error);
     std::filesystem::remove_all(frame_dir, code);
     return ok;
 }

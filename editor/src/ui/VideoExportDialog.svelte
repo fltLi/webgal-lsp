@@ -155,8 +155,13 @@
   let resultPath = $state('');
 
   const busy = $derived(phase === 'working');
+  const hasVisual = $derived(includeStage || includeUi);
   const canExport = $derived(
-    Boolean(status?.supported) && outputDirectory.trim().length > 0 && outputName.trim().length > 0 && !busy
+    Boolean(status?.supported) &&
+      outputDirectory.trim().length > 0 &&
+      outputName.trim().length > 0 &&
+      !busy &&
+      (contentMode === 'audio' || hasVisual)
   );
   const percent = $derived(
     phase === 'done'
@@ -237,32 +242,43 @@
 
   onMount(() => {
     const unlisteners: UnlistenFn[] = [];
-    void (async () => {
-      unlisteners.push(
-        await listen<VideoExportProgress>('video-export:progress', (event) => {
-          if (phase !== 'working') return;
-          // 音频阶段也会发进度, 但 total 是音频事件数 (常见 5), 不能覆盖视频帧总数。
-          if (event.payload.phase !== 'render') return;
-          progressCurrent = event.payload.current;
-          progressTotal = event.payload.total;
-          progressFps = event.payload.fps;
-        })
-      );
-      unlisteners.push(
-        await listen<VideoExportPreview>('video-export:preview', (event) => {
-          if (phase !== 'working') return;
-          previewUrl = event.payload.data;
-          if (event.payload.total > 0) progressTotal = event.payload.total;
-          if (event.payload.frame > progressCurrent) progressCurrent = event.payload.frame;
-        })
-      );
-      unlisteners.push(
-        await listen<string>('video-export:encoder', (event) => {
-          if (phase !== 'working') return;
-          actualEncoder = event.payload;
-        })
-      );
-    })();
+    let disposed = false;
+    /** 组件在 `listen()` 返回前卸载时立即退订，避免监听器泄漏到全局事件总线。 */
+    const keep = async (pending: Promise<UnlistenFn>): Promise<void> => {
+      try {
+        const unlisten = await pending;
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      } catch (error) {
+        errors = [...errors, String(error)];
+      }
+    };
+
+    void keep(
+      listen<VideoExportProgress>('video-export:progress', (event) => {
+        if (phase !== 'working') return;
+        // 音频阶段也会发进度，但 total 是音频事件数，不能覆盖视频帧总数。
+        if (event.payload.phase !== 'render') return;
+        progressCurrent = event.payload.current;
+        progressTotal = event.payload.total;
+        progressFps = event.payload.fps;
+      })
+    );
+    void keep(
+      listen<VideoExportPreview>('video-export:preview', (event) => {
+        if (phase !== 'working') return;
+        previewUrl = event.payload.data;
+        if (event.payload.total > 0) progressTotal = event.payload.total;
+        if (event.payload.frame > progressCurrent) progressCurrent = event.payload.frame;
+      })
+    );
+    void keep(
+      listen<string>('video-export:encoder', (event) => {
+        if (phase !== 'working') return;
+        actualEncoder = event.payload;
+      })
+    );
+
     timer = setInterval(() => {
       tick += 1;
     }, 500);
@@ -271,6 +287,7 @@
       void refresh();
     }
     return () => {
+      disposed = true;
       for (const unlisten of unlisteners) unlisten();
       if (timer) clearInterval(timer);
     };
@@ -293,7 +310,7 @@
       await refreshRoute();
     } catch (error) {
       errors = [String(error)];
-      phase = 'failed';
+      phase = 'idle';
     }
   }
 
@@ -333,8 +350,15 @@
   }
 
   function chooseOption(node: RouteNode, value: string): void {
-    const index = Number(value);
-    selected = { ...selected, [`${node.scene}:${node.line}`]: index };
+    const key = `${node.scene}:${node.line}`;
+    if (value === '-1') {
+      // 后端用“没有选择”表示在此停止；不要把 -1 传给 usize。
+      const next = { ...selected };
+      delete next[key];
+      selected = next;
+    } else {
+      selected = { ...selected, [key]: Number(value) };
+    }
     void refreshRoute();
   }
 
@@ -416,6 +440,10 @@
     const source = projectPath;
     const target = output.trim();
     if (!source || !target) return;
+    if (contentMode !== 'audio' && !hasVisual) {
+      errors = ['至少勾选“包含舞台画面”或“包含文本框与选项”中的一项。'];
+      return;
+    }
 
     phase = 'working';
     errors = [];
@@ -641,7 +669,7 @@
 
       <section class="settings-group">
         <h3>演出</h3>
-        <!-- 与其他参数同一套网格: 所有开关横排, 不再纵向堆五行 -->
+        <!-- 与其他参数同一套网格：四个下拉/输入横排。 -->
         <div class="settings-grid video-performance-grid">
           <div class="settings-field">
             <span class="settings-label">导出内容</span>
@@ -763,7 +791,7 @@
           <dd>{encoderSummary}</dd>
           <dt>导出内容</dt>
           <dd>{contentLabel}</dd>
-          <dt>播放速度</dt>
+          <dt>文字 / 自动速度</dt>
           <dd>{speedSummary}</dd>
           <dt>字号</dt>
           <dd>{fontScaleLabel}</dd>

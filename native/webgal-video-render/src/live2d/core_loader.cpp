@@ -63,7 +63,6 @@ bool load_core(const std::filesystem::path& dll, CoreApi& api, std::string& erro
         resolve(module, "csmGetDrawableBlendModes", api.drawable_blend_modes, missing) &&
         resolve(module, "csmGetDrawableMultiplyColors", api.drawable_multiply_colors, missing) &&
         resolve(module, "csmGetDrawableScreenColors", api.drawable_screen_colors, missing) &&
-        resolve(module, "csmGetDrawableScreenColors", api.drawable_screen_colors, missing) &&
         resolve(module, "csmGetParameterCount", api.parameter_count, missing) &&
         resolve(module, "csmGetParameterIds", api.parameter_ids, missing) &&
         resolve(module, "csmGetParameterValues", api.parameter_values, missing) &&

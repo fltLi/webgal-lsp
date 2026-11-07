@@ -8,26 +8,23 @@ use std::{fs, path::Path};
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateInfo {
-    /// 模板名.
+    /// 模板名。
     pub name: Option<String>,
-    /// 模板声明的字体.
+    /// 模板声明的字体（字符串或 `{ "name": ... }` 两种写法）。
     pub fonts: Vec<String>,
-    /// 原始 JSON, 便于后续阶段读取更多字段.
-    pub raw: Option<serde_json::Value>,
 }
 
 impl TemplateInfo {
-    /// 读取模板目录; 缺失或损坏时返回 `None` (由项目检查报警告).
+    /// 读取模板目录；缺失或损坏时返回 `None`，由项目检查给出警告。
     pub fn load(template_dir: &Path) -> Option<Self> {
-        let path = template_dir.join("template.json");
-        let raw = fs::read_to_string(path).ok()?;
-        let raw: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let text = fs::read_to_string(template_dir.join("template.json")).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
 
-        let name = raw
+        let name = value
             .get("name")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let fonts = raw
+        let fonts = value
             .get("fonts")
             .and_then(serde_json::Value::as_array)
             .map(|fonts| {
@@ -44,10 +41,6 @@ impl TemplateInfo {
             })
             .unwrap_or_default();
 
-        Some(Self {
-            name,
-            fonts,
-            raw: Some(raw),
-        })
+        Some(Self { name, fonts })
     }
 }

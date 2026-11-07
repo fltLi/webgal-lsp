@@ -32,7 +32,7 @@ pub enum Error {
     #[error("配置无效: {0}")]
     Config(String),
 
-    /// 当前项目包含首版不支持的内容。
+    /// 当前项目包含暂不支持的内容。
     #[error("项目包含不支持的内容: {0}")]
     Unsupported(String),
 }

@@ -77,7 +77,7 @@ jobs:
         working-directory: editor
         run: bun run test
 
-      # 这一步以前只有 release 才会跑, 于是「构建挂了」总是要到发版才发现
+      # 构建也放进 CI：构建失败不应该拖到发版才暴露。
       - name: Build frontend
         working-directory: editor
         run: bun run build
@@ -145,7 +145,10 @@ jobs:
 
       - name: Install LLVM
         shell: pwsh
-        run: choco install llvm --no-progress -y
+        run: |
+          if (-not (Get-Command clang-format -ErrorAction SilentlyContinue)) {
+            choco install llvm --no-progress -y
+          }
 
       - name: Configure
         run: cmake --preset windows-msvc-ci

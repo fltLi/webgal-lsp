@@ -2,9 +2,8 @@
 
 //! `webgal_video_export::plan::Plan` → C ABI 计划。
 //!
-//! 这里是 Rust 计划与渲染器之间唯一的转换点: 渲染器只认识 [`PlanBuilder`] 写入的字段,
-//! 不解析任何 JSON。计划里渲染器暂不消费的字段 (视频段、UI 样式表、警告) 不会写进去,
-//! 它们仍保留在 Rust 计划里供后续阶段使用。
+//! 这里是 Rust 计划与渲染器之间唯一的转换点：渲染器只认识 [`PlanBuilder`] 写入的字段，
+//! 不解析任何 JSON。视频片段与警告暂时留在 Rust 计划里，尚未写入 C ABI。
 
 use webgal_video_export::plan::{
     AudioKind as PlanAudioKind, Plan, TextChar, Transform as PlanTransform,

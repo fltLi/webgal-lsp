@@ -48,7 +48,8 @@ struct MfEncoder::Impl {
     DWORD audio_stream = 0;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::uint32_t fps = 30;
+    std::uint32_t fps_num = 30;
+    std::uint32_t fps_den = 1;
     bool has_audio = false;
     bool started = false;
     bool mf_started = false;
@@ -71,11 +72,12 @@ MfEncoder::~MfEncoder() {
 }
 
 bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, std::uint32_t height,
-                     std::uint32_t fps, std::uint32_t bitrate_kbps, bool has_audio,
-                     std::string& error) {
+                     std::uint32_t fps_num, std::uint32_t fps_den, std::uint32_t bitrate_kbps,
+                     bool has_audio, std::string& error) {
     impl_->width = width;
     impl_->height = height;
-    impl_->fps = std::max<std::uint32_t>(1U, fps);
+    impl_->fps_num = std::max<std::uint32_t>(1U, fps_num);
+    impl_->fps_den = std::max<std::uint32_t>(1U, fps_den);
     impl_->has_audio = has_audio;
     const std::uint32_t bitrate = std::max<std::uint32_t>(1U, bitrate_kbps) * 1000U;
 
@@ -111,7 +113,7 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     video_out->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     video_out->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
     MFSetAttributeSize(video_out.Get(), MF_MT_FRAME_SIZE, width, height);
-    MFSetAttributeRatio(video_out.Get(), MF_MT_FRAME_RATE, impl_->fps, 1);
+    MFSetAttributeRatio(video_out.Get(), MF_MT_FRAME_RATE, impl_->fps_num, impl_->fps_den);
     MFSetAttributeRatio(video_out.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
     if (!check(impl_->writer->AddStream(video_out.Get(), &impl_->video_stream), "AddStream(video)",
@@ -128,7 +130,7 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     video_in->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     video_in->SetUINT32(MF_MT_DEFAULT_STRIDE, static_cast<UINT32>(width * 4));
     MFSetAttributeSize(video_in.Get(), MF_MT_FRAME_SIZE, width, height);
-    MFSetAttributeRatio(video_in.Get(), MF_MT_FRAME_RATE, impl_->fps, 1);
+    MFSetAttributeRatio(video_in.Get(), MF_MT_FRAME_RATE, impl_->fps_num, impl_->fps_den);
     MFSetAttributeRatio(video_in.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     if (!check(impl_->writer->SetInputMediaType(impl_->video_stream, video_in.Get(), nullptr),
                "SetInputMediaType(video)", error)) {
@@ -204,8 +206,9 @@ bool MfEncoder::write_video(std::uint64_t frame_index, const std::vector<std::ui
         return false;
     }
     sample->AddBuffer(buffer.Get());
-    const LONGLONG time = static_cast<LONGLONG>(frame_index) * 10'000'000 / impl_->fps;
-    const LONGLONG duration = 10'000'000 / impl_->fps;
+    const LONGLONG time =
+        static_cast<LONGLONG>(frame_index) * 10'000'000 * impl_->fps_den / impl_->fps_num;
+    const LONGLONG duration = 10'000'000 * impl_->fps_den / impl_->fps_num;
     sample->SetSampleTime(time);
     sample->SetSampleDuration(duration);
     return check(impl_->writer->WriteSample(impl_->video_stream, sample.Get()),

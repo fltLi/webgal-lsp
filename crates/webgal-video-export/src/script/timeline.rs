@@ -2,15 +2,15 @@
 
 //! 线性脚本遍历与时间线编译。
 //!
-//! 首版只处理线性/静态分支: `choose` 在编译期决定走向, 视频里仍保留菜单展示时间。
-//! 变量、运行时输入与循环直接报错, 不做“猜一个值”的降级。
+//! 离线导出在编译期决定 `choose` 的走向，但菜单本身仍会在视频里展示。
+//! 变量、运行时输入与循环直接报错，不做“猜一个值”的降级。
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use expression::{EmptyEvaluationContext, Expression};
-use webgal_language_core::resource::FigureKind;
 use webgal_language_core::{
     element::{FigureSide, Forward, Transform},
+    resource::FigureKind,
     sentence::{
         BgmSentence, CallSceneSentence, ChangeBackgroundSentence, ChangeFigureSentence,
         ChangeSceneSentence, ChooseSentence, IntroSentence, PlayEffectSentence, PlayVideoSentence,
@@ -24,15 +24,16 @@ use crate::{
     plan::{
         AssetInfo, AssetKind, AudioEvent, AudioKind, BackgroundKey, BlendMode, ChoiceOption,
         ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack, IntroSegment, Meta,
-        Plan, StageKey, TextChar, TextLine, TextSegment, UiStyleModel, VideoSegment, Warning,
+        Plan, StageKey, TextChar, TextLine, TextSegment, VideoSegment, Warning,
     },
     project::Project,
     script::{decision::ChoicePolicy, live2d::is_moc3, timing::Timing},
+    util::{looks_like_audio, path_string},
 };
 
 /// 单次编译上限, 防止脚本写出无限循环时把内存吃光.
 const MAX_STATEMENTS: usize = 100_000;
-/// 首版最长视频 6 小时.
+/// 单次导出最长 6 小时；同时避免时间戳和音频缓冲无限增长。
 const MAX_DURATION_US: u64 = 6 * 60 * 60 * 1_000_000;
 
 /// 调用栈帧。
@@ -305,11 +306,11 @@ impl<'a> Compiler<'a> {
                     self.line += 1;
                 }
                 Sentence::SetTextbox(_) => {
-                    self.warn("WG_TEXTBOX", "setTextbox 首版不改变 UI 状态", line);
+                    self.warn("WG_TEXTBOX", "setTextbox 不改变导出 UI 状态", line);
                     self.line += 1;
                 }
                 Sentence::FilmMode(_) | Sentence::PixiInit(_) | Sentence::PixiPerform(_) => {
-                    self.warn("WG_UNSUPPORTED_EFFECT", "特效/电影模式首版忽略", line);
+                    self.warn("WG_UNSUPPORTED_EFFECT", "特效/电影模式不参与导出", line);
                     self.line += 1;
                 }
                 Sentence::UnlockCg(_) | Sentence::UnlockBgm(_) | Sentence::CallSteam(_) => {
@@ -319,28 +320,28 @@ impl<'a> Compiler<'a> {
                 | Sentence::SetComplexAnimation(_)
                 | Sentence::SetTempAnimation(_)
                 | Sentence::SetTransition(_) => {
-                    self.warn("WG_UNSUPPORTED_ANIMATION", "动画语句首版不生成关键帧", line);
+                    self.warn("WG_UNSUPPORTED_ANIMATION", "动画语句暂不生成关键帧", line);
                     self.line += 1;
                 }
                 Sentence::ApplyStyle(_) => {
-                    self.warn("WG_UNSUPPORTED_STYLE", "applyStyle 首版忽略", line);
+                    self.warn("WG_UNSUPPORTED_STYLE", "applyStyle 不参与导出", line);
                     self.line += 1;
                 }
                 Sentence::SetVariable(sentence) => {
                     return Err(Error::Unsupported(format!(
-                        "首版不支持变量: {} ({}:{line})",
+                        "暂不支持变量: {} ({}:{line})",
                         sentence.expression.0, self.scene
                     )));
                 }
                 Sentence::GetUserInput(sentence) => {
                     return Err(Error::Unsupported(format!(
-                        "首版不支持 getUserInput: {} ({}:{line})",
+                        "暂不支持 getUserInput: {} ({}:{line})",
                         sentence.variable, self.scene
                     )));
                 }
                 Sentence::ShowVariables(_) => {
                     return Err(Error::Unsupported(format!(
-                        "首版不支持 showVars ({}:{line})",
+                        "暂不支持 showVars ({}:{line})",
                         self.scene
                     )));
                 }
@@ -351,11 +352,8 @@ impl<'a> Compiler<'a> {
 
     fn finish(mut self) -> Plan {
         self.plan.meta.format_version = FORMAT_VERSION;
-        self.plan.meta.duration_us = self.time_us + Timing::ms(self.config.timing.end_tail_ms);
-        self.plan.ui = UiStyleModel {
-            version: 1,
-            ..UiStyleModel::default()
-        };
+        self.plan.meta.duration_us =
+            (self.time_us + Timing::ms(self.config.timing.end_tail_ms)).min(MAX_DURATION_US);
         self.plan
     }
 
@@ -498,7 +496,7 @@ impl<'a> Compiler<'a> {
                 is_live2d = true;
             } else if kind != FigureKind::Image {
                 return Err(Error::Unsupported(format!(
-                    "首版只支持图片/Live2D 立绘, 当前为 {kind:?}: {value}"
+                    "当前只支持图片/Live2D 立绘, 当前为 {kind:?}: {value}"
                 )));
             }
             let path = self.add_asset(
@@ -518,12 +516,10 @@ impl<'a> Compiler<'a> {
         } else {
             (None, None)
         };
-        if is_live2d
-            && (sentence.motion.is_some() || sentence.blink.is_some() || sentence.focus.is_some())
-        {
+        if is_live2d && (sentence.blink.is_some() || sentence.focus.is_some()) {
             self.warn(
                 "WG_LIVE2D_STATIC",
-                "Live2D 首版只应用静态表情, motion/blink/focus 未应用",
+                "blink/focus 尚未接入 Live2D，motion/expression 仍会应用",
                 self.line + 1,
             );
         }
@@ -645,9 +641,7 @@ impl<'a> Compiler<'a> {
 
     fn set_transform(&mut self, sentence: &SetTransformSentence, line: usize) -> Result<()> {
         let duration_ms = sentence.duration.unwrap_or(500);
-        // 变换从语句执行处开始, 在 duration 内完成; `-next` 只是不阻塞后续语句。
-        // 旧实现把起点放到 time + duration, 再按"到下一关键帧的整段跨度"插值,
-        // 于是每个 setTransform 都会变成横跨数秒的运镜。
+        // 变换从语句执行处开始，在 duration 内完成；`-next` 只是不阻塞后续语句。
         let at = self.time_us;
         let ease = sentence.ease.to_string();
         let target = sentence
@@ -871,7 +865,7 @@ impl<'a> Compiler<'a> {
     fn call_scene(&mut self, sentence: &CallSceneSentence) -> Result<()> {
         if !sentence.variables.is_empty() || sentence.write_return_to.is_some() {
             return Err(Error::Unsupported(
-                "callScene 传参/返回值首版不支持".to_owned(),
+                "callScene 传参/返回值暂不支持".to_owned(),
             ));
         }
         if self.project.scene(&sentence.scene).is_none() {
@@ -960,9 +954,10 @@ fn collect_labels(project: &Project) -> HashMap<String, HashMap<String, usize>> 
     let mut labels = HashMap::new();
     for (name, entry) in project.scenes() {
         let mut scene_labels = HashMap::new();
-        for (index, info) in entry.sentences() {
+        // `Compiler::line` 是 0 起始下标，而 `sentences()` 给的是 1 起始行号。
+        for (line, info) in entry.sentences() {
             if let Sentence::Label(sentence) = &info.sentence {
-                scene_labels.insert(sentence.label.clone(), index);
+                scene_labels.insert(sentence.label.clone(), line - 1);
             }
         }
         labels.insert(name.to_owned(), scene_labels);
@@ -1054,22 +1049,4 @@ fn color(value: Option<webgal_language_core::element::Color>) -> String {
         "rgba({}, {}, {}, {})",
         value.red, value.green, value.blue, value.alpha
     )
-}
-
-fn looks_like_audio(value: &str) -> bool {
-    std::path::Path::new(value)
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "wav" | "mp3" | "ogg" | "flac"
-            )
-        })
-}
-
-/// 去掉 Windows `\\?\` 前缀并统一为 `/`, 让 plan 可跨进程/跨平台读取.
-fn path_string(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    text.strip_prefix("//?/").unwrap_or(&text).to_owned()
 }

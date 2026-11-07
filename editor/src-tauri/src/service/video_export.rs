@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use webgal_video_export::api::{analyze_project, build_plan, route_preview, ExportOptions};
+use webgal_video_export::api::{build_plan, route_preview, ExportOptions};
+use webgal_video_export::project::Project;
 
 #[cfg(all(feature = "video-export", target_os = "windows"))]
 use webgal_video_render_sys::{
@@ -282,6 +283,16 @@ mod tests {
             .unwrap_err()
             .contains("没有找到"));
     }
+
+    #[cfg(all(feature = "video-export", target_os = "windows"))]
+    #[test]
+    fn base64_handles_padding() {
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"f"), "Zg==");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert_eq!(super::base64(b"foo"), "Zm9v");
+        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -298,14 +309,10 @@ pub struct VideoProjectInfo {
 
 #[tauri::command]
 pub fn video_project_info(project_path: String) -> Result<VideoProjectInfo, String> {
-    let inspection =
-        analyze_project(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    let mut scenes: Vec<String> = inspection
-        .scenes
-        .into_iter()
-        .map(|scene| scene.name)
-        .collect();
+    let project = Project::open(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    let mut scenes: Vec<String> = project.scenes().map(|(name, _)| name.to_owned()).collect();
     scenes.sort();
+    let (stage_width, stage_height) = project.stage_size();
     Ok(VideoProjectInfo {
         start_scene: scenes
             .iter()
@@ -314,9 +321,9 @@ pub fn video_project_info(project_path: String) -> Result<VideoProjectInfo, Stri
             .or_else(|| scenes.first().cloned())
             .unwrap_or_else(|| "start.txt".to_owned()),
         scenes,
-        stage_width: inspection.project.stage_width,
-        stage_height: inspection.project.stage_height,
-        webgal_version: inspection.project.webgal_version,
+        stage_width,
+        stage_height,
+        webgal_version: project.webgal_version(),
     })
 }
 
@@ -345,10 +352,9 @@ pub fn video_route_preview(
     project_path: String,
     start_scene: String,
     selected: std::collections::BTreeMap<String, usize>,
-) -> Result<serde_json::Value, String> {
-    let preview = route_preview(Path::new(&project_path), &start_scene, &selected)
-        .map_err(|error| error.to_string())?;
-    serde_json::to_value(preview).map_err(|error| error.to_string())
+) -> Result<webgal_video_export::api::RoutePreview, String> {
+    route_preview(Path::new(&project_path), &start_scene, &selected)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -393,7 +399,7 @@ pub async fn export_video(
             };
         }
         if let Some(enabled) = config.include_audio {
-            export_options.config.audio.enabled = enabled;
+            export_options.config.include_audio = enabled;
         }
         let ui_only = config.ui_only.unwrap_or(false);
         let stage_only = config.stage_only.unwrap_or(false);
@@ -405,7 +411,6 @@ pub async fn export_video(
             export_options.config.layers.ui = false;
         }
         audio_only = config.audio_only.unwrap_or(false);
-        export_options.config.audio_only = audio_only;
         if let Some(mode) = config.figure_side.as_deref() {
             export_options.config.figure_side = match mode {
                 "legacy" => webgal_video_export::config::FigureSideMode::Legacy,
@@ -433,11 +438,16 @@ pub async fn export_video(
     let log_path = app_data_dir().map(|dir| dir.join("logs").join("video-export.log"));
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        *state
+        let mut slot = state
             .cancel
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cancel.clone());
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if slot.is_some() {
+            return Err("已有视频导出任务在运行".to_owned());
+        }
+        *slot = Some(cancel.clone());
     }
+    let _guard = CancelSlot(&state);
     let job = RenderJob {
         options: export_options,
         output,
@@ -450,14 +460,22 @@ pub async fn export_video(
         cancel: Some(cancel),
     };
 
-    let result = tokio::task::spawn_blocking(move || job.run())
+    tokio::task::spawn_blocking(move || job.run())
         .await
-        .map_err(|error| format!("导出任务异常: {error}"))?;
-    *state
-        .cancel
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    result
+        .map_err(|error| format!("导出任务异常: {error}"))?
+}
+
+/// 导出结束（成功、失败、取消或 panic）时清空当前任务槽。
+struct CancelSlot<'a>(&'a VideoExportState);
+
+impl Drop for CancelSlot<'_> {
+    fn drop(&mut self) {
+        *self
+            .0
+            .cancel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
 }
 
 /// 取消正在进行的导出; 没有正在运行的任务时返回 `false`。

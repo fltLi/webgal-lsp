@@ -121,7 +121,7 @@ export const defaultSettings: Settings = {
     bitrate: '8000',
     encoder: 'auto',
     content: 'video-audio',
-    // 默认用"大"字号: 上一版 720p 导出的正文偏小。
+    // 导出正文默认偏大：720p 下按模板原尺寸会显得偏小。
     fontScale: '1.15',
     autoSpeed: '12',
     textSpeed: '24',

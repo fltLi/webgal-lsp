@@ -18,6 +18,16 @@ fn route_stops_at_unselected_choice() {
 }
 
 #[test]
+fn out_of_range_selection_is_treated_as_stopped() {
+    let mut selected = BTreeMap::new();
+    selected.insert("choice.txt:1".to_owned(), 99);
+    let preview = route_preview(&fixture(), "choice.txt", &selected).expect("route");
+    assert!(!preview.complete);
+    assert_eq!(preview.stop_reason.as_deref(), Some("choose"));
+    assert!(preview.nodes[0].blocked);
+}
+
+#[test]
 fn route_applies_one_choice_then_finishes() {
     let mut selected = BTreeMap::new();
     selected.insert("choice.txt:1".to_owned(), 0);

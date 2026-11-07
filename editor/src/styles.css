@@ -7164,10 +7164,6 @@ body.path-dragging * {
   white-space: nowrap;
 }
 
-.video-route-arrow {
-  color: var(--app-muted);
-}
-
 .video-route-control {
   display: flex;
   justify-content: flex-end;

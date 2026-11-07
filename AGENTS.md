@@ -23,6 +23,7 @@
 | --- | --- | --- |
 | `crates/` 的 `webgal-language-core` / `language-service` / `language-server` / `simulate` / `sentence-macro` | 维护者主导（文件头基本没有 AI 标识） | 先给方案再动手；改动要小、要解释 |
 | `editor/`（前端 Svelte 5 + SvelteKit，后端 Tauri 2 / crate `webgal-ink`）、`crates/expression`、`webgal-snapshot` | AI 主导（文件头多数带标识） | 可自己拿主意，但要补测试、说清边界 |
+| 视频导出：`crates/webgal-video-export`、`crates/webgal-video-render-sys`、`native/webgal-video-render` | AI 主导（新模块，文件头均带标识） | 可重构；但 ABI 与计划结构要同步 Rust/C++ 两侧并跑两端测试 |
 | `crates/count`、`path-tree`、`json-language-service` | 混合 | 看多数；拿不准就当维护者主导 |
 
 判据是**你要动的那一块**里多数文件带不带 AI 标识（粒度是模块，子模块可以自成一块）。实用形式：
@@ -112,6 +113,10 @@ cargo test -p webgal-video-render-sys   # 需要 CMake + Vulkan SDK + vcpkg；de
 # 只改 C++ 时：仓库根是唯一的 CMake workspace（子目录没有 presets）
 cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
 
+# 真实 GPU 导出验收（可选）：设 WEBGAL_RENDER_GPU_TEST=1 后同一测试会渲染 fixture；
+# 再用 WEBGAL_RENDER_GPU_PROJECT / _RESOLUTION / _SPEED / _OUTPUT / _LIVE2D_CORE 指向样本。
+# 不要给 _PROJECT 设空串——那会覆盖默认 fixture 路径。
+
 # 改了 crates/webgal-language-service/src/wasm.rs 时额外跑（它只随 wasm32 编译，宿主目标查不到）
 cargo check -p webgal-language-service --features simulate-diagnose --target wasm32-unknown-unknown
 ```
@@ -181,6 +186,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   service/lsp.rs            把内置语言服务器桥到本地 WebSocket（每次连接 = 一个新 LSP 实例）
   service/preview.rs        预览静态服务器 + /api/webgalsync WebSocket 网关（兼容两代引擎）
   service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
+  service/video_export.rs    视频导出 Tauri command：计划 → C ABI → 后台导出/进度/取消
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
 crates/webgal-video-export/ 视频导出: 读取 WebGAL 项目并编译成时间线计划 (纯 Rust, 不渲染)
@@ -357,6 +363,10 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
 | `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器 |
 | `cargo` 报 `RuntimeLibrary` 不匹配 / `_calloc_dbg` 未解析 | 渲染器的 C++ 运行时和 rustc 不一致。`build.rs` 已把 dev 配置映到 `RelWithDebInfo`（rustc 在 MSVC 上始终用 release CRT）；自己手动 CMake 构建时要跟着用 Release/RelWithDebInfo，别用 Debug |
+| `cargo test -p webgal-video-render-sys` 报 `InvalidProject { path: "", ... }` | 环境里把 `WEBGAL_RENDER_GPU_PROJECT` 设成了空串，覆盖了 fixture 默认路径；删掉该变量再跑 |
+| 导出报 `model3.json 中不存在表情/motion` | 先确认 `FileReferences.Expressions` / `Motions` 里确有该名字；渲染器在加载时缓存这两张表，不再逐帧读盘 |
+| 导出的视频没有声音 / 图层开关无效 | 检查 `ExportConfig.include_audio` 与 `layers`；计划完成后会按它们裁剪 `plan.audio` / `plan.background` / `plan.figures` / UI，不在渲染器里猜 |
+| 导出 WAV 报 `WAV 超过 4 GiB` | WAV 头是 32 位长度；改用 MP4（AAC）或缩短时长 |
 | 仓库里出现 `target-xxx/` 之类的目录 | 设了自定义 `CARGO_TARGET_DIR`（例如验证 `+crt-static` 时）。`.gitignore` 的 `target-*/` 已覆盖；不需要就删掉，它会占几 GB |
 | **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
 | **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |

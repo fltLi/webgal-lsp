@@ -150,11 +150,9 @@ struct MaskSurface {
 
 struct MeshDraw {
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
-    VkImageView texture_view = VK_NULL_HANDLE;
     VkDeviceSize vertex_offset = 0;
     VkDeviceSize index_offset = 0;
     std::uint32_t index_count = 0;
-    bool is_mask = false;
     bool inverted_mask = false;
     MaskSurface* mask_surface = nullptr;
     VkDescriptorSet mask_descriptor = VK_NULL_HANDLE;
@@ -164,11 +162,11 @@ struct MeshDraw {
     float mask_size_v = 1.0F;
     int source_index = 0;
     int render_order = 0;
-    int draw_order = 0;
     int blend_mode = 0;
     float multiply[3] = {1.0F, 1.0F, 1.0F};
     float screen[3] = {0.0F, 0.0F, 0.0F};
-    std::vector<int> masks;
+    int mask_count = 0;
+    const int* masks = nullptr;
     std::string asset;
     std::string figure_id;
     /// 同一层的 drawable 共享这个 key; 渲染时按它分组做离屏合成。
@@ -742,12 +740,13 @@ class Renderer {
     GpuImage* live2d_texture(const std::filesystem::path& path, std::string& error);
     bool ensure_core(std::string& error);
     bool ensure_live2d_model(const job::Plan& plan, const std::string& asset, live2d::Model*& model,
-                             std::vector<GpuImage>*& textures, std::string& error);
+                             std::string& error);
     MaskSurface* ensure_mask_surface(const std::string& asset, const std::string& figure_id,
                                      int index, std::string& error);
     bool build_live2d_mesh(const job::Plan& plan, const job::FigureKey& key,
                            const std::string& figure_id, const job::FigurePose* current_pose,
-                           const job::FigurePose* previous_pose, std::uint64_t t_us,
+                           const job::FigurePose* previous_pose,
+                           const job::TextSegment* active_text, std::uint64_t t_us,
                            std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices,
                            std::vector<MeshDraw>& draws, std::string& error);
     bool upload_image(const std::filesystem::path& path, GpuImage& gpu, std::string& error);
@@ -856,12 +855,20 @@ class Renderer {
     VkShaderModule vertex_shader_ = VK_NULL_HANDLE;
     VkShaderModule fragment_shader_ = VK_NULL_HANDLE;
 
+    /// 跨帧复用，避免每帧重新分配几 MB 的顶点/绘制列表。
+    std::vector<DrawItem> items_;
+    std::vector<Vertex> mesh_vertices_;
+    std::vector<std::uint32_t> mesh_indices_;
+    std::vector<MeshDraw> mesh_draws_;
+
     TextAtlas text_;
     GpuImage solid_;
     GpuImage rounded_;
     std::map<std::string, GpuImage> images_;
     std::map<std::string, GpuImage> live2d_textures_;
     std::map<std::string, std::unique_ptr<live2d::Model>> live2d_models_;
+    /// 按 z-index 预排序的立绘轨道；plan 在导出期间不变。
+    std::vector<const job::FigureTrack*> sorted_tracks_;
     std::uint32_t stage_w_ = 1920;
     std::uint32_t stage_h_ = 1080;
     std::uint32_t render_w_ = 1920;
@@ -889,7 +896,7 @@ VkFormat Renderer::choose_stencil_format() const {
 }
 
 bool Renderer::init(const job::Plan& plan, std::string& error) {
-    // 舞台坐标 (立绘/文字排版) 与输出分辨率是两件事: 前者决定布局, 后者决定渲染目标大小。
+    // Rust 已把脚本坐标缩放到输出尺寸；stage_* 是布局/NDC 空间，render_* 是附件/回读尺寸。
     stage_w_ = plan.stage_w;
     stage_h_ = plan.stage_h;
     render_w_ = plan.output_w;
@@ -914,10 +921,20 @@ bool Renderer::init(const job::Plan& plan, std::string& error) {
 
 bool Renderer::prepare(const job::Plan& plan, const run::Context& context, std::string& error) {
     context_ = &context;
+    sorted_tracks_.clear();
+    sorted_tracks_.reserve(plan.figures.size());
+    for (const auto& track : plan.figures) {
+        sorted_tracks_.push_back(&track);
+    }
+    std::sort(sorted_tracks_.begin(), sorted_tracks_.end(),
+              [](const auto* left, const auto* right) { return left->z_index < right->z_index; });
     const std::filesystem::path project_root = from_utf8(plan.project_root);
     load_ui_style(project_root, static_cast<float>(plan.stage_w), ui_style_);
     disable_filters_ = plan.disable_filters;
     font_scale_ = plan.font_scale > 0.0F ? plan.font_scale : 1.0F;
+    if (!plan.ui_enabled) {
+        return true;
+    }
     if (!load_font(project_root, error)) {
         return false;
     }
@@ -2086,13 +2103,9 @@ bool Renderer::ensure_core(std::string& error) {
 }
 
 bool Renderer::ensure_live2d_model(const job::Plan& plan, const std::string& asset,
-                                   live2d::Model*& model, std::vector<GpuImage>*& textures,
-                                   std::string& error) {
+                                   live2d::Model*& model, std::string& error) {
     if (const auto found = live2d_models_.find(asset); found != live2d_models_.end()) {
         model = found->second.get();
-        const auto texture_found = live2d_textures_.find(asset + "#textures");
-        (void)texture_found;
-        textures = nullptr;
         return true;
     }
 
@@ -2119,7 +2132,6 @@ bool Renderer::ensure_live2d_model(const job::Plan& plan, const std::string& ass
     }
     live2d_models_.emplace(asset, std::move(loaded));
     model = live2d_models_.at(asset).get();
-    textures = nullptr;
     return true;
 }
 
@@ -2201,26 +2213,23 @@ MaskSurface* Renderer::ensure_mask_surface(const std::string& asset, const std::
 
 bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& key,
                                  const std::string& figure_id, const job::FigurePose* current_pose,
-                                 const job::FigurePose* previous_pose, std::uint64_t t_us,
+                                 const job::FigurePose* previous_pose,
+                                 const job::TextSegment* active_text, std::uint64_t t_us,
                                  std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices,
                                  std::vector<MeshDraw>& draws, std::string& error) {
     if (!key.live2d) {
         return true;
     }
     live2d::Model* model = nullptr;
-    std::vector<GpuImage>* textures = nullptr;
-    if (!ensure_live2d_model(plan, *key.live2d, model, textures, error)) {
+    if (!ensure_live2d_model(plan, *key.live2d, model, error)) {
         return false;
     }
     float mouth = 0.0F;
-    for (const auto& segment : plan.texts) {
-        if (t_us >= segment.start_us && (segment.end_us == 0 || t_us <= segment.end_us) &&
-            segment.figure.has_value() && *segment.figure == figure_id) {
-            const float elapsed = static_cast<float>(t_us - segment.start_us) / 1000000.0F;
-            const float phase = std::fmod(elapsed, 0.30F) / 0.30F;
-            mouth = std::sin(phase * 3.14159265F);
-            break;
-        }
+    if (active_text != nullptr && active_text->figure.has_value() &&
+        *active_text->figure == figure_id) {
+        const float elapsed = static_cast<float>(t_us - active_text->start_us) / 1000000.0F;
+        const float phase = std::fmod(elapsed, 0.30F) / 0.30F;
+        mouth = std::sin(phase * 3.14159265F);
     }
     std::optional<std::string> current_motion = key.motion;
     std::optional<std::string> current_expression = key.expression;
@@ -2250,7 +2259,6 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
                                  error)) {
         return false;
     }
-    (void)textures;
 
     const auto canvas_w = model->canvas_size().x;
     const auto canvas_h = model->canvas_size().y;
@@ -2271,7 +2279,8 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
                                      fit, key.transform.position.y);
 
     for (const auto& drawable : model->drawables()) {
-        if (drawable.indices.empty() || drawable.positions.empty()) {
+        if (drawable.index_count <= 0 || drawable.vertex_count <= 0 ||
+            drawable.positions == nullptr || drawable.indices == nullptr) {
             continue;
         }
         if (drawable.texture < 0 ||
@@ -2287,15 +2296,12 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
         (void)base;
         MeshDraw draw;
         draw.descriptor = texture->descriptor;
-        draw.texture_view = texture->view;
         draw.vertex_offset = static_cast<VkDeviceSize>(vertices.size() * sizeof(Vertex));
         draw.index_offset = static_cast<VkDeviceSize>(indices.size() * sizeof(std::uint32_t));
-        draw.index_count = static_cast<std::uint32_t>(drawable.indices.size());
-        draw.is_mask = drawable.is_mask;
+        draw.index_count = static_cast<std::uint32_t>(drawable.index_count);
         draw.inverted_mask = false;
         draw.source_index = drawable.original_index;
         draw.render_order = drawable.render_order;
-        draw.draw_order = drawable.draw_order;
         draw.blend_mode = drawable.blend_mode;
         draw.multiply[0] = drawable.multiply_rgb[0];
         draw.multiply[1] = drawable.multiply_rgb[1];
@@ -2303,6 +2309,7 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
         draw.screen[0] = drawable.screen_rgb[0];
         draw.screen[1] = drawable.screen_rgb[1];
         draw.screen[2] = drawable.screen_rgb[2];
+        draw.mask_count = drawable.mask_count;
         draw.masks = drawable.masks;
         draw.asset = *key.live2d;
         draw.figure_id = figure_id;
@@ -2321,7 +2328,7 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
                                            py / static_cast<float>(plan.stage_h));
         };
 
-        if (!draw.masks.empty()) {
+        if (draw.mask_count > 0 && draw.masks != nullptr) {
             draw.mask_surface =
                 ensure_mask_surface(draw.asset, figure_id, drawable.original_index, error);
             if (draw.mask_surface == nullptr) {
@@ -2332,8 +2339,8 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
             float max_u = 0.0F;
             float max_v = 0.0F;
             const auto include = [&](const live2d::Drawable& source) {
-                for (const auto& position : source.positions) {
-                    const auto [u, v] = screen_uv(source, position);
+                for (int index = 0; index < source.vertex_count; ++index) {
+                    const auto [u, v] = screen_uv(source, source.positions[index]);
                     min_u = std::min<float>(min_u, u);
                     min_v = std::min<float>(min_v, v);
                     max_u = std::max<float>(max_u, u);
@@ -2342,14 +2349,9 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
             };
             include(drawable);
             draw.mask_surface->sources.clear();
-            for (const int mask : draw.masks) {
-                const live2d::Drawable* source = nullptr;
-                for (const auto& candidate : model->drawables()) {
-                    if (candidate.original_index == mask) {
-                        source = &candidate;
-                        break;
-                    }
-                }
+            for (int mask_index = 0; mask_index < draw.mask_count; ++mask_index) {
+                const int mask = draw.masks[mask_index];
+                const live2d::Drawable* source = model->drawable_by_original(mask);
                 if (source == nullptr) {
                     continue;
                 }
@@ -2405,7 +2407,7 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
             }
         }
 
-        for (std::size_t i = 0; i < drawable.positions.size(); ++i) {
+        for (int i = 0; i < drawable.vertex_count; ++i) {
             const auto& position = drawable.positions[i];
             const auto& uv = drawable.uvs[i];
             const float x = center_x + position.x * ppu * scale_x;
@@ -2423,8 +2425,8 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
             }
             vertices.push_back(vertex);
         }
-        for (const auto index : drawable.indices) {
-            indices.push_back(static_cast<std::uint32_t>(index));
+        for (int index = 0; index < drawable.index_count; ++index) {
+            indices.push_back(static_cast<std::uint32_t>(drawable.indices[index]));
         }
         draws.push_back(draw);
     }
@@ -2552,6 +2554,14 @@ float ease_progress(const std::string& name, float progress) {
     return cubic_bezier(0.42F, 0.0F, 0.58F, 1.0F, t);
 }
 
+/// 最后一个 `key.t_us <= t_us` 的下标；没有则返回 `keys.size()`。
+template <typename Key> std::size_t key_index_at(const std::vector<Key>& keys, std::uint64_t t_us) {
+    const auto found =
+        std::upper_bound(keys.begin(), keys.end(), t_us,
+                         [](std::uint64_t value, const Key& key) { return value < key.t_us; });
+    return found == keys.begin() ? keys.size() : static_cast<std::size_t>(found - keys.begin() - 1);
+}
+
 float key_progress(std::uint64_t key_t, std::uint32_t enter_ms, std::uint64_t t_us) {
     if (enter_ms == 0 || t_us >= key_t + static_cast<std::uint64_t>(enter_ms) * 1000ULL) {
         return 1.0F;
@@ -2568,14 +2578,7 @@ float stage_alpha_at(const job::Plan& plan, std::uint64_t t_us) {
     if (plan.stage.empty()) {
         return 1.0F;
     }
-    std::size_t index = plan.stage.size();
-    for (std::size_t i = 0; i < plan.stage.size(); ++i) {
-        if (plan.stage[i].t_us <= t_us) {
-            index = i;
-        } else {
-            break;
-        }
-    }
+    const std::size_t index = key_index_at(plan.stage, t_us);
     if (index >= plan.stage.size()) {
         return 1.0F;
     }
@@ -2588,14 +2591,7 @@ float stage_alpha_at(const job::Plan& plan, std::uint64_t t_us) {
 
 std::optional<job::BackgroundKey> Renderer::background_at(const job::Plan& plan,
                                                           std::uint64_t t_us) const {
-    std::size_t index = plan.background.size();
-    for (std::size_t i = 0; i < plan.background.size(); ++i) {
-        if (plan.background[i].t_us <= t_us) {
-            index = i;
-        } else {
-            break;
-        }
-    }
+    const std::size_t index = key_index_at(plan.background, t_us);
     if (index >= plan.background.size()) {
         return std::nullopt;
     }
@@ -2620,14 +2616,7 @@ std::optional<job::BackgroundKey> Renderer::background_at(const job::Plan& plan,
 
 std::optional<job::FigureKey> Renderer::figure_at(const job::FigureTrack& track,
                                                   std::uint64_t t_us) const {
-    std::size_t index = track.keys.size();
-    for (std::size_t i = 0; i < track.keys.size(); ++i) {
-        if (track.keys[i].t_us <= t_us) {
-            index = i;
-        } else {
-            break;
-        }
-    }
+    const std::size_t index = key_index_at(track.keys, t_us);
     if (index >= track.keys.size()) {
         return std::nullopt;
     }
@@ -2660,15 +2649,7 @@ std::vector<job::BackgroundKey> Renderer::background_layers(const job::Plan& pla
         return {};
     }
 
-    std::size_t index = plan.background.size();
-    for (std::size_t i = 0; i < plan.background.size(); ++i) {
-        if (plan.background[i].t_us <= t_us) {
-            index = i;
-        } else {
-            break;
-        }
-    }
-
+    const std::size_t index = key_index_at(plan.background, t_us);
     std::vector<job::BackgroundKey> layers;
     if (index > 0) {
         const auto& previous = plan.background[index - 1];
@@ -2687,14 +2668,7 @@ std::vector<job::BackgroundKey> Renderer::background_layers(const job::Plan& pla
 
 std::vector<job::FigureKey> Renderer::figure_layers(const job::FigureTrack& track,
                                                     std::uint64_t t_us) const {
-    std::size_t index = track.keys.size();
-    for (std::size_t i = 0; i < track.keys.size(); ++i) {
-        if (track.keys[i].t_us <= t_us) {
-            index = i;
-        } else {
-            break;
-        }
-    }
+    const std::size_t index = key_index_at(track.keys, t_us);
     if (index >= track.keys.size()) {
         return {};
     }
@@ -2826,7 +2800,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
     const float stroke =
         outline ? std::max(0.0F, ui_style_.text_stroke * static_cast<float>(size)) : 0.0F;
     // 模板用 font-weight: bold。优先选粗体字体文件; 只有字体本身是 Regular 时才
-    // 用一圈亚像素重绘模拟, 且幅度要比上一版小, 否则笔画会糊成一块。
+    // 用一圈亚像素重绘模拟粗体；幅度过大会把笔画糊成一块。
     const float bold =
         ui_style_.bold && !font_is_bold_ ? std::max(0.2F, static_cast<float>(size) * 0.008F) : 0.0F;
 
@@ -3083,7 +3057,15 @@ void Renderer::draw_quad(VkDeviceSize offset, VkDescriptorSet descriptor) {
 
 bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                            std::vector<std::uint8_t>& pixels, std::string& error) {
-    std::vector<DrawItem> items;
+    std::vector<DrawItem>& items = items_;
+    std::vector<Vertex>& mesh_vertices = mesh_vertices_;
+    std::vector<std::uint32_t>& mesh_indices = mesh_indices_;
+    std::vector<MeshDraw>& mesh_draws = mesh_draws_;
+    items.clear();
+    mesh_vertices.clear();
+    mesh_indices.clear();
+    mesh_draws.clear();
+    items.reserve(plan.background.size() + plan.figures.size() * 2 + 64);
     for (const auto& layer : background_layers(plan, t_us)) {
         if (!layer.asset) {
             continue;
@@ -3102,31 +3084,29 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         items.push_back(item);
     }
 
-    std::vector<const job::FigureTrack*> tracks;
-    std::vector<Vertex> mesh_vertices;
-    std::vector<std::uint32_t> mesh_indices;
-    std::vector<MeshDraw> mesh_draws;
-    tracks.reserve(plan.figures.size());
-    for (const auto& track : plan.figures) {
-        tracks.push_back(&track);
-    }
-    std::sort(tracks.begin(), tracks.end(),
-              [](const auto* left, const auto* right) { return left->z_index < right->z_index; });
-    for (const auto* track : tracks) {
-        const job::FigurePose* current_pose = nullptr;
-        const job::FigurePose* previous_pose = nullptr;
-        for (const auto& pose : track->poses) {
-            if (pose.t_us <= t_us) {
-                previous_pose = current_pose;
-                current_pose = &pose;
-            } else {
+    const job::TextSegment* active_text = nullptr;
+    if (plan.ui_enabled) {
+        for (const auto& segment : plan.texts) {
+            if (t_us >= segment.start_us && (segment.end_us == 0 || t_us <= segment.end_us)) {
+                active_text = &segment;
                 break;
             }
         }
+    }
+
+    for (const auto* track : sorted_tracks_) {
+        const auto pose_end = std::upper_bound(
+            track->poses.begin(), track->poses.end(), t_us,
+            [](std::uint64_t value, const job::FigurePose& pose) { return value < pose.t_us; });
+        const job::FigurePose* current_pose =
+            pose_end == track->poses.begin() ? nullptr : &*(pose_end - 1);
+        const job::FigurePose* previous_pose =
+            std::distance(track->poses.begin(), pose_end) < 2 ? nullptr : &*(pose_end - 2);
         for (const auto& layer : figure_layers(*track, t_us)) {
             if (layer.live2d) {
-                if (!build_live2d_mesh(plan, layer, track->id, current_pose, previous_pose, t_us,
-                                       mesh_vertices, mesh_indices, mesh_draws, error)) {
+                if (!build_live2d_mesh(plan, layer, track->id, current_pose, previous_pose,
+                                       active_text, t_us, mesh_vertices, mesh_indices, mesh_draws,
+                                       error)) {
                     return false;
                 }
                 continue;
@@ -3164,14 +3144,6 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         items.push_back(item);
     };
 
-    const job::TextSegment* active_text = nullptr;
-    if (plan.ui_enabled)
-        for (const auto& segment : plan.texts) {
-            if (t_us >= segment.start_us && (segment.end_us == 0 || t_us <= segment.end_us)) {
-                active_text = &segment;
-                break;
-            }
-        }
     if (active_text != nullptr) {
         // 布局全部按 2560×1440 舞台里的 CSS px 计算, 再乘 `scale` 落到导出画面。
         const float k = ui_style_.scale;
@@ -3344,6 +3316,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         bool layer_effects = false;
     };
     std::vector<MeshGroup> mesh_groups;
+    mesh_groups.reserve(mesh_draws.size());
     for (std::size_t index = 0; index < mesh_draws.size(); ++index) {
         const auto& draw = mesh_draws[index];
         if (mesh_groups.empty() || mesh_groups.back().key != draw.layer_key) {
@@ -3387,7 +3360,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         items.push_back(quad);
     }
 
-    // 整舞台 alpha: 在场景之后、UI 之前盖一层黑场; 文本/选项不受影响。
+    // 整舞台 alpha：在场景之后、UI 之前盖一层黑场，文本/选项不受影响。
     const std::size_t stage_overlay_index = items.size();
     DrawItem stage_overlay;
     stage_overlay.descriptor = solid_.descriptor;
@@ -3810,10 +3783,9 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     if (!ok(vkMapMemory(device_, readback_memory_, 0, bytes, 0, &mapped), "映射回读缓冲", error)) {
         return false;
     }
-    std::vector<std::uint8_t> rendered(static_cast<std::size_t>(bytes));
-    std::memcpy(rendered.data(), mapped, rendered.size());
+    pixels.resize(static_cast<std::size_t>(bytes));
+    std::memcpy(pixels.data(), mapped, pixels.size());
     vkUnmapMemory(device_, readback_memory_);
-    pixels = std::move(rendered);
     return true;
 }
 
@@ -3973,10 +3945,32 @@ void Renderer::destroy() {
 
 } // namespace
 
+namespace {
+
+/// 按有理数帧率计算 `[start_us, end_us)` 的帧数；末端不额外补一帧。
+std::uint64_t frame_count_for(std::uint64_t start_us, std::uint64_t end_us, std::uint32_t fps_num,
+                              std::uint32_t fps_den) {
+    if (end_us <= start_us || fps_num == 0 || fps_den == 0) {
+        return 0;
+    }
+    const std::uint64_t numerator = (end_us - start_us) * fps_num;
+    const std::uint64_t denominator = 1'000'000ULL * fps_den;
+    return (numerator + denominator - 1) / denominator;
+}
+
+/// 第 `index` 帧的时间戳；整数运算，避免浮点漂移。
+std::uint64_t frame_time(std::uint64_t start_us, std::uint64_t index, std::uint32_t fps_num,
+                         std::uint32_t fps_den) {
+    return start_us + (index * 1'000'000ULL * fps_den) / fps_num;
+}
+
+} // namespace
+
 bool render_frames(const job::Plan& plan, std::uint64_t start_us, std::uint64_t end_us,
-                   std::uint32_t fps, const std::filesystem::path& output_dir,
-                   const run::Context& context, std::string& error) {
-    if (fps == 0) {
+                   std::uint32_t fps_num, std::uint32_t fps_den,
+                   const std::filesystem::path& output_dir, const run::Context& context,
+                   std::string& error) {
+    if (fps_num == 0 || fps_den == 0) {
         error = "fps 必须大于 0";
         return false;
     }
@@ -4000,13 +3994,10 @@ bool render_frames(const job::Plan& plan, std::uint64_t start_us, std::uint64_t 
         return false;
     }
 
-    const std::uint64_t step_us = 1'000'000 / fps;
-    const std::uint64_t frame_count = (end_us - start_us) / step_us + 1;
+    const double fps = static_cast<double>(fps_num) / static_cast<double>(fps_den);
+    const std::uint64_t frame_count = frame_count_for(start_us, end_us, fps_num, fps_den);
     for (std::uint64_t index = 0; index < frame_count; ++index) {
-        const std::uint64_t t_us = start_us + index * step_us;
-        if (t_us > end_us) {
-            break;
-        }
+        const std::uint64_t t_us = frame_time(start_us, index, fps_num, fps_den);
         if (context.cancel_requested()) {
             error = "已取消";
             return false;
@@ -4024,9 +4015,9 @@ bool render_frames(const job::Plan& plan, std::uint64_t start_us, std::uint64_t 
 }
 
 bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_t end_us,
-                     std::uint32_t fps, const run::Context& context, const FrameCallback& on_frame,
-                     std::string& error) {
-    if (fps == 0 || end_us < start_us) {
+                     std::uint32_t fps_num, std::uint32_t fps_den, const run::Context& context,
+                     const FrameCallback& on_frame, std::string& error) {
+    if (fps_num == 0 || fps_den == 0 || end_us < start_us) {
         error = "帧序列参数无效";
         return false;
     }
@@ -4039,16 +4030,14 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
         return false;
     }
 
-    const std::uint64_t step_us = 1'000'000 / fps;
-    const std::uint64_t frame_count = (end_us - start_us) / step_us + 1;
+    const double fps = static_cast<double>(fps_num) / static_cast<double>(fps_den);
+    const std::uint64_t frame_count = frame_count_for(start_us, end_us, fps_num, fps_den);
     // 约每秒一帧预览: 再密只会拖慢导出, 也没人看得清。
-    const std::uint64_t preview_stride = std::max<std::uint64_t>(1, fps);
+    const std::uint64_t preview_stride =
+        std::max<std::uint64_t>(1, static_cast<std::uint64_t>(fps));
     std::vector<std::uint8_t> pixels;
     for (std::uint64_t index = 0; index < frame_count; ++index) {
-        const std::uint64_t t_us = start_us + index * step_us;
-        if (t_us > end_us) {
-            break;
-        }
+        const std::uint64_t t_us = frame_time(start_us, index, fps_num, fps_den);
         if (context.cancel_requested()) {
             error = "已取消";
             return false;

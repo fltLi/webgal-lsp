@@ -17,9 +17,9 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-pub mod plan;
-
 pub use plan::from_plan;
+
+pub mod plan;
 
 /// C ABI 的 opaque 计划指针。
 #[repr(C)]
@@ -258,11 +258,6 @@ pub struct Callbacks<'a> {
     pub encoder: Option<&'a dyn Fn(&str)>,
     /// 置位后渲染器会在下一个检查点返回 [`Status::Cancelled`]。
     pub cancel: Option<&'a AtomicBool>,
-}
-
-/// 本 crate 在当前目标平台是否可用。
-pub fn is_supported() -> bool {
-    cfg!(windows)
 }
 
 #[repr(C)]
@@ -772,9 +767,13 @@ pub fn render(
     if status == Status::Ok {
         return Ok(());
     }
-    let message = unsafe { CStr::from_ptr(error_buffer.as_ptr()) }
-        .to_string_lossy()
-        .into_owned();
+    // 渲染器保证写入 '\0'；仍然按缓冲区长度读取，避免异常路径下越界。
+    let bytes = unsafe {
+        std::slice::from_raw_parts(error_buffer.as_ptr().cast::<u8>(), error_buffer.len())
+    };
+    let message = CStr::from_bytes_until_nul(bytes)
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
     Err(Error::new(
         status,
         if message.is_empty() {

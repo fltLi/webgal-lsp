@@ -20,7 +20,8 @@ class MfEncoder {
     MfEncoder& operator=(const MfEncoder&) = delete;
 
     bool init(const std::filesystem::path& output, std::uint32_t width, std::uint32_t height,
-              std::uint32_t fps, std::uint32_t bitrate_kbps, bool has_audio, std::string& error);
+              std::uint32_t fps_num, std::uint32_t fps_den, std::uint32_t bitrate_kbps,
+              bool has_audio, std::string& error);
 
     bool write_video(std::uint64_t frame_index, const std::vector<std::uint8_t>& bgra,
                      std::string& error);

@@ -26,11 +26,9 @@ pub const DEFAULT_STAGE_SIZE: (u32, u32) = (2560, 1440);
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameConfig {
-    /// 游戏标题.
+    /// 游戏标题。
     pub title: Option<String>,
-    /// 游戏 key.
-    pub key: Option<String>,
-    /// 全部配置项, 同名键后者覆盖前者.
+    /// 全部配置项，同名键后者覆盖前者。
     pub values: BTreeMap<String, String>,
 }
 
@@ -42,7 +40,6 @@ impl GameConfig {
         }
         Self {
             title: values.get("Game_name").cloned(),
-            key: values.get("Game_key").cloned(),
             values,
         }
     }
@@ -137,19 +134,19 @@ impl Project {
         }
 
         let mut scenes = BTreeMap::new();
-        for entry in WalkDir::new(&scene_dir)
-            .max_depth(1)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| entry.file_type().is_file())
-            .filter(|entry| {
-                entry
+        for entry in WalkDir::new(&scene_dir).max_depth(1).follow_links(false) {
+            let entry = entry.map_err(|error| Error::Io {
+                path: scene_dir.clone(),
+                source: std::io::Error::other(error),
+            })?;
+            if !entry.file_type().is_file()
+                || !entry
                     .path()
                     .extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
-            })
-        {
+            {
+                continue;
+            }
             let path = entry.into_path();
             let name = path
                 .strip_prefix(&scene_dir)

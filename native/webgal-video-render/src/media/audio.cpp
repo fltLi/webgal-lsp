@@ -5,11 +5,13 @@
 #include "common/path.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <string_view>
 
 #define DR_WAV_IMPLEMENTATION
@@ -26,6 +28,8 @@ namespace {
 
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint32_t kChannels = 2;
+constexpr std::uint32_t kMixChunkFrames = 48000;
+constexpr std::uint64_t kWavDataLimit = std::numeric_limits<std::uint32_t>::max();
 
 std::string extension_of(const std::filesystem::path& path) {
     auto extension = path.extension().string();
@@ -34,14 +38,22 @@ std::string extension_of(const std::filesystem::path& path) {
     return extension;
 }
 
-AudioClip resample_to_48k(const AudioClip& source) {
-    AudioClip result;
+bool resample_to_48k(const AudioClip& source, AudioClip& result, std::string& error) {
+    result = {};
     result.sample_rate = kSampleRate;
     result.channels = kChannels;
     if (source.frames == 0 || source.channels == 0 || source.sample_rate == 0) {
-        return result;
+        return true;
+    }
+    if (source.frames > std::numeric_limits<std::uint64_t>::max() / kSampleRate) {
+        error = "音频过长，无法重采样";
+        return false;
     }
     result.frames = source.frames * kSampleRate / source.sample_rate;
+    if (result.frames > std::numeric_limits<std::size_t>::max() / kChannels) {
+        error = "音频过长，无法分配重采样缓冲";
+        return false;
+    }
     result.samples.resize(static_cast<std::size_t>(result.frames) * kChannels);
 
     for (std::uint64_t frame = 0; frame < result.frames; ++frame) {
@@ -59,35 +71,28 @@ AudioClip resample_to_48k(const AudioClip& source) {
                 first + (second - first) * fraction;
         }
     }
-    return result;
+    return true;
 }
 
 void write_le16(std::ofstream& output, std::uint16_t value) {
-    const char bytes[2] = {
-        static_cast<char>(value & 0xFF),
-        static_cast<char>((value >> 8) & 0xFF),
+    const std::array<char, 2> bytes{
+        static_cast<char>(value & 0xFFU),
+        static_cast<char>((value >> 8U) & 0xFFU),
     };
-    output.write(bytes, 2);
+    output.write(bytes.data(), bytes.size());
 }
 
 void write_le32(std::ofstream& output, std::uint32_t value) {
-    const char bytes[4] = {
-        static_cast<char>(value & 0xFF),
-        static_cast<char>((value >> 8) & 0xFF),
-        static_cast<char>((value >> 16) & 0xFF),
-        static_cast<char>((value >> 24) & 0xFF),
+    const std::array<char, 4> bytes{
+        static_cast<char>(value & 0xFFU),
+        static_cast<char>((value >> 8U) & 0xFFU),
+        static_cast<char>((value >> 16U) & 0xFFU),
+        static_cast<char>((value >> 24U) & 0xFFU),
     };
-    output.write(bytes, 4);
+    output.write(bytes.data(), bytes.size());
 }
 
-bool write_wav(const std::filesystem::path& path, const std::vector<float>& samples,
-               std::uint64_t frames, std::string& error) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) {
-        error = "无法写入音频: " + to_utf8(path);
-        return false;
-    }
-    const std::uint32_t data_bytes = static_cast<std::uint32_t>(frames * kChannels * 2);
+void write_wav_header(std::ofstream& output, std::uint32_t data_bytes) {
     output.write("RIFF", 4);
     write_le32(output, 36 + data_bytes);
     output.write("WAVE", 4);
@@ -101,17 +106,20 @@ bool write_wav(const std::filesystem::path& path, const std::vector<float>& samp
     write_le16(output, 16);
     output.write("data", 4);
     write_le32(output, data_bytes);
-    for (std::size_t index = 0; index < samples.size(); ++index) {
-        const float value = std::clamp(samples[index], -1.0F, 1.0F);
-        const auto encoded = static_cast<std::int16_t>(std::lround(value * 32767.0F));
-        write_le16(output, static_cast<std::uint16_t>(encoded));
+}
+
+std::filesystem::path resolve_event_path(const job::Plan& plan, const std::string& path) {
+    std::filesystem::path result = from_utf8(path);
+    if (result.is_relative()) {
+        result = from_utf8(plan.project_root) / "game" / result;
     }
-    return true;
+    return result;
 }
 
 } // namespace
 
 bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string& error) {
+    clip = {};
     const auto extension = extension_of(path);
     if (extension == ".wav") {
         drwav wav{};
@@ -122,10 +130,17 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         clip.sample_rate = wav.sampleRate;
         clip.channels = wav.channels;
         clip.frames = wav.totalPCMFrameCount;
+        if (clip.frames == 0 || clip.channels == 0 ||
+            clip.frames > std::numeric_limits<std::size_t>::max() / clip.channels) {
+            drwav_uninit(&wav);
+            error = "WAV 帧数无效: " + to_utf8(path);
+            return false;
+        }
         clip.samples.resize(static_cast<std::size_t>(clip.frames) * clip.channels);
         const auto read = drwav_read_pcm_frames_f32(&wav, clip.frames, clip.samples.data());
         drwav_uninit(&wav);
         clip.frames = read;
+        clip.samples.resize(static_cast<std::size_t>(read) * clip.channels);
         return true;
     }
     if (extension == ".mp3") {
@@ -137,10 +152,17 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         clip.sample_rate = mp3.sampleRate;
         clip.channels = mp3.channels;
         clip.frames = drmp3_get_pcm_frame_count(&mp3);
+        if (clip.frames == 0 || clip.channels == 0 ||
+            clip.frames > std::numeric_limits<std::size_t>::max() / clip.channels) {
+            drmp3_uninit(&mp3);
+            error = "MP3 帧数无效: " + to_utf8(path);
+            return false;
+        }
         clip.samples.resize(static_cast<std::size_t>(clip.frames) * clip.channels);
         const auto read = drmp3_read_pcm_frames_f32(&mp3, clip.frames, clip.samples.data());
         drmp3_uninit(&mp3);
         clip.frames = read;
+        clip.samples.resize(static_cast<std::size_t>(read) * clip.channels);
         return true;
     }
     if (extension == ".flac") {
@@ -152,22 +174,29 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         clip.sample_rate = flac->sampleRate;
         clip.channels = flac->channels;
         clip.frames = flac->totalPCMFrameCount;
+        if (clip.frames == 0 || clip.channels == 0 ||
+            clip.frames > std::numeric_limits<std::size_t>::max() / clip.channels) {
+            drflac_close(flac);
+            error = "FLAC 帧数无效: " + to_utf8(path);
+            return false;
+        }
         clip.samples.resize(static_cast<std::size_t>(clip.frames) * clip.channels);
         const auto read = drflac_read_pcm_frames_f32(flac, clip.frames, clip.samples.data());
         drflac_close(flac);
         clip.frames = read;
+        clip.samples.resize(static_cast<std::size_t>(read) * clip.channels);
         return true;
     }
     if (extension == ".ogg") {
-        // stb_vorbis 没有宽字符入口; 先按 path 读进内存, 避免中文目录被按代码页解释.
+        // stb_vorbis 没有宽字符入口；先整文件读进内存，避免按系统代码页解释路径。
         std::ifstream input(path, std::ios::binary | std::ios::ate);
         if (!input) {
             error = "无法读取 OGG: " + to_utf8(path);
             return false;
         }
         const auto size = input.tellg();
-        if (size <= 0) {
-            error = "OGG 为空: " + to_utf8(path);
+        if (size <= 0 || static_cast<std::uint64_t>(size) > std::numeric_limits<int>::max()) {
+            error = "OGG 文件大小无效: " + to_utf8(path);
             return false;
         }
         std::vector<unsigned char> data(static_cast<std::size_t>(size));
@@ -188,9 +217,16 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         clip.sample_rate = info.sample_rate;
         clip.channels = info.channels;
         clip.frames = stb_vorbis_stream_length_in_samples(vorbis);
+        if (clip.frames == 0 || clip.channels == 0 ||
+            clip.frames >
+                static_cast<std::uint64_t>(std::numeric_limits<int>::max()) / clip.channels) {
+            stb_vorbis_close(vorbis);
+            error = "OGG 帧数无效: " + to_utf8(path);
+            return false;
+        }
         std::vector<short> pcm(static_cast<std::size_t>(clip.frames) * clip.channels);
-        const int read = stb_vorbis_get_samples_short_interleaved(vorbis, clip.channels, pcm.data(),
-                                                                  static_cast<int>(pcm.size()));
+        const int read = stb_vorbis_get_samples_short_interleaved(
+            vorbis, static_cast<int>(clip.channels), pcm.data(), static_cast<int>(pcm.size()));
         stb_vorbis_close(vorbis);
         clip.frames = static_cast<std::uint64_t>(read);
         clip.samples.resize(static_cast<std::size_t>(clip.frames) * clip.channels);
@@ -203,89 +239,167 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
     return false;
 }
 
-bool mix_audio(const job::Plan& plan, std::vector<float>& mix, std::uint64_t& output_frames,
-               const run::Context& context, std::string& error) {
-    output_frames = plan.duration_us * kSampleRate / 1'000'000ULL;
-    mix.assign(static_cast<std::size_t>(output_frames) * kChannels, 0.0F);
-    if (output_frames == 0) {
+AudioMixer::AudioMixer(const job::Plan& plan, const run::Context& context)
+    : plan_(plan), context_(context) {}
+
+bool AudioMixer::prepare(std::string& error) {
+    total_frames_ = plan_.duration_us * kSampleRate / 1'000'000ULL;
+    if (total_frames_ == 0) {
         error = "音频时长为 0";
         return false;
     }
 
-    if (plan.audio.empty()) {
-        return true;
-    }
-    std::uint64_t processed = 0;
-    const auto total = static_cast<std::uint64_t>(plan.audio.size());
-    for (const auto& event : plan.audio) {
-        if (context.cancel_requested()) {
+    events_.clear();
+    events_.reserve(plan_.audio.size());
+    for (std::size_t index = 0; index < plan_.audio.size(); ++index) {
+        if (context_.cancel_requested()) {
             error = "已取消";
             return false;
         }
-        context.report("audio", processed, total, 0.0);
-        ++processed;
+        context_.report("audio", index, plan_.audio.size(), 0.0);
+        const auto& event = plan_.audio[index];
         if (event.path.empty()) {
             continue;
         }
-        std::filesystem::path path = from_utf8(event.path);
-        if (path.is_relative()) {
-            path = from_utf8(plan.project_root) / "game" / path;
+        const auto path = resolve_event_path(plan_, event.path);
+        const std::string key = to_utf8(path);
+        std::size_t clip_index = 0;
+        const auto found = clip_index_.find(key);
+        if (found == clip_index_.end()) {
+            AudioClip decoded;
+            if (!load_audio(path, decoded, error)) {
+                return false;
+            }
+            AudioClip resampled;
+            if (!resample_to_48k(decoded, resampled, error)) {
+                return false;
+            }
+            clip_index = clips_.size();
+            clips_.push_back(std::move(resampled));
+            clip_index_.emplace(key, clip_index);
+        } else {
+            clip_index = found->second;
         }
-        AudioClip clip;
-        if (!load_audio(path, clip, error)) {
-            return false;
-        }
-        clip = resample_to_48k(clip);
+        const AudioClip& clip = clips_[clip_index];
         if (clip.frames == 0) {
             continue;
         }
 
-        const std::uint64_t start = event.start_us * kSampleRate / 1'000'000ULL;
-        std::uint64_t end = event.end_us ? *event.end_us * kSampleRate / 1'000'000ULL
-                                         : (event.loop ? output_frames : start + clip.frames);
-        end = std::min(end, output_frames);
-        if (start >= end) {
+        Event mixed;
+        mixed.clip = clip_index;
+        mixed.start = event.start_us * kSampleRate / 1'000'000ULL;
+        mixed.end = event.end_us ? *event.end_us * kSampleRate / 1'000'000ULL
+                                 : (event.loop ? total_frames_ : mixed.start + clip.frames);
+        mixed.end = std::min(mixed.end, total_frames_);
+        if (mixed.start >= mixed.end) {
             continue;
         }
-        const std::uint64_t fade_in =
-            static_cast<std::uint64_t>(event.fade_in_ms) * kSampleRate / 1000ULL;
-        const std::uint64_t fade_out =
-            static_cast<std::uint64_t>(event.fade_out_ms) * kSampleRate / 1000ULL;
+        mixed.volume = std::isfinite(event.volume) ? std::clamp(event.volume, 0.0F, 1.0F) : 1.0F;
+        mixed.fade_in = static_cast<std::uint64_t>(event.fade_in_ms) * kSampleRate / 1000ULL;
+        mixed.fade_out = static_cast<std::uint64_t>(event.fade_out_ms) * kSampleRate / 1000ULL;
+        mixed.loop = event.loop;
+        events_.push_back(mixed);
+    }
+    return true;
+}
 
-        for (std::uint64_t frame = start; frame < end; ++frame) {
-            if ((frame & 0xFFFFULL) == 0 && context.cancel_requested()) {
-                error = "已取消";
-                return false;
-            }
-            const std::uint64_t offset = event.loop ? (frame - start) % clip.frames : frame - start;
+bool AudioMixer::mix(std::uint64_t start_frame, std::uint32_t frame_count,
+                     std::vector<float>& output, std::string& error) const {
+    output.assign(static_cast<std::size_t>(frame_count) * kChannels, 0.0F);
+    const std::uint64_t end_frame = start_frame + frame_count;
+    for (const auto& event : events_) {
+        const std::uint64_t begin = std::max(start_frame, event.start);
+        const std::uint64_t end = std::min(end_frame, event.end);
+        if (begin >= end) {
+            continue;
+        }
+        const AudioClip& clip = clips_[event.clip];
+        for (std::uint64_t frame = begin; frame < end; ++frame) {
+            const std::uint64_t offset =
+                event.loop ? (frame - event.start) % clip.frames : frame - event.start;
             if (offset >= clip.frames) {
                 break;
             }
-            float gain = std::clamp(event.volume, 0.0F, 1.0F);
-            if (fade_in > 0 && frame - start < fade_in) {
-                gain *= static_cast<float>(frame - start) / static_cast<float>(fade_in);
+            float gain = event.volume;
+            if (event.fade_in > 0 && frame - event.start < event.fade_in) {
+                gain *= static_cast<float>(frame - event.start) / static_cast<float>(event.fade_in);
             }
-            if (fade_out > 0 && end - frame < fade_out) {
-                gain *= static_cast<float>(end - frame) / static_cast<float>(fade_out);
+            if (event.fade_out > 0 && event.end - frame < event.fade_out) {
+                gain *= static_cast<float>(event.end - frame) / static_cast<float>(event.fade_out);
             }
+            float* destination =
+                output.data() + static_cast<std::size_t>(frame - start_frame) * kChannels;
             for (std::uint32_t channel = 0; channel < kChannels; ++channel) {
-                mix[static_cast<std::size_t>(frame) * kChannels + channel] +=
-                    clip.samples[static_cast<std::size_t>(offset) * kChannels + channel] * gain;
+                const auto source_channel = std::min(channel, clip.channels - 1);
+                destination[channel] +=
+                    clip.samples[static_cast<std::size_t>(offset) * clip.channels +
+                                 source_channel] *
+                    gain;
             }
         }
+    }
+    if (context_.cancel_requested()) {
+        error = "已取消";
+        return false;
     }
     return true;
 }
 
 bool render_audio(const job::Plan& plan, const std::filesystem::path& output,
                   const run::Context& context, std::string& error) {
-    std::vector<float> samples;
-    std::uint64_t frames = 0;
-    if (!mix_audio(plan, samples, frames, context, error)) {
+    AudioMixer mixer(plan, context);
+    if (!mixer.prepare(error)) {
         return false;
     }
-    context.report("audio", 1, 1, 0.0);
-    return write_wav(output, samples, frames, error);
+    const std::uint64_t data_bytes = mixer.frames() * kChannels * 2;
+    if (data_bytes > kWavDataLimit) {
+        error = "WAV 超过 4 GiB，请改用 MP4 或缩短导出时长";
+        return false;
+    }
+
+    std::ofstream stream(output, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        error = "无法写入音频: " + to_utf8(output);
+        return false;
+    }
+    write_wav_header(stream, 0);
+
+    std::vector<float> mixed;
+    std::vector<std::int16_t> pcm;
+    std::uint64_t written = 0;
+    const std::uint64_t chunks = (mixer.frames() + kMixChunkFrames - 1) / kMixChunkFrames;
+    for (std::uint64_t start = 0, chunk = 0; start < mixer.frames();
+         start += kMixChunkFrames, ++chunk) {
+        const auto frames = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(kMixChunkFrames, mixer.frames() - start));
+        if (!mixer.mix(start, frames, mixed, error)) {
+            return false;
+        }
+        pcm.resize(mixed.size());
+        for (std::size_t index = 0; index < mixed.size(); ++index) {
+            pcm[index] = static_cast<std::int16_t>(
+                std::lround(std::clamp(mixed[index], -1.0F, 1.0F) * 32767.0F));
+        }
+        const auto bytes = static_cast<std::streamsize>(pcm.size() * sizeof(std::int16_t));
+        stream.write(reinterpret_cast<const char*>(pcm.data()), bytes);
+        if (!stream) {
+            error = "写入音频失败: " + to_utf8(output);
+            return false;
+        }
+        written += frames;
+        context.report("audio", chunk + 1, chunks, 0.0);
+    }
+
+    stream.seekp(4);
+    write_le32(stream, 36 + static_cast<std::uint32_t>(written * kChannels * 2));
+    stream.seekp(40);
+    write_le32(stream, static_cast<std::uint32_t>(written * kChannels * 2));
+    stream.seekp(0, std::ios::end);
+    if (!stream) {
+        error = "写入 WAV 头失败: " + to_utf8(output);
+        return false;
+    }
+    return true;
 }
 
 } // namespace webgal::media

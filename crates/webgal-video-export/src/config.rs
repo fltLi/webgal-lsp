@@ -2,99 +2,71 @@
 
 //! 导出配置。
 //!
-//! 这里的字段是 `docs/video-export-plan.md` 第 5 节的 Rust 侧模型; CLI 与配置文件共用,
-//! 配置文件中的未知字段暂不拒绝, 便于后续增加选项时保持兼容。
-
-use std::path::{Path, PathBuf};
+//! 这里只保留编译计划真正消费的字段。编码器、输出路径、日志等运行期参数属于
+//! `webgal-video-render-sys::RenderOptions`，不进入计划。
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
-
-/// 首版默认视频宽度。
+/// 默认视频宽度。
 pub const DEFAULT_WIDTH: u32 = 1920;
-/// 首版默认视频高度。
+/// 默认视频高度。
 pub const DEFAULT_HEIGHT: u32 = 1080;
-/// 首版默认帧率。
+/// 默认帧率。
 pub const DEFAULT_FPS: u32 = 30;
-/// 默认视频码率 (kbps)。
-pub const DEFAULT_BITRATE_KBPS: u32 = 8000;
-/// 默认音频采样率。
-pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
-/// 默认音频码率 (kbps)。
-pub const DEFAULT_AUDIO_BITRATE_KBPS: u32 = 192;
 
 /// 完整导出配置。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone)]
 pub struct ExportConfig {
-    /// 输出文件. CLI 的 `-o` 会覆盖它.
-    pub output: PathBuf,
-    /// 视频参数.
+    /// 视频与画幅参数。
     pub video: VideoConfig,
-    /// 音频参数.
-    pub audio: AudioConfig,
-    /// 时间参数.
+    /// 文本与演出时序。
     pub timing: TimingConfig,
-    /// 分支选择策略.
+    /// 分支选择策略。
     pub choices: ChoiceConfig,
-    /// 各图层的开关.
+    /// 各图层的开关。
     pub layers: LayerConfig,
-    /// Live2D 参数.
-    pub live2d: Live2dConfig,
-    /// UI 字号缩放（1.0 为模板原尺寸）。
+    /// 是否输出音频轨。
+    pub include_audio: bool,
+    /// 文本框字号缩放（1.0 为模板原尺寸）。
     pub font_scale: f32,
     /// 播放速度（1.0 为原速）。
     pub playback_speed: f32,
     /// `changeFigure` 的立绘身份判定口径。
     pub figure_side: FigureSideMode,
-    /// 关闭舞台滤镜。
+    /// 关闭舞台滤镜（倒角/泛光）。
     pub disable_filters: bool,
-    /// 只导出 WAV 音频.
-    pub audio_only: bool,
-    /// 调试参数.
-    pub debug: DebugConfig,
 }
 
-impl ExportConfig {
-    /// 从 JSON 文件读取配置.
-    pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        serde_json::from_str(&text)
-            .map_err(|error| Error::Config(format!("{}: {error}", path.display())))
+impl Default for ExportConfig {
+    fn default() -> Self {
+        Self {
+            video: VideoConfig::default(),
+            timing: TimingConfig::default(),
+            choices: ChoiceConfig::default(),
+            layers: LayerConfig::default(),
+            include_audio: true,
+            font_scale: 1.0,
+            playback_speed: 1.0,
+            figure_side: FigureSideMode::default(),
+            disable_filters: false,
+        }
     }
 }
 
-/// 视频编码参数。
+/// 视频与画幅参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VideoConfig {
-    /// 输出宽度 (像素); `auto_width` 为真时忽略并改由舞台宽高比推导.
+    /// 输出宽度（像素）；`auto_width` 为真时由舞台宽高比推导。
     pub width: u32,
-    /// 输出高度 (像素).
+    /// 输出高度（像素）。
     pub height: u32,
-    /// 宽度跟随 `game/config.txt` 的 `Stage_Width/Stage_Height`.
+    /// 宽度跟随 `game/config.txt` 的 `Stage_Width/Stage_Height`。
     ///
-    /// 界面只让用户选 720p/1080p/1440p/2160p, 画幅 (宽高比) 必须与舞台一致,
-    /// 否则 2560×1440 的构图会被拉伸。
+    /// 界面只让用户选高度；画幅必须与舞台一致，否则 2560×1440 的构图会被拉伸。
     pub auto_width: bool,
-    /// 帧率.
+    /// 输出帧率。
     pub fps: u32,
-    /// 编码格式.
-    pub codec: VideoCodec,
-    /// 编码后端; `auto` 按硬件优先级探测.
-    pub encoder: EncoderBackend,
-    /// 视频码率 (kbps).
-    pub bitrate_kbps: u32,
-    /// 编码预设.
-    pub preset: EncoderPreset,
-    /// 画布适配方式.
-    pub fit: FitMode,
-    /// 画布留白颜色.
-    pub background: String,
 }
 
 impl Default for VideoConfig {
@@ -104,73 +76,24 @@ impl Default for VideoConfig {
             height: DEFAULT_HEIGHT,
             auto_width: false,
             fps: DEFAULT_FPS,
-            codec: VideoCodec::H264,
-            encoder: EncoderBackend::Auto,
-            bitrate_kbps: DEFAULT_BITRATE_KBPS,
-            preset: EncoderPreset::Balanced,
-            fit: FitMode::Contain,
-            background: "#000000".to_owned(),
         }
     }
 }
 
-/// 视频编码格式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum VideoCodec {
-    /// H.264 / AVC.
-    #[default]
-    H264,
-    /// H.265 / HEVC.
-    H265,
-}
-
-/// 编码后端。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EncoderBackend {
-    /// 自动探测.
-    #[default]
-    Auto,
-    /// AMD AMF.
-    Amf,
-    /// NVIDIA NVENC.
-    Nvenc,
-    /// Intel oneVPL / QSV.
-    Qsv,
-    /// Media Foundation.
-    Mf,
-    /// 外部 ffmpeg CLI.
-    Ffmpeg,
-}
-
-/// 编码速度预设。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EncoderPreset {
-    /// 质量优先.
-    Quality,
-    /// 平衡.
-    #[default]
-    Balanced,
-    /// 速度优先.
-    Speed,
-}
-
 /// `changeFigure` 的立绘身份判定口径。
 ///
-/// WebGAL 4.6.4 把 `-left` / `-right` / 默认 `center` 也纳入"立绘是否变化"的判断:
-/// 同一个自由立绘 `-id` 再声明时若不重复写位置, 会被当作换了一个基准位置的新立绘,
-/// 清掉旧 effect 并从默认变换重新开始。4.6.3 及以前只比较图片地址, 未写位置时沿用旧基准。
+/// WebGAL 4.6.4 把 `-left` / `-right` / 默认 `center` 也纳入“立绘是否变化”的判断：
+/// 同一个自由立绘 `-id` 再声明时若不重复写位置，会被当作换了一个基准位置的新立绘，
+/// 清掉旧 effect 并从默认变换重新开始。4.6.3 及以前只比较图片地址，未写位置时沿用旧基准。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FigureSideMode {
-    /// 按项目 `webgal-engine.json` 的 `webgalVersion` 自动选择; 读不到时按旧版。
+    /// 按项目 `webgal-engine.json` 的 `webgalVersion` 自动选择；读不到时按旧版。
     #[default]
     Auto,
-    /// 4.6.3 及以前: 只有图片/Live2D 模型变化才算换立绘, 位置缺省沿用旧基准。
+    /// 4.6.3 及以前：只有图片/Live2D 模型变化才算换立绘，位置缺省沿用旧基准。
     Legacy,
-    /// 4.6.4 及以后: 位置(含默认 center)参与身份判定。
+    /// 4.6.4 及以后：位置（含默认 center）参与身份判定。
     Modern,
 }
 
@@ -190,7 +113,7 @@ impl FigureSideMode {
     }
 }
 
-/// `4.6.4` 及以上的版本号比较; 只取前三段数字, 后缀忽略。
+/// `4.6.4` 及以上的版本号比较；只取前三段数字，后缀忽略。
 fn at_least_4_6_4(version: &str) -> bool {
     let mut parts = version
         .trim()
@@ -203,61 +126,21 @@ fn at_least_4_6_4(version: &str) -> bool {
     (major, minor, patch) >= (4, 6, 4)
 }
 
-/// 画布适配方式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FitMode {
-    /// 保持比例, 完整显示.
-    #[default]
-    Contain,
-    /// 保持比例, 填满画布.
-    Cover,
-    /// 拉伸.
-    Stretch,
-}
-
-/// 音频参数。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AudioConfig {
-    /// 是否输出音频轨.
-    pub enabled: bool,
-    /// 采样率.
-    pub sample_rate: u32,
-    /// 声道数.
-    pub channels: u16,
-    /// 音频码率 (kbps).
-    pub bitrate_kbps: u32,
-}
-
-impl Default for AudioConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            sample_rate: DEFAULT_SAMPLE_RATE,
-            channels: 2,
-            bitrate_kbps: DEFAULT_AUDIO_BITRATE_KBPS,
-        }
-    }
-}
-
-/// 文本/演出时间参数, 单位毫秒。
+/// 文本/演出时间参数，单位毫秒。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TimingConfig {
-    /// WebGAL 文本速度 (0-100).
+    /// WebGAL 文本速度（0–100）。
     pub text_speed: u8,
-    /// WebGAL 文本动画速度 (0-100).
-    pub text_animation_speed: u8,
-    /// WebGAL 自动播放速度 (0-100).
+    /// WebGAL 自动播放速度（0–100）。
     pub auto_speed: u8,
-    /// 语音结束后的额外停留时间.
+    /// 语音结束后的额外停留时间。
     pub voice_tail_ms: u32,
-    /// 选项展示时间.
+    /// 选项展示时间。
     pub choice_show_ms: u32,
-    /// 按住 intro 时的停留时间.
+    /// `intro -hold` 的停留时间。
     pub intro_hold_ms: u32,
-    /// 结尾额外停留时间.
+    /// 结尾额外停留时间。
     pub end_tail_ms: u32,
 }
 
@@ -265,7 +148,6 @@ impl Default for TimingConfig {
     fn default() -> Self {
         Self {
             text_speed: 24,
-            text_animation_speed: 50,
             auto_speed: 12,
             voice_tail_ms: 200,
             choice_show_ms: 2000,
@@ -279,9 +161,9 @@ impl Default for TimingConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChoiceConfig {
-    /// 非交互时的默认选项: `first` / `last` / `defaultChoice`.
+    /// 非交互时的默认选项：`first` / `last` / `defaultChoice`。
     pub default: ChoiceDefault,
-    /// 按 `scene:line` 覆盖选项下标.
+    /// 按 `scene:line` 覆盖选项下标。
     pub overrides: std::collections::BTreeMap<String, usize>,
 }
 
@@ -289,12 +171,12 @@ pub struct ChoiceConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChoiceDefault {
-    /// 第一个选项.
+    /// 第一个选项。
     #[default]
     First,
-    /// 最后一个选项.
+    /// 最后一个选项。
     Last,
-    /// WebGAL 标记的默认选项.
+    /// WebGAL 标记的默认选项。
     DefaultChoice,
 }
 
@@ -302,14 +184,12 @@ pub enum ChoiceDefault {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayerConfig {
-    /// 背景层.
+    /// 背景层。
     pub background: bool,
-    /// 立绘层.
+    /// 立绘层。
     pub figures: bool,
-    /// 文本/选项层.
+    /// 文本框 / 选项 / Intro。
     pub ui: bool,
-    /// 视频层.
-    pub video: bool,
 }
 
 impl Default for LayerConfig {
@@ -318,41 +198,13 @@ impl Default for LayerConfig {
             background: true,
             figures: true,
             ui: true,
-            video: true,
         }
     }
-}
-
-/// Live2D 参数。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Live2dConfig {
-    /// 是否启用.
-    pub enabled: bool,
-    /// 用户提供的 Core DLL 路径.
-    pub core: Option<PathBuf>,
-}
-
-impl Default for Live2dConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            core: None,
-        }
-    }
-}
-
-/// 调试参数。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DebugConfig {
-    /// 是否把每一帧导出为 PNG.
-    pub dump_frames: bool,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::FigureSideMode;
+    use super::{ExportConfig, FigureSideMode};
 
     #[test]
     fn auto_follows_webgal_4_6_4() {
@@ -372,6 +224,18 @@ mod tests {
             FigureSideMode::Auto.resolve(Some("v4.7.0-beta")),
             FigureSideMode::Modern
         );
+    }
+
+    #[test]
+    fn defaults_are_export_ready() {
+        let config = ExportConfig::default();
+        assert!(config.include_audio);
+        assert!((config.font_scale - 1.0).abs() < f32::EPSILON);
+        assert!((config.playback_speed - 1.0).abs() < f32::EPSILON);
+        assert!(config.layers.background && config.layers.figures && config.layers.ui);
+        assert_eq!(config.video.width, 1920);
+        assert_eq!(config.video.height, 1080);
+        assert_eq!(config.video.fps, 30);
     }
 
     #[test]

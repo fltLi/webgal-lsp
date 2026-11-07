@@ -2,13 +2,10 @@
 
 //! 可导出性检查。
 //!
-//! P1 的目标不是完整语义分析, 而是先把“哪些场景/语句/资源会在渲染阶段出问题”列清楚。
-//! 所有位置都保留 1 起始行号, 方便 CLI 与后续诊断直接复用。
+//! 这里做可导出性检查，而不是完整语义分析：列出会让渲染阶段失败或降级的场景、语句与资源。
+//! 所有位置都保留 1 起始行号，供编辑器与诊断直接复用。
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use expression::Expression;
 use serde::Serialize;
@@ -17,7 +14,12 @@ use webgal_language_core::{
     sentence::{Error as SentenceError, Sentence, SentenceExt},
 };
 
-use crate::{VERSION, project::Project, script::live2d::is_moc3};
+use crate::{
+    VERSION,
+    project::Project,
+    script::live2d::is_moc3,
+    util::{looks_like_audio, path_string},
+};
 
 /// 检查结果。
 #[derive(Debug, Clone, Serialize)]
@@ -161,10 +163,7 @@ pub fn inspect(project: &Project) -> Inspection {
                             &mut issues,
                             Severity::Error,
                             "WG_VARIABLE_TEXT",
-                            format!(
-                                "文本插值需要变量, 首版不支持: {}",
-                                join_variables(&variables)
-                            ),
+                            format!("文本插值需要变量, 暂不支持: {}", join_variables(&variables)),
                             name,
                             line,
                         );
@@ -197,7 +196,7 @@ pub fn inspect(project: &Project) -> Inspection {
                                 Severity::Error,
                                 "WG_FIGURE_KIND",
                                 format!(
-                                    "首版只支持图片/Live2D 立绘, 当前立绘类型为 {kind:?}: {path}"
+                                    "当前只支持图片/Live2D 立绘, 当前立绘类型为 {kind:?}: {path}"
                                 ),
                                 name,
                                 line,
@@ -253,7 +252,7 @@ pub fn inspect(project: &Project) -> Inspection {
                             Severity::Error,
                             "WG_VARIABLE_TEXT",
                             format!(
-                                "intro 文本插值需要变量, 首版不支持: {}",
+                                "intro 文本插值需要变量, 暂不支持: {}",
                                 join_variables(&variables)
                             ),
                             name,
@@ -283,7 +282,7 @@ pub fn inspect(project: &Project) -> Inspection {
                                     Severity::Error,
                                     "WG_VARIABLE_CHOICE",
                                     format!(
-                                        "选项条件依赖变量, 首版不支持: {}",
+                                        "选项条件依赖变量, 暂不支持: {}",
                                         join_variables(&variables)
                                     ),
                                     name,
@@ -301,7 +300,7 @@ pub fn inspect(project: &Project) -> Inspection {
                                 Severity::Error,
                                 "WG_VARIABLE_TEXT",
                                 format!(
-                                    "选项文本插值需要变量, 首版不支持: {}",
+                                    "选项文本插值需要变量, 暂不支持: {}",
                                     join_variables(&variables)
                                 ),
                                 name,
@@ -318,7 +317,7 @@ pub fn inspect(project: &Project) -> Inspection {
                             &mut issues,
                             Severity::Error,
                             "WG_VARIABLE_CALL",
-                            "callScene 传参/返回值依赖变量, 首版不支持".to_owned(),
+                            "callScene 传参/返回值依赖变量, 暂不支持".to_owned(),
                             name,
                             line,
                         );
@@ -337,7 +336,7 @@ pub fn inspect(project: &Project) -> Inspection {
                             Severity::Error,
                             "WG_VARIABLE_RETURN",
                             format!(
-                                "return 表达式依赖变量, 首版不支持: {}",
+                                "return 表达式依赖变量, 暂不支持: {}",
                                 join_variables(&variables)
                             ),
                             name,
@@ -350,7 +349,7 @@ pub fn inspect(project: &Project) -> Inspection {
                         &mut issues,
                         Severity::Error,
                         "WG_VARIABLE_SET",
-                        format!("首版不支持变量: {}", sentence.expression.0),
+                        format!("暂不支持变量: {}", sentence.expression.0),
                         name,
                         line,
                     );
@@ -360,7 +359,7 @@ pub fn inspect(project: &Project) -> Inspection {
                         &mut issues,
                         Severity::Error,
                         "WG_USER_INPUT",
-                        format!("首版不支持 getUserInput: {}", sentence.variable),
+                        format!("暂不支持 getUserInput: {}", sentence.variable),
                         name,
                         line,
                     );
@@ -370,7 +369,7 @@ pub fn inspect(project: &Project) -> Inspection {
                         &mut issues,
                         Severity::Error,
                         "WG_VARIABLE_SHOW",
-                        "首版不支持 showVars".to_owned(),
+                        "暂不支持 showVars".to_owned(),
                         name,
                         line,
                     );
@@ -395,8 +394,8 @@ pub fn inspect(project: &Project) -> Inspection {
     Inspection {
         version: VERSION.to_owned(),
         project: ProjectInfo {
-            root: display_path(project.root()),
-            game: display_path(project.game_dir()),
+            root: path_string(project.root()),
+            game: path_string(project.game_dir()),
             title: project.config().title.clone(),
             template: template.and_then(|template| template.name.clone()),
             template_fonts: template
@@ -420,7 +419,7 @@ fn check_condition(sentence: &Sentence, scene: &str, line: usize, issues: &mut V
             Severity::Error,
             "WG_VARIABLE_WHEN",
             format!(
-                "when 条件依赖变量, 首版不支持: {}",
+                "when 条件依赖变量, 暂不支持: {}",
                 join_variables(&variables)
             ),
             scene,
@@ -461,19 +460,6 @@ fn check_asset(
             line,
         );
     }
-}
-
-/// 是否像音频文件; 用于区分 `-hold` 这类 say 保留参数与真正的语音路径.
-fn looks_like_audio(raw: &str) -> bool {
-    std::path::Path::new(raw)
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "wav" | "mp3" | "ogg" | "flac"
-            )
-        })
 }
 
 fn expression_variables(expression: &Expression) -> Option<BTreeSet<String>> {
@@ -518,11 +504,6 @@ fn is_identifier(value: &str) -> bool {
 
 fn join_variables(variables: &BTreeSet<String>) -> String {
     variables.iter().cloned().collect::<Vec<_>>().join(", ")
-}
-
-fn display_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    text.strip_prefix("//?/").unwrap_or(&text).to_owned()
 }
 
 fn push_issue(

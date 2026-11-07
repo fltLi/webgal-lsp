@@ -8,6 +8,7 @@
 #include "webgal-video-render.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -47,33 +48,47 @@ using Status = int;
     return std::string(value);
 }
 
+[[nodiscard]] float finite_or(float value, float fallback) {
+    return std::isfinite(value) ? value : fallback;
+}
+
+[[nodiscard]] float clamp_finite(float value, float minimum, float maximum, float fallback) {
+    return std::clamp(finite_or(value, fallback), minimum, maximum);
+}
+
 [[nodiscard]] webgal::job::Transform to_transform(const WebgalTransform* value) {
     webgal::job::Transform transform;
     if (value == nullptr) {
         return transform;
     }
-    transform.position = webgal::job::Vec2{.x = value->x, .y = value->y};
-    transform.scale = webgal::job::Vec2{.x = value->scale_x, .y = value->scale_y};
-    transform.rotation = value->rotation;
-    transform.alpha = value->alpha;
-    transform.brightness = value->brightness;
-    transform.contrast = value->contrast;
-    transform.saturation = value->saturation;
-    transform.gamma = value->gamma;
-    transform.color_r = value->color_red;
-    transform.color_g = value->color_green;
-    transform.color_b = value->color_blue;
-    transform.blur = value->blur;
-    transform.bloom = value->bloom;
-    transform.bloom_blur = value->bloom_blur;
-    transform.bloom_threshold = value->bloom_threshold;
-    transform.bloom_brightness = value->bloom_brightness;
-    transform.bevel = value->bevel;
-    transform.bevel_thickness = value->bevel_thickness;
-    transform.bevel_rotation = value->bevel_rotation;
-    transform.bevel_r = value->bevel_red;
-    transform.bevel_g = value->bevel_green;
-    transform.bevel_b = value->bevel_blue;
+    transform.position = webgal::job::Vec2{
+        .x = finite_or(value->x, 0.0F),
+        .y = finite_or(value->y, 0.0F),
+    };
+    transform.scale = webgal::job::Vec2{
+        .x = finite_or(value->scale_x, 1.0F),
+        .y = finite_or(value->scale_y, 1.0F),
+    };
+    transform.rotation = finite_or(value->rotation, 0.0F);
+    transform.alpha = clamp_finite(value->alpha, 0.0F, 1.0F, 1.0F);
+    transform.brightness = clamp_finite(value->brightness, 0.0F, 4.0F, 1.0F);
+    transform.contrast = clamp_finite(value->contrast, 0.0F, 4.0F, 1.0F);
+    transform.saturation = clamp_finite(value->saturation, 0.0F, 4.0F, 1.0F);
+    transform.gamma = clamp_finite(value->gamma, 0.1F, 4.0F, 1.0F);
+    transform.color_r = clamp_finite(value->color_red, 0.0F, 1.0F, 1.0F);
+    transform.color_g = clamp_finite(value->color_green, 0.0F, 1.0F, 1.0F);
+    transform.color_b = clamp_finite(value->color_blue, 0.0F, 1.0F, 1.0F);
+    transform.blur = finite_or(value->blur, 0.0F);
+    transform.bloom = clamp_finite(value->bloom, 0.0F, 1.0F, 0.0F);
+    transform.bloom_blur = std::max(0.0F, finite_or(value->bloom_blur, 0.0F));
+    transform.bloom_threshold = clamp_finite(value->bloom_threshold, 0.0F, 1.0F, 0.0F);
+    transform.bloom_brightness = clamp_finite(value->bloom_brightness, 0.0F, 4.0F, 1.0F);
+    transform.bevel = clamp_finite(value->bevel, 0.0F, 1.0F, 0.0F);
+    transform.bevel_thickness = std::max(0.0F, finite_or(value->bevel_thickness, 0.0F));
+    transform.bevel_rotation = finite_or(value->bevel_rotation, 0.0F);
+    transform.bevel_r = clamp_finite(value->bevel_red, 0.0F, 1.0F, 1.0F);
+    transform.bevel_g = clamp_finite(value->bevel_green, 0.0F, 1.0F, 1.0F);
+    transform.bevel_b = clamp_finite(value->bevel_blue, 0.0F, 1.0F, 1.0F);
     return transform;
 }
 
@@ -144,15 +159,16 @@ using EncoderFn = void (*)(void*, const char*);
                                   const std::filesystem::path& output, int encoder,
                                   const webgal::run::Context& context, std::string& error) {
     if (encoder == WEBGAL_ENCODER_FFMPEG) {
-        context.report_encoder("外部 ffmpeg");
         return webgal::pipeline::export_ffmpeg(plan, output, context, error)
                    ? WEBGAL_STATUS_OK
                    : WEBGAL_STATUS_RENDER_FAILED;
     }
 
     if (webgal::pipeline::export_native(plan, output, context, error)) {
-        context.report_encoder("Media Foundation");
         return WEBGAL_STATUS_OK;
+    }
+    if (context.cancel_requested()) {
+        return WEBGAL_STATUS_CANCELLED;
     }
     if (encoder == WEBGAL_ENCODER_MF) {
         return WEBGAL_STATUS_RENDER_FAILED;
@@ -161,7 +177,6 @@ using EncoderFn = void (*)(void*, const char*);
     webgal::log::warn("原生编码失败, 回退到外部 ffmpeg: " + error);
     const std::string native_error = error;
     if (webgal::pipeline::export_ffmpeg(plan, output, context, error)) {
-        context.report_encoder("外部 ffmpeg");
         return WEBGAL_STATUS_OK;
     }
     error = "原生编码与 ffmpeg 回退都失败; 原生: " + native_error + "; ffmpeg: " + error;
@@ -195,6 +210,8 @@ using EncoderFn = void (*)(void*, const char*);
 
     if (options.audio_only != 0) {
         if (!webgal::media::render_audio(plan.plan, output, context, error)) {
+            std::error_code code;
+            std::filesystem::remove(output, code);
             return context.cancel_requested() ? WEBGAL_STATUS_CANCELLED
                                               : WEBGAL_STATUS_RENDER_FAILED;
         }
@@ -279,7 +296,7 @@ int webgal_plan_set_meta(WebgalPlan* plan, const char* project_root, uint32_t st
         target.fps_den = fps_den;
         target.duration_us = duration_us;
         target.ui_enabled = ui_enabled != 0;
-        target.font_scale = font_scale > 0.0F ? font_scale : 1.0F;
+        target.font_scale = clamp_finite(font_scale, 0.1F, 4.0F, 1.0F);
         target.disable_filters = disable_filters != 0;
         return WEBGAL_STATUS_OK;
     } catch (...) {
@@ -310,7 +327,7 @@ int webgal_plan_add_background(WebgalPlan* plan, uint64_t t_us, const char* asse
         key.t_us = t_us;
         key.asset = optional_string(asset);
         key.transform = to_transform(transform);
-        key.alpha = alpha;
+        key.alpha = clamp_finite(alpha, 0.0F, 1.0F, 1.0F);
         key.enter_ms = enter_ms;
         key.exit_ms = exit_ms;
         key.ease = ease == nullptr ? std::string() : std::string(ease);
@@ -330,7 +347,7 @@ int webgal_plan_add_stage(WebgalPlan* plan, uint64_t t_us, float alpha, uint32_t
     try {
         webgal::job::StageKey key;
         key.t_us = t_us;
-        key.alpha = alpha;
+        key.alpha = clamp_finite(alpha, 0.0F, 1.0F, 1.0F);
         key.enter_ms = enter_ms;
         key.ease = ease == nullptr ? std::string() : std::string(ease);
         plan->plan.stage.push_back(std::move(key));
@@ -375,7 +392,7 @@ int webgal_plan_add_figure_key(WebgalPlan* plan, const char* figure_id, uint64_t
         key.expression = optional_string(expression);
         key.motion = optional_string(motion);
         key.transform = to_transform(transform);
-        key.alpha = alpha;
+        key.alpha = clamp_finite(alpha, 0.0F, 1.0F, 1.0F);
         key.visible = visible != 0;
         key.enter_ms = enter_ms;
         key.exit_ms = exit_ms;
@@ -552,7 +569,7 @@ int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, 
             event.kind = webgal::job::AudioKind::Bgm;
             break;
         }
-        event.volume = volume;
+        event.volume = clamp_finite(volume, 0.0F, 1.0F, 1.0F);
         event.loop = loop != 0;
         event.fade_in_ms = fade_in_ms;
         event.fade_out_ms = fade_out_ms;

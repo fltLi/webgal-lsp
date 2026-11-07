@@ -16,15 +16,15 @@ namespace webgal::stage {
 using FrameCallback = std::function<bool(std::uint64_t, std::uint64_t, std::uint64_t,
                                          const std::vector<std::uint8_t>&, std::string&)>;
 
-/// 渲染 [start_us, end_us] 的帧, 每帧回调 (index, total, t_us, BGRA).
+/// 渲染 [start_us, end_us] 的帧，每帧回调 (index, total, t_us, BGRA)。
 [[nodiscard]] bool render_sequence(const job::Plan& plan, std::uint64_t start_us,
-                                   std::uint64_t end_us, std::uint32_t fps,
-                                   const run::Context& context, const FrameCallback& on_frame,
-                                   std::string& error);
+                                   std::uint64_t end_us, std::uint32_t fps_num,
+                                   std::uint32_t fps_den, const run::Context& context,
+                                   const FrameCallback& on_frame, std::string& error);
 
-/// 渲染 [start_us, end_us] 的帧序列到 `output_dir/frame_XXXXXX.png`.
+/// 渲染 [start_us, end_us] 的帧序列到 `output_dir/frame_XXXXXX.png`。
 [[nodiscard]] bool render_frames(const job::Plan& plan, std::uint64_t start_us,
-                                 std::uint64_t end_us, std::uint32_t fps,
+                                 std::uint64_t end_us, std::uint32_t fps_num, std::uint32_t fps_den,
                                  const std::filesystem::path& output_dir,
                                  const run::Context& context, std::string& error);
 

@@ -15,5 +15,7 @@ pub mod plan;
 pub mod project;
 pub mod script;
 
+mod util;
+
 /// 导出器版本, 与 `Cargo.toml` 保持一致.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -9,11 +9,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <limits>
-#include <sstream>
+#include <numbers>
+#include <utility>
 
 namespace webgal::live2d {
 namespace {
@@ -48,6 +47,95 @@ bool read_file(const std::filesystem::path& path, std::vector<std::uint8_t>& byt
     return true;
 }
 
+bool read_json(const std::filesystem::path& path, nlohmann::json& value, std::string& error) {
+    std::ifstream input(path);
+    if (!input) {
+        error = "无法读取: " + to_utf8(path);
+        return false;
+    }
+    try {
+        input >> value;
+        return true;
+    } catch (const std::exception& exception) {
+        error = "JSON 解析失败 (" + to_utf8(path) + "): " + exception.what();
+        return false;
+    }
+}
+
+std::string lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+/// 求一条 Cubism motion 曲线在 `at` 秒处的值。
+float evaluate_curve(const std::vector<float>& segments, float at) {
+    if (segments.size() < 2) {
+        return 0.0F;
+    }
+    float result = segments[1];
+    float t0 = segments[0];
+    float v0 = segments[1];
+    std::size_t index = 2;
+    while (index < segments.size()) {
+        const int type = static_cast<int>(segments[index++]);
+        float t1 = t0;
+        float v1 = v0;
+        if (type == 0 && index + 1 < segments.size()) {
+            t1 = segments[index];
+            v1 = segments[index + 1];
+            index += 2;
+            if (at <= t1) {
+                const float span = std::max<float>(t1 - t0, 1.0e-6F);
+                return v0 + ((v1 - v0) * ((at - t0) / span));
+            }
+        } else if (type == 1 && index + 5 < segments.size()) {
+            const float c1x = segments[index];
+            const float c1y = segments[index + 1];
+            const float c2x = segments[index + 2];
+            const float c2y = segments[index + 3];
+            t1 = segments[index + 4];
+            v1 = segments[index + 5];
+            index += 6;
+            if (at <= t1) {
+                float low = 0.0F;
+                float high = 1.0F;
+                for (int iteration = 0; iteration < 20; ++iteration) {
+                    const float middle = (low + high) * 0.5F;
+                    const float inverse = 1.0F - middle;
+                    const float x = (inverse * inverse * inverse * t0) +
+                                    (3.0F * inverse * inverse * middle * c1x) +
+                                    (3.0F * inverse * middle * middle * c2x) +
+                                    (middle * middle * middle * t1);
+                    if (x < at) {
+                        low = middle;
+                    } else {
+                        high = middle;
+                    }
+                }
+                const float u = (low + high) * 0.5F;
+                const float inverse = 1.0F - u;
+                return (inverse * inverse * inverse * v0) + (3.0F * inverse * inverse * u * c1y) +
+                       (3.0F * inverse * u * u * c2y) + (u * u * u * v1);
+            }
+        } else if ((type == 2 || type == 3) && index + 1 < segments.size()) {
+            t1 = segments[index];
+            v1 = segments[index + 1];
+            index += 2;
+            if (at < t1) {
+                return v0;
+            }
+        } else {
+            break;
+        }
+        t0 = t1;
+        v0 = v1;
+        result = v1;
+    }
+    return result;
+}
+
 } // namespace
 
 Model::Model() = default;
@@ -68,35 +156,47 @@ void Model::release() {
         moc_memory_ = nullptr;
     }
     drawables_.clear();
+    drawable_lookup_.clear();
     textures_.clear();
-    expressions_.clear();
     motions_.clear();
+    expressions_.clear();
+    parameter_index_.clear();
+    mouth_parameters_.clear();
+    parameter_defaults_ = nullptr;
+    parameter_minimums_ = nullptr;
+    parameter_maximums_ = nullptr;
+    parameter_values_ = nullptr;
+    parameter_count_ = 0;
     idle_motion_.clear();
+    last_motion_duration_ = 0.0F;
+    applying_idle_ = false;
 }
 
 bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::string& error) {
     release();
-    std::ifstream input(model3);
-    if (!input) {
-        error = "无法读取 model3.json: " + to_utf8(model3);
-        return false;
-    }
     nlohmann::json json;
-    try {
-        input >> json;
-    } catch (const std::exception& exception) {
-        error = "model3.json 解析失败: " + std::string(exception.what());
+    if (!read_json(model3, json, error)) {
         return false;
     }
 
-    const auto& references = json.at("FileReferences");
-    const std::string moc_name = references.at("Moc").get<std::string>();
     const auto base = model3.parent_path();
+    std::string moc_name;
+    std::vector<std::string> texture_names;
+    try {
+        const auto& references = json.at("FileReferences");
+        moc_name = references.at("Moc").get<std::string>();
+        for (const auto& texture : references.at("Textures")) {
+            texture_names.push_back(texture.get<std::string>());
+        }
+    } catch (const std::exception& exception) {
+        error = "model3.json 缺少 FileReferences/Moc/Textures: " + std::string(exception.what());
+        return false;
+    }
+
     std::vector<std::uint8_t> moc_bytes;
     if (!read_file(base / moc_name, moc_bytes, error)) {
         return false;
     }
-
     moc_memory_ = aligned_alloc(moc_bytes.size());
     if (moc_memory_ == nullptr) {
         error = "moc3 内存分配失败";
@@ -128,68 +228,171 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
     api.update_model(model_);
     api.read_canvas_info(model_, &canvas_size_, &canvas_origin_, &pixels_per_unit_);
 
-    const auto& texture_array = references.at("Textures");
-    for (const auto& texture : texture_array) {
-        textures_.push_back(base / from_utf8(texture.get<std::string>()));
+    parameter_count_ = api.parameter_count(model_);
+    if (parameter_count_ <= 0 || api.parameter_ids == nullptr || api.parameter_values == nullptr ||
+        api.parameter_defaults == nullptr) {
+        error = "Core 缺少参数 API";
+        return false;
     }
-    if (references.contains("Motions") && references.at("Motions").is_object()) {
-        for (const auto& [name, entries] : references.at("Motions").items()) {
-            if (entries.is_array() && !entries.empty()) {
-                const std::string file = entries.at(0).value("File", std::string{});
-                if (!file.empty()) {
-                    motions_[name] = base / from_utf8(file);
-                }
-            }
+    parameter_values_ = api.parameter_values(model_);
+    parameter_defaults_ = api.parameter_defaults(model_);
+    parameter_minimums_ =
+        api.parameter_minimum_values != nullptr ? api.parameter_minimum_values(model_) : nullptr;
+    parameter_maximums_ =
+        api.parameter_maximum_values != nullptr ? api.parameter_maximum_values(model_) : nullptr;
+    const char** parameter_ids = api.parameter_ids(model_);
+    for (int index = 0; index < parameter_count_; ++index) {
+        const std::string id = parameter_ids[index] != nullptr ? parameter_ids[index] : "";
+        parameter_index_.emplace(id, index);
+        if (id.starts_with("ParamMouth")) {
+            mouth_parameters_.push_back(index);
         }
     }
+
+    for (const auto& texture : texture_names) {
+        textures_.push_back(base / from_utf8(texture));
+    }
+
+    try {
+        const auto& references = json.at("FileReferences");
+        if (references.contains("Motions") && references.at("Motions").is_object()) {
+            for (const auto& [name, entries] : references.at("Motions").items()) {
+                if (!entries.is_array() || entries.empty()) {
+                    continue;
+                }
+                const std::string file = entries.at(0).value("File", std::string{});
+                if (file.empty()) {
+                    continue;
+                }
+                Motion motion;
+                if (!load_motion(base / from_utf8(file), motion, error)) {
+                    return false;
+                }
+                motions_.emplace(name, std::move(motion));
+            }
+        }
+        if (references.contains("Expressions") && references.at("Expressions").is_array()) {
+            for (const auto& expression : references.at("Expressions")) {
+                const std::string name = expression.value("Name", std::string{});
+                const std::string file = expression.value("File", std::string{});
+                if (name.empty() || file.empty()) {
+                    continue;
+                }
+                Expression parsed;
+                if (!load_expression(base / from_utf8(file), parsed, error)) {
+                    return false;
+                }
+                expressions_.emplace(name, std::move(parsed));
+            }
+        }
+    } catch (const std::exception& exception) {
+        error = "model3.json 的 Motion/Expression 清单无效: " + std::string(exception.what());
+        return false;
+    }
+
     const std::string outfit = to_utf8(model3.parent_path().filename());
     const std::string character = [&] {
         const auto parent = model3.parent_path().parent_path();
-        const auto group = to_utf8(parent.parent_path().filename());
-        return group + "/" + to_utf8(parent.filename());
+        return to_utf8(parent.parent_path().filename()) + "/" + to_utf8(parent.filename());
     }();
-    for (const auto& [name, path] : motions_) {
-        (void)path;
-        const std::string lower = [&] {
-            std::string value = name;
-            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-                return static_cast<char>(std::tolower(character));
-            });
-            return value;
-        }();
-        if (lower.find("idle") != std::string::npos) {
-            if (name.find(character) != std::string::npos && name.size() >= outfit.size() &&
-                name.compare(name.size() - outfit.size(), outfit.size(), outfit) == 0) {
-                idle_motion_ = name;
-                break;
-            }
-            if (idle_motion_.empty()) {
-                idle_motion_ = name;
-            }
+    for (const auto& [name, motion] : motions_) {
+        (void)motion;
+        if (lower_ascii(name).find("idle") == std::string::npos) {
+            continue;
         }
-    }
-    if (references.contains("Expressions") && references.at("Expressions").is_array()) {
-        for (const auto& expression : references.at("Expressions")) {
-            const std::string name = expression.value("Name", std::string{});
-            const std::string file = expression.value("File", std::string{});
-            if (!name.empty() && !file.empty()) {
-                expressions_[name] = base / from_utf8(file);
-            }
+        if (name.find(character) != std::string::npos && name.size() >= outfit.size() &&
+            name.compare(name.size() - outfit.size(), outfit.size(), outfit) == 0) {
+            idle_motion_ = name;
+            break;
+        }
+        if (idle_motion_.empty()) {
+            idle_motion_ = name;
         }
     }
 
-    return refresh_drawables(api, error);
+    build_drawables(api);
+    return true;
 }
 
-bool Model::refresh_drawables(const CoreApi& api, std::string& error) {
-    (void)error;
+bool Model::load_motion(const std::filesystem::path& path, Motion& motion,
+                        std::string& error) const {
+    nlohmann::json json;
+    if (!read_json(path, json, error)) {
+        return false;
+    }
+    try {
+        const auto meta = json.value("Meta", nlohmann::json::object());
+        motion.duration = meta.value("Duration", 0.0F);
+        motion.loop = meta.value("Loop", false);
+        if (!json.contains("Curves") || !json.at("Curves").is_array()) {
+            return true;
+        }
+        for (const auto& curve : json.at("Curves")) {
+            if (curve.value("Target", std::string{}) != "Parameter" ||
+                !curve.contains("Segments") || !curve.at("Segments").is_array()) {
+                continue;
+            }
+            const auto found = parameter_index_.find(curve.value("Id", std::string{}));
+            if (found == parameter_index_.end()) {
+                continue;
+            }
+            MotionCurve parsed;
+            parsed.parameter = found->second;
+            parsed.segments.reserve(curve.at("Segments").size());
+            for (const auto& value : curve.at("Segments")) {
+                parsed.segments.push_back(value.get<float>());
+            }
+            if (parsed.segments.size() >= 2) {
+                motion.curves.push_back(std::move(parsed));
+            }
+        }
+    } catch (const std::exception& exception) {
+        error = "motion 解析失败 (" + to_utf8(path) + "): " + exception.what();
+        return false;
+    }
+    return true;
+}
+
+bool Model::load_expression(const std::filesystem::path& path, Expression& expression,
+                            std::string& error) const {
+    nlohmann::json json;
+    if (!read_json(path, json, error)) {
+        return false;
+    }
+    if (!json.contains("Parameters") || !json.at("Parameters").is_array()) {
+        return true;
+    }
+    try {
+        for (const auto& parameter : json.at("Parameters")) {
+            const auto found = parameter_index_.find(parameter.value("Id", std::string{}));
+            if (found == parameter_index_.end()) {
+                continue;
+            }
+            expression.parameters.push_back(ExpressionParameter{
+                .parameter = found->second,
+                .value = parameter.value("Value", 0.0F),
+                .blend = parameter.value("Blend", 1),
+            });
+        }
+    } catch (const std::exception& exception) {
+        error = "expression 解析失败 (" + to_utf8(path) + "): " + exception.what();
+        return false;
+    }
+    return true;
+}
+
+void Model::build_drawables(const CoreApi& api) {
     drawables_.clear();
+    drawable_lookup_.clear();
     const int count = api.drawable_count(model_);
+    if (count <= 0) {
+        return;
+    }
+
     const csmFlags* constant_flags = api.drawable_constant_flags(model_);
     const int* texture_indices = api.drawable_texture_indices(model_);
     const int* draw_orders = api.drawable_draw_orders(model_);
     const int* render_orders = api.render_orders(model_);
-    const float* opacities = api.drawable_opacities(model_);
     const int* mask_counts = api.drawable_mask_counts(model_);
     const int** masks = api.drawable_masks(model_);
     const int* vertex_counts = api.drawable_vertex_counts(model_);
@@ -198,22 +401,57 @@ bool Model::refresh_drawables(const CoreApi& api, std::string& error) {
     const int* index_counts = api.drawable_index_counts(model_);
     const unsigned short** indices = api.drawable_indices(model_);
     const int* blend_modes = api.drawable_blend_modes(model_);
-    const csmVector4* multiply_colors = api.drawable_multiply_colors(model_);
-    const csmVector4* screen_colors = api.drawable_screen_colors(model_);
     const int* parent_parts = api.drawable_parent_part_indices(model_);
-    float* part_opacities = api.part_opacities(model_);
     const char** drawable_ids = api.drawable_ids(model_);
 
     drawables_.reserve(static_cast<std::size_t>(count));
     for (int index = 0; index < count; ++index) {
         Drawable drawable;
-        drawable.original_index = index;
-        drawable.id = drawable_ids[index] != nullptr ? drawable_ids[index] : "";
-        drawable.texture = texture_indices[index];
+        drawable.id =
+            drawable_ids != nullptr && drawable_ids[index] != nullptr ? drawable_ids[index] : "";
+        drawable.texture = texture_indices != nullptr ? texture_indices[index] : 0;
         drawable.flags = constant_flags != nullptr ? constant_flags[index] : 0;
         drawable.draw_order = draw_orders != nullptr ? draw_orders[index] : index;
         drawable.render_order = render_orders != nullptr ? render_orders[index] : index;
-        drawable.opacity = opacities[index];
+        drawable.original_index = index;
+        drawable.blend_mode = blend_modes != nullptr ? blend_modes[index] : 0;
+        drawable.mask_count = mask_counts != nullptr ? mask_counts[index] : 0;
+        drawable.masks = drawable.mask_count > 0 && masks != nullptr ? masks[index] : nullptr;
+        drawable.vertex_count = vertex_counts != nullptr ? vertex_counts[index] : 0;
+        drawable.positions = positions != nullptr ? positions[index] : nullptr;
+        drawable.uvs = uvs != nullptr ? uvs[index] : nullptr;
+        drawable.index_count = index_counts != nullptr ? index_counts[index] : 0;
+        drawable.indices = indices != nullptr ? indices[index] : nullptr;
+        (void)parent_parts;
+        drawables_.push_back(drawable);
+    }
+
+    std::stable_sort(drawables_.begin(), drawables_.end(), [](const auto& left, const auto& right) {
+        return left.render_order < right.render_order;
+    });
+    drawable_lookup_.assign(static_cast<std::size_t>(count), -1);
+    for (std::size_t index = 0; index < drawables_.size(); ++index) {
+        drawable_lookup_[static_cast<std::size_t>(drawables_[index].original_index)] =
+            static_cast<int>(index);
+    }
+    update_drawables(api);
+}
+
+void Model::update_drawables(const CoreApi& api) {
+    const int count = static_cast<int>(drawables_.size());
+    if (count == 0) {
+        return;
+    }
+    const float* opacities = api.drawable_opacities(model_);
+    const csmVector4* multiply_colors = api.drawable_multiply_colors(model_);
+    const csmVector4* screen_colors = api.drawable_screen_colors(model_);
+    const int* parent_parts = api.drawable_parent_part_indices(model_);
+    float* part_opacities = api.part_opacities(model_);
+    const int part_count = api.part_count(model_);
+
+    for (auto& drawable : drawables_) {
+        const int index = drawable.original_index;
+        drawable.opacity = opacities != nullptr ? opacities[index] : 1.0F;
         drawable.multiply_alpha = multiply_colors != nullptr ? multiply_colors[index].w : 1.0F;
         if (multiply_colors != nullptr) {
             drawable.multiply_rgb[0] = multiply_colors[index].x;
@@ -228,77 +466,54 @@ bool Model::refresh_drawables(const CoreApi& api, std::string& error) {
         drawable.part_opacity = 1.0F;
         if (parent_parts != nullptr && part_opacities != nullptr) {
             const int part = parent_parts[index];
-            if (part >= 0 && part < api.part_count(model_)) {
+            if (part >= 0 && part < part_count) {
                 drawable.part_opacity = part_opacities[part];
             }
         }
-        drawable.mask_count = mask_counts[index];
-        if (drawable.mask_count > 0 && masks[index] != nullptr) {
-            drawable.masks.assign(masks[index], masks[index] + drawable.mask_count);
-        }
-        if (blend_modes != nullptr) {
-            drawable.blend_mode = blend_modes[index];
-        }
-        const int vertex_count = vertex_counts[index];
-        drawable.positions.assign(positions[index], positions[index] + vertex_count);
-        drawable.uvs.assign(uvs[index], uvs[index] + vertex_count);
-        const int index_count = index_counts[index];
-        drawable.indices.assign(indices[index], indices[index] + index_count);
-        drawables_.push_back(std::move(drawable));
     }
+}
 
-    for (const auto& drawable : drawables_) {
-        for (const int mask : drawable.masks) {
-            if (mask >= 0 && static_cast<std::size_t>(mask) < drawables_.size()) {
-                drawables_[static_cast<std::size_t>(mask)].is_mask = true;
-            }
-        }
+const Drawable* Model::drawable_by_original(int original_index) const {
+    if (original_index < 0 || static_cast<std::size_t>(original_index) >= drawable_lookup_.size()) {
+        return nullptr;
     }
-    std::stable_sort(drawables_.begin(), drawables_.end(), [](const auto& left, const auto& right) {
-        return left.render_order < right.render_order;
-    });
-    return true;
+    const int index = drawable_lookup_[static_cast<std::size_t>(original_index)];
+    if (index < 0 || static_cast<std::size_t>(index) >= drawables_.size()) {
+        return nullptr;
+    }
+    return &drawables_[static_cast<std::size_t>(index)];
 }
 
 bool Model::apply_expression(const CoreApi& api, const std::string& name, std::string& error) {
     return apply_pose(api, name, std::nullopt, 0.0F, 0.0F, error);
 }
 
-bool Model::apply_pose(const CoreApi& api, const std::optional<std::string>& expression,
-                       const std::optional<std::string>& motion, float time, float mouth,
-                       std::string& error) {
-    if (api.parameter_count == nullptr || api.parameter_ids == nullptr ||
-        api.parameter_values == nullptr || api.parameter_defaults == nullptr) {
+void Model::set_parameter(const char* id, float value) {
+    const auto found = parameter_index_.find(id);
+    if (found != parameter_index_.end()) {
+        parameter_values_[found->second] = value;
+    }
+}
+
+bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
+                             const std::optional<std::string>& motion, float time, float mouth,
+                             std::string& error) {
+    (void)api;
+    if (parameter_values_ == nullptr || parameter_defaults_ == nullptr || parameter_count_ <= 0) {
         error = "Core 缺少参数 API";
         return false;
     }
-    const int count = api.parameter_count(model_);
-    const char** ids = api.parameter_ids(model_);
-    float* values = api.parameter_values(model_);
-    const float* defaults = api.parameter_defaults(model_);
-    for (int index = 0; index < count; ++index) {
-        values[index] = defaults[index];
-    }
-    for (int index = 0; index < count; ++index) {
-        if (std::string(ids[index]).rfind("ParamMouth", 0) == 0) {
-            values[index] = 0.0F;
-        }
+    std::copy(parameter_defaults_, parameter_defaults_ + parameter_count_, parameter_values_);
+    for (const int index : mouth_parameters_) {
+        parameter_values_[index] = 0.0F;
     }
 
-    const auto set_parameter = [&](const char* id, float value) {
-        for (int index = 0; index < count; ++index) {
-            if (std::string(ids[index]) == id) {
-                values[index] = value;
-                break;
-            }
-        }
-    };
     set_parameter("ParamAngleX", std::sin(time * 0.72F) * 7.0F);
     set_parameter("ParamAngleY", std::sin(time * 0.53F) * 3.5F);
     set_parameter("ParamAngleZ", std::sin(time * 0.41F) * 1.5F);
     set_parameter("ParamBodyAngleX", std::sin(time * 0.72F) * 2.0F);
     set_parameter("ParamBodyAngleY", std::sin(time * 0.45F) * 1.2F);
-    set_parameter("ParamBreath", 0.5F + 0.5F * std::sin(time * 1.1F));
+    set_parameter("ParamBreath", 0.5F + (0.5F * std::sin(time * 1.1F)));
 
     if (motion) {
         const auto found = motions_.find(*motion);
@@ -306,113 +521,15 @@ bool Model::apply_pose(const CoreApi& api, const std::optional<std::string>& exp
             error = "model3.json 中不存在 motion: " + *motion;
             return false;
         }
-        std::ifstream input(found->second);
-        if (!input) {
-            error = "无法读取 motion: " + to_utf8(found->second);
-            return false;
-        }
-        nlohmann::json json;
-        try {
-            input >> json;
-        } catch (const std::exception& exception) {
-            error = "motion 解析失败: " + std::string(exception.what());
-            return false;
-        }
-        float duration = 0.0F;
-        bool loop = false;
-        if (json.contains("Meta")) {
-            duration = json.at("Meta").value("Duration", 0.0F);
-            loop = json.at("Meta").value("Loop", false);
-        }
-        (void)loop;
-        last_motion_duration_ = duration;
+        const Motion& data = found->second;
+        last_motion_duration_ = data.duration;
         float at = std::max<float>(time, 0.0F);
-        if (duration > 0.0F) {
-            at = std::min<float>(at, duration);
+        if (data.duration > 0.0F) {
+            at = std::min<float>(at, data.duration);
         }
-        if (json.contains("Curves") && json.at("Curves").is_array()) {
-            for (const auto& curve : json.at("Curves")) {
-                if (curve.value("Target", std::string{}) != "Parameter") {
-                    continue;
-                }
-                const std::string id = curve.value("Id", std::string{});
-                if (!curve.contains("Segments") || !curve.at("Segments").is_array()) {
-                    continue;
-                }
-                std::vector<float> segments;
-                for (const auto& value : curve.at("Segments")) {
-                    segments.push_back(value.get<float>());
-                }
-                if (segments.size() < 2) {
-                    continue;
-                }
-                float result = segments[1];
-                float t0 = segments[0];
-                float v0 = segments[1];
-                std::size_t index = 2;
-                while (index < segments.size()) {
-                    const int type = static_cast<int>(segments[index++]);
-                    float t1 = t0;
-                    float v1 = v0;
-                    if (type == 0 && index + 1 < segments.size()) {
-                        t1 = segments[index];
-                        v1 = segments[index + 1];
-                        index += 2;
-                        if (at <= t1) {
-                            const float span = std::max<float>(t1 - t0, 1.0e-6F);
-                            result = v0 + (v1 - v0) * ((at - t0) / span);
-                            break;
-                        }
-                    } else if (type == 1 && index + 5 < segments.size()) {
-                        const float c1x = segments[index];
-                        const float c1y = segments[index + 1];
-                        const float c2x = segments[index + 2];
-                        const float c2y = segments[index + 3];
-                        t1 = segments[index + 4];
-                        v1 = segments[index + 5];
-                        index += 6;
-                        if (at <= t1) {
-                            float low = 0.0F;
-                            float high = 1.0F;
-                            for (int iteration = 0; iteration < 20; ++iteration) {
-                                const float mid = (low + high) * 0.5F;
-                                const float x = (1.0F - mid) * (1.0F - mid) * (1.0F - mid) * t0 +
-                                                3.0F * (1.0F - mid) * (1.0F - mid) * mid * c1x +
-                                                3.0F * (1.0F - mid) * mid * mid * c2x +
-                                                mid * mid * mid * t1;
-                                if (x < at) {
-                                    low = mid;
-                                } else {
-                                    high = mid;
-                                }
-                            }
-                            const float u = (low + high) * 0.5F;
-                            result = (1.0F - u) * (1.0F - u) * (1.0F - u) * v0 +
-                                     3.0F * (1.0F - u) * (1.0F - u) * u * c1y +
-                                     3.0F * (1.0F - u) * u * u * c2y + u * u * u * v1;
-                            break;
-                        }
-                    } else if ((type == 2 || type == 3) && index + 1 < segments.size()) {
-                        t1 = segments[index];
-                        v1 = segments[index + 1];
-                        index += 2;
-                        if (at < t1) {
-                            result = v0;
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                    t0 = t1;
-                    v0 = v1;
-                    result = v1;
-                }
-                for (int parameter = 0; parameter < count; ++parameter) {
-                    if (id == ids[parameter]) {
-                        values[parameter] = result;
-                        break;
-                    }
-                }
+        for (const auto& curve : data.curves) {
+            if (curve.parameter >= 0 && curve.parameter < parameter_count_) {
+                parameter_values_[curve.parameter] = evaluate_curve(curve.segments, at);
             }
         }
     }
@@ -424,102 +541,87 @@ bool Model::apply_pose(const CoreApi& api, const std::optional<std::string>& exp
             error = "model3.json 中不存在表情: " + *expression;
             return false;
         }
-        std::ifstream input(found->second);
-        if (!input) {
-            error = "无法读取表情: " + to_utf8(found->second);
-            return false;
-        }
-        nlohmann::json json;
-        try {
-            input >> json;
-        } catch (const std::exception& exception) {
-            error = "表情解析失败: " + std::string(exception.what());
-            return false;
-        }
-        if (json.contains("Parameters") && json.at("Parameters").is_array()) {
-            const float* minimum = api.parameter_minimum_values != nullptr
-                                       ? api.parameter_minimum_values(model_)
-                                       : nullptr;
-            const float* maximum = api.parameter_maximum_values != nullptr
-                                       ? api.parameter_maximum_values(model_)
-                                       : nullptr;
-            for (const auto& parameter : json.at("Parameters")) {
-                const std::string id = parameter.value("Id", std::string{});
-                const float value = parameter.value("Value", 0.0F);
-                const int blend = parameter.value("Blend", 1);
-                for (int index = 0; index < count; ++index) {
-                    if (id != ids[index]) {
-                        continue;
-                    }
-                    if (blend == 2) {
-                        values[index] *= value;
-                    } else if (blend == 3) {
-                        values[index] = value;
-                    } else {
-                        values[index] += value;
-                    }
-                    if (minimum != nullptr && maximum != nullptr) {
-                        values[index] = std::max<float>(
-                            minimum[index], std::min<float>(maximum[index], values[index]));
-                    }
-                    break;
-                }
+        for (const auto& parameter : found->second.parameters) {
+            float& value = parameter_values_[parameter.parameter];
+            if (parameter.blend == 2) {
+                value *= parameter.value;
+            } else if (parameter.blend == 3) {
+                value = parameter.value;
+            } else {
+                value += parameter.value;
+            }
+            if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
+                value = std::clamp(value, parameter_minimums_[parameter.parameter],
+                                   parameter_maximums_[parameter.parameter]);
             }
         }
     }
 
     if (motion && !applying_idle_ && !idle_motion_.empty() && *motion != idle_motion_ &&
         last_motion_duration_ > 0.0F && time > last_motion_duration_) {
-        std::vector<float> final_values(values, values + count);
+        std::vector<float> final_values(parameter_values_, parameter_values_ + parameter_count_);
         const float idle_time = time - last_motion_duration_;
         applying_idle_ = true;
-        const bool ok = apply_pose(api, expression, idle_motion_, idle_time, mouth, error);
+        const bool ok = apply_parameters(api, expression, idle_motion_, idle_time, mouth, error);
         applying_idle_ = false;
         if (!ok) {
             return false;
         }
         float weight = std::clamp(idle_time, 0.0F, 1.0F);
-        weight = 0.5F - 0.5F * std::cos(weight * 3.14159265358979323846F);
-        for (int index = 0; index < count; ++index) {
-            values[index] =
+        weight = 0.5F - (0.5F * std::cos(weight * std::numbers::pi_v<float>));
+        for (int index = 0; index < parameter_count_; ++index) {
+            parameter_values_[index] =
                 final_values[static_cast<std::size_t>(index)] +
-                (values[index] - final_values[static_cast<std::size_t>(index)]) * weight;
+                ((parameter_values_[index] - final_values[static_cast<std::size_t>(index)]) *
+                 weight);
         }
+    }
+    return true;
+}
+
+bool Model::apply_pose(const CoreApi& api, const std::optional<std::string>& expression,
+                       const std::optional<std::string>& motion, float time, float mouth,
+                       std::string& error) {
+    if (!apply_parameters(api, expression, motion, time, mouth, error)) {
+        return false;
     }
     api.reset_drawable_dynamic_flags(model_);
     api.update_model(model_);
-    return refresh_drawables(api, error);
+    update_drawables(api);
+    return true;
 }
+
 bool Model::apply_pose_blend(const CoreApi& api,
                              const std::optional<std::string>& previous_expression,
                              const std::optional<std::string>& previous_motion, float previous_time,
                              const std::optional<std::string>& expression,
                              const std::optional<std::string>& motion, float time, float blend,
                              float mouth, std::string& error) {
-    const int count = api.parameter_count(model_);
+    const int count = parameter_count_;
     std::vector<float> previous_values;
     if (previous_motion || previous_expression) {
-        if (!apply_pose(api, previous_expression, previous_motion, previous_time, mouth, error)) {
+        if (!apply_parameters(api, previous_expression, previous_motion, previous_time, mouth,
+                              error)) {
             return false;
         }
-        const float* values = api.parameter_values(model_);
-        previous_values.assign(values, values + count);
+        previous_values.assign(parameter_values_, parameter_values_ + count);
     }
-    if (!apply_pose(api, expression, motion, time, mouth, error)) {
+    if (!apply_parameters(api, expression, motion, time, mouth, error)) {
         return false;
     }
-    float* current = api.parameter_values(model_);
-    if (previous_values.empty()) {
-        return true;
-    }
-    const float weight = std::clamp(blend, 0.0F, 1.0F);
-    for (int index = 0; index < count; ++index) {
-        current[index] =
-            previous_values[static_cast<std::size_t>(index)] +
-            (current[index] - previous_values[static_cast<std::size_t>(index)]) * weight;
+    if (!previous_values.empty()) {
+        const float weight = std::clamp(blend, 0.0F, 1.0F);
+        for (int index = 0; index < count; ++index) {
+            parameter_values_[index] =
+                previous_values[static_cast<std::size_t>(index)] +
+                ((parameter_values_[index] - previous_values[static_cast<std::size_t>(index)]) *
+                 weight);
+        }
     }
     api.reset_drawable_dynamic_flags(model_);
     api.update_model(model_);
-    return refresh_drawables(api, error);
+    update_drawables(api);
+    return true;
 }
+
 } // namespace webgal::live2d
