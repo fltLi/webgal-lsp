@@ -23,6 +23,7 @@
   import Select from './Select.svelte';
 
   const settings = $derived(appStore.settings);
+  const CUBISM_SDK_DOWNLOAD_URL = 'https://www.live2d.com/sdk/download/native/';
 
   /**
    * 应用版本, 向 Tauri 要 (`tauri.conf.json` 的 `version` 是唯一权威): 硬编码的字符串发版时
@@ -32,6 +33,8 @@
 
   /** 视频导出组件状态: 渲染器是否编译进来、Live2D Core 是否已导入。 */
   let videoStatus = $state<VideoExportStatus | null>(null);
+  let importingLive2d = $state(false);
+  let live2dImportError = $state('');
 
   onMount(() => {
     void getVersion()
@@ -49,16 +52,28 @@
   }
 
   async function pickCubismCore(): Promise<void> {
-    const chosen = await open({
-      title: '选择 Live2DCubismCore.dll',
-      multiple: false,
-      filters: [{ name: 'DLL', extensions: ['dll'] }],
-    });
-    if (typeof chosen !== 'string') return;
+    live2dImportError = '';
+    let chosen: string | null;
+    try {
+      const selected = await open({
+        title: '选择 Cubism SDK 压缩包或 Core DLL',
+        multiple: false,
+        filters: [{ name: 'Cubism SDK 或 Core DLL', extensions: ['zip', 'dll'] }],
+      });
+      if (typeof selected !== 'string') return;
+      chosen = selected;
+    } catch (error) {
+      live2dImportError = String(error);
+      return;
+    }
+
+    importingLive2d = true;
     try {
       videoStatus = await importCubismCore(chosen);
-    } catch {
-      // 失败原因由后端返回; 这里保持原状态, 不额外弹窗
+    } catch (error) {
+      live2dImportError = String(error);
+    } finally {
+      importingLive2d = false;
     }
   }
 
@@ -192,28 +207,34 @@
             </div>
           </section>
         {:else if appStore.settingsCategory === 'render'}
-          <!--
-            视频导出的组件设置放在「渲染」页而不是导出对话框里: 渲染器随应用发布,
-            用户唯一要准备的是 Live2D Core 这个全局 DLL, 导入一次对所有项目生效,
-            不该每次导出都问一遍。
-          -->
           <section class="settings-group">
-            <h3>视频导出</h3>
-            {#if !videoStatus?.supported}
-              <p class="muted">当前构建未启用视频导出（需要 Windows 且开启 video-export 特性）。</p>
-            {:else}
-              <p class="muted">
-                渲染器已随应用内置。Live2D 立绘还需要你自备 Live2DCubismCore.dll。
-                {#if videoStatus.live2dCore}
-                  已导入：{videoStatus.live2dPath}
-                {/if}
-              </p>
+            <h3>渲染器</h3>
+            <p class="muted">
+              {#if videoStatus?.supported}
+                视频渲染器已随应用内置，可直接用于导出。
+              {:else}
+                当前构建未启用视频渲染器（需要 Windows 且开启 video-export 特性）。
+              {/if}
+            </p>
+          </section>
+
+          <section class="settings-group">
+            <h3>Live2D 渲染</h3>
+            {#if videoStatus?.supported}
+              <p class="live2d-status">核心库：{videoStatus.live2dCore ? '已导入' : '未导入'}</p>
+              <p class="muted">可选择 SDK ZIP 压缩包或单独的 DLL，自动检测并导入。</p>
               <div class="settings-actions">
-                <Button icon="Open" onclick={() => void pickCubismCore()}>
-                  {videoStatus.live2dCore ? '重新导入 Cubism Core' : '导入 Cubism Core'}
+                <Button icon="Open" disabled={importingLive2d} onclick={() => void pickCubismCore()}>
+                  {importingLive2d ? '正在导入…' : videoStatus.live2dCore ? '重新导入' : '导入'}
                 </Button>
+                <Button icon="Globe" onclick={() => void openUrl(CUBISM_SDK_DOWNLOAD_URL)}>下载 SDK</Button>
                 <Button icon="ArrowSync" onclick={() => void refreshVideoStatus()}>重新检测</Button>
               </div>
+              {#if live2dImportError}
+                <p class="settings-inline-error" role="alert">{live2dImportError}</p>
+              {/if}
+            {:else}
+              <p class="muted">启用视频渲染器后，可在此导入 Live2D 核心库。</p>
             {/if}
           </section>
         {:else if appStore.settingsCategory === 'about'}

@@ -7204,13 +7204,62 @@ body.path-dragging * {
 
 /* 起始场景只占左半边, 不跟着整个对话框拉满 */
 .video-start-scene {
-  max-width: 320px;
+  max-width: 480px;
+}
+
+.video-start-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.video-start-row > .select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.video-output-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.video-output-name-row > .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.video-output-warning {
+  flex: 0 0 auto;
+  color: #d13438;
+  font-size: 12px;
+}
+
+[data-theme='dark'] .video-output-warning {
+  color: #f1707b;
 }
 
 /* 一排普通按钮 (设置页里的"导入 / 重新检测"): `.input-row` 会把首个子项拉满, 不适合这里 */
 .settings-actions {
   display: flex;
   gap: 8px;
+}
+
+.live2d-status {
+  margin: 0;
+  font-size: 13px;
+}
+
+.settings-inline-error {
+  margin: 0;
+  color: #d13438;
+  font-size: 12px;
+}
+
+[data-theme='dark'] .settings-inline-error {
+  color: #f1707b;
 }
 
 .video-errors {

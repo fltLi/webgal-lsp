@@ -25,7 +25,7 @@
 
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { save } from '@tauri-apps/plugin-dialog';
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { onMount, untrack } from 'svelte';
 
@@ -40,8 +40,10 @@
     type VideoExportPreview,
     type VideoExportStatus,
   } from '../commands/videoExport';
+  import { fs } from '../lib/fs';
+  import { browserRelativePath, joinPath } from '../lib/paths';
+  import { numberedOutputName, outputNameForScene } from '../lib/video-output';
   import { actions, appStore } from '../state/store.svelte';
-  import { joinPath } from '../lib/paths';
   import { presetWidth, resolutionOptions } from '../lib/video-preset';
   import AppDialog from './AppDialog.svelte';
   import Button from './Button.svelte';
@@ -52,7 +54,6 @@
   let { onClose }: { onClose: () => void } = $props();
 
   const projectPath = $derived(appStore.projectPath);
-  const projectName = $derived(appStore.projectName ?? 'project');
 
   const ENCODER_OPTIONS = [
     { value: 'auto', label: '自动' },
@@ -95,6 +96,8 @@
 
   let scenes = $state<string[]>([]);
   let startScene = $state('start.txt');
+  let defaultStartScene = $state('start.txt');
+  let lockStartScene = $state(true);
   let status = $state<VideoExportStatus | null>(null);
   let route = $state<RouteNode[]>([]);
   let selected = $state<Record<string, number>>({});
@@ -102,7 +105,14 @@
   let errors = $state<string[]>([]);
   let notice = $state('');
 
-  let output = $state('');
+  let outputDirectory = $state('');
+  let outputName = $state('');
+  let outputNameEdited = $state(false);
+  let outputExists = $state(false);
+  let outputCheckSequence = 0;
+  const output = $derived(
+    outputDirectory.trim() && outputName.trim() ? joinPath(outputDirectory, outputName.trim()) : ''
+  );
 
   /* 上次使用的参数从用户设置恢复; 没有记录时用默认值。 */
   const stored = appStore.settings.videoExport;
@@ -145,7 +155,9 @@
   let resultPath = $state('');
 
   const busy = $derived(phase === 'working');
-  const canExport = $derived(Boolean(status?.supported) && output.trim().length > 0 && !busy);
+  const canExport = $derived(
+    Boolean(status?.supported) && outputDirectory.trim().length > 0 && outputName.trim().length > 0 && !busy
+  );
   const percent = $derived(
     phase === 'done'
       ? 100
@@ -255,8 +267,7 @@
       tick += 1;
     }, 500);
     if (projectPath) {
-      const extension = contentMode === 'audio' ? '.wav' : '.mp4';
-      output = joinPath(projectPath, `${projectName}-video${extension}`);
+      outputDirectory = projectPath;
       void refresh();
     }
     return () => {
@@ -270,12 +281,15 @@
     try {
       const [info, exportStatus] = await Promise.all([videoProjectInfo(projectPath), videoExportStatus()]);
       scenes = info.scenes;
-      startScene = info.startScene;
+      defaultStartScene = info.startScene || 'start.txt';
+      startScene = lockStartScene ? sceneForCurrentEditor(info.scenes, defaultStartScene) : defaultStartScene;
+      selected = {};
       if (info.stageWidth >= 64 && info.stageHeight >= 64) {
         stageWidth = info.stageWidth;
         stageHeight = info.stageHeight;
       }
       status = exportStatus;
+      await updateAutomaticOutputName(startScene);
       await refreshRoute();
     } catch (error) {
       errors = [String(error)];
@@ -294,10 +308,28 @@
   }
 
   function changeStartScene(next: string): void {
+    if (next === startScene) return;
     startScene = next;
     // 换起始场景后, 旧的分支选择可能已经不存在了
     selected = {};
+    void updateAutomaticOutputName(next);
     void refreshRoute();
+  }
+
+  function sceneForCurrentEditor(availableScenes: string[], fallback: string): string {
+    const activeTab = appStore.tabs.find((tab) => tab.id === appStore.activeTabId);
+    const activeSceneTab = activeTab?.kind === 'scene' ? activeTab : null;
+    const recentTab = appStore.tabs.find((tab) => tab.id === appStore.currentSceneTabId);
+    const recentSceneTab = recentTab?.kind === 'scene' ? recentTab : null;
+    const sceneTab = activeSceneTab ?? recentSceneTab;
+    if (!sceneTab || !projectPath) return fallback;
+    const scene = browserRelativePath(projectPath, sceneTab.path);
+    return availableScenes.includes(scene) ? scene : fallback;
+  }
+
+  function toggleStartSceneLock(checked: boolean): void {
+    lockStartScene = checked;
+    if (checked) changeStartScene(sceneForCurrentEditor(scenes, defaultStartScene));
   }
 
   function chooseOption(node: RouteNode, value: string): void {
@@ -310,18 +342,67 @@
   function changeContentMode(next: string): void {
     contentMode = next as typeof contentMode;
     const extension = next === 'audio' ? '.wav' : '.mp4';
-    output = output.replace(/\.(mp4|wav)$/i, '') + extension;
+    const previousName = outputName;
+    const nextName = previousName.replace(/\.(mp4|wav)$/i, '') + extension;
+    outputName = nextName;
+    if (outputNameEdited) void checkOutputName(false);
+    else void updateAutomaticOutputName(startScene);
   }
 
-  async function pickOutput(): Promise<void> {
-    const chosen = await save({
-      title: '导出视频',
-      defaultPath: output,
-      filters: exportVideoClip
-        ? [{ name: 'MP4 视频', extensions: ['mp4'] }]
-        : [{ name: 'WAV 音频', extensions: ['wav'] }],
-    });
-    if (chosen) output = chosen;
+  async function pickOutputDirectory(): Promise<void> {
+    try {
+      const chosen = await openDialog({
+        title: '选择导出目录',
+        directory: true,
+        multiple: false,
+        defaultPath: outputDirectory || projectPath || undefined,
+      });
+      if (typeof chosen === 'string' && chosen) {
+        outputDirectory = chosen;
+        if (outputNameEdited) void checkOutputName(false);
+        else void updateAutomaticOutputName(startScene);
+      }
+    } catch (error) {
+      errors = [...errors, String(error)];
+    }
+  }
+
+  async function updateAutomaticOutputName(scene: string): Promise<void> {
+    outputNameEdited = false;
+    outputName = outputNameForScene(scene, contentMode);
+    await checkOutputName(true);
+  }
+
+  async function checkOutputName(avoidCollision: boolean): Promise<void> {
+    const sequence = ++outputCheckSequence;
+    const initialName = outputName.trim();
+    const directory = outputDirectory.trim();
+    outputExists = false;
+    if (!initialName || !directory) {
+      return;
+    }
+    try {
+      let candidate = initialName;
+      let exists = (await fs.exists(joinPath(directory, candidate))).exists;
+      let suffix = 1;
+      while (avoidCollision && exists) {
+        candidate = numberedOutputName(initialName, suffix++);
+        exists = (await fs.exists(joinPath(directory, candidate))).exists;
+      }
+      if (sequence !== outputCheckSequence) return;
+      if (candidate !== initialName) outputName = candidate;
+      outputExists = exists;
+    } catch (error) {
+      if (sequence !== outputCheckSequence) return;
+      outputExists = false;
+      errors = [...errors, String(error)];
+    }
+  }
+
+  function editOutputName(event: Event): void {
+    outputNameEdited = true;
+    if (event.currentTarget instanceof HTMLInputElement) outputName = event.currentTarget.value;
+    void checkOutputName(false);
   }
 
   /** 把草稿文本夹到 [min, max]; 非法值退回 fallback。 */
@@ -438,11 +519,25 @@
       <section class="settings-group">
         <h3>输出</h3>
         <div class="settings-field">
-          <span class="settings-label">文件</span>
-          <!-- 只读路径 + 单图标浏览按钮: 与快照对话框同款 (.input-row 让两者同高) -->
+          <span class="settings-label">目录</span>
           <div class="input-row">
-            <input class="ui-input" readonly value={output} title={output} placeholder="选择导出位置" />
-            <Button icon="FolderOpen" title="选择输出位置" onclick={() => void pickOutput()} />
+            <input
+              class="ui-input"
+              readonly
+              value={outputDirectory}
+              title={outputDirectory}
+              placeholder="选择导出目录"
+            />
+            <Button icon="FolderOpen" title="选择导出目录" onclick={() => void pickOutputDirectory()} />
+          </div>
+        </div>
+        <div class="settings-field">
+          <span class="settings-label">名称</span>
+          <div class="video-output-name-row">
+            <Input bind:value={outputName} oninput={editOutputName} title="导出文件名" />
+            {#if outputExists}
+              <span class="video-output-warning" role="status">同名文件已存在，导出将覆盖</span>
+            {/if}
           </div>
         </div>
       </section>
@@ -451,17 +546,24 @@
         <h3>路线</h3>
         <div class="settings-field video-start-scene">
           <span class="settings-label">起始场景</span>
-          <Select
-            value={startScene}
-            options={scenes.map((scene) => ({ value: scene, label: scene }))}
-            title="从哪个场景开始导出"
-            onchange={changeStartScene}
-          />
+          <div class="video-start-row">
+            <Select
+              value={startScene}
+              options={scenes.map((scene) => ({ value: scene, label: scene }))}
+              title="从哪个场景开始导出"
+              disabled={lockStartScene}
+              onchange={changeStartScene}
+            />
+            <Checkbox
+              checked={lockStartScene}
+              label="锁定当前场景"
+              title="优先使用当前打开的场景；否则使用最近打开的场景"
+              onchange={toggleStartSceneLock}
+            />
+          </div>
         </div>
 
-        {#if route.length === 0}
-          <p class="muted">从起始场景解析后，这里会列出场景切换与选项。</p>
-        {:else}
+        {#if route.length > 0}
           <div class="video-route-list">
             {#each route as node, index (index)}
               <div class="video-route-row">

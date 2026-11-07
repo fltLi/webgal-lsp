@@ -5,6 +5,7 @@
 //! 渲染器随 Ink 一起发布（`video-export` 特性），安装目录里没有 renderer / shader；
 //! 唯一的外部组件是用户自备的 `Live2DCubismCore.dll`，导入后放在应用数据目录。
 
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ use tauri::{AppHandle, Emitter, State};
 
 /// 应用数据目录下属于 Ink 的子目录名。
 const APP_DIR: &str = "com.fltli.webgalink";
+const MAX_CUBISM_CORE_SIZE: u64 = 64 * 1024 * 1024;
 
 /// 当前导出任务的取消开关。
 ///
@@ -123,19 +125,163 @@ pub fn video_export_status() -> VideoExportStatus {
     status()
 }
 
-/// 导入用户自备的 Cubism Core DLL。
+/// 导入用户自备的 Cubism Core DLL, 或从 SDK ZIP 中检测并提取 Windows x64 版本。
 #[tauri::command]
 pub fn import_cubism_core(source: String) -> Result<VideoExportStatus, String> {
     let source = PathBuf::from(source);
-    if source.file_name().and_then(|name| name.to_str()) != Some("Live2DCubismCore.dll") {
-        return Err("请选择 Live2DCubismCore.dll".into());
+    let bytes = if source
+        .extension()
+        .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("zip"))
+    {
+        read_cubism_core_from_zip(&source)?
+    } else {
+        if !source.file_name().is_some_and(|name| {
+            name.to_string_lossy()
+                .eq_ignore_ascii_case("Live2DCubismCore.dll")
+        }) {
+            return Err("请选择 Cubism SDK ZIP 压缩包或 Live2DCubismCore.dll".into());
+        }
+        std::fs::read(&source).map_err(|error| format!("读取 Live2D 核心失败: {error}"))?
+    };
+    if bytes.is_empty() || bytes.len() as u64 > MAX_CUBISM_CORE_SIZE {
+        return Err("Live2D 核心文件为空或超过 64 MiB".into());
     }
+
     let target = live2d_core_file().ok_or("无法定位应用数据目录")?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {error}"))?;
     }
-    std::fs::copy(&source, &target).map_err(|error| format!("复制 Cubism Core 失败: {error}"))?;
+    std::fs::write(&target, bytes).map_err(|error| format!("安装 Live2D 核心失败: {error}"))?;
     Ok(status())
+}
+
+fn read_cubism_core_from_zip(path: &Path) -> Result<Vec<u8>, String> {
+    let file =
+        std::fs::File::open(path).map_err(|error| format!("打开 SDK 压缩包失败: {error}"))?;
+    read_cubism_core_from_archive(file)
+}
+
+fn read_cubism_core_from_archive<R: Read + Seek>(reader: R) -> Result<Vec<u8>, String> {
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|error| format!("读取 SDK 压缩包失败: {error}"))?;
+    let mut candidates = Vec::new();
+
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format!("读取 SDK 文件清单失败: {error}"))?;
+        if entry.is_dir()
+            || !entry
+                .name()
+                .rsplit(['/', '\\'])
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("Live2DCubismCore.dll"))
+        {
+            continue;
+        }
+        let normalized = entry.name().replace('\\', "/").to_ascii_lowercase();
+        let is_windows_x64 =
+            normalized.contains("/windows/x86_64/") || normalized.starts_with("windows/x86_64/");
+        candidates.push((index, is_windows_x64));
+    }
+
+    let x64_candidates: Vec<usize> = candidates
+        .iter()
+        .filter_map(|(index, is_x64)| is_x64.then_some(*index))
+        .collect();
+    let selected = match x64_candidates.as_slice() {
+        [index] => *index,
+        [] => match candidates.as_slice() {
+            [(index, _)] => *index,
+            [] => return Err("SDK 压缩包中没有找到 Live2DCubismCore.dll".into()),
+            _ => {
+                return Err(
+                    "SDK 压缩包中有多个核心 DLL，无法确定 Windows x64 版本；请直接选择 DLL".into(),
+                );
+            }
+        },
+        _ => {
+            return Err(
+                "SDK 压缩包中有多个 Windows x64 核心 DLL；请直接选择 Live2DCubismCore.dll".into(),
+            );
+        }
+    };
+
+    let entry = archive
+        .by_index(selected)
+        .map_err(|error| format!("读取 Live2D 核心失败: {error}"))?;
+    if entry.size() > MAX_CUBISM_CORE_SIZE {
+        return Err("Live2D 核心文件超过 64 MiB".into());
+    }
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry
+        .take(MAX_CUBISM_CORE_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("提取 Live2D 核心失败: {error}"))?;
+    if bytes.len() as u64 > MAX_CUBISM_CORE_SIZE {
+        return Err("Live2D 核心文件超过 64 MiB".into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use zip::write::SimpleFileOptions;
+
+    use super::read_cubism_core_from_archive;
+
+    fn archive_with(entries: &[(&str, &[u8])]) -> Cursor<Vec<u8>> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in entries {
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut writer, bytes).unwrap();
+        }
+        writer.finish().unwrap()
+    }
+
+    #[test]
+    fn sdk_zip_prefers_windows_x64_core() {
+        let archive = archive_with(&[
+            (
+                "CubismSdk/Core/dll/windows/x86/Live2DCubismCore.dll",
+                b"x86",
+            ),
+            (
+                "CubismSdk/Core/dll/windows/x86_64/Live2DCubismCore.dll",
+                b"x64",
+            ),
+        ]);
+        assert_eq!(read_cubism_core_from_archive(archive).unwrap(), b"x64");
+    }
+
+    #[test]
+    fn sdk_zip_uses_the_only_matching_core() {
+        let archive = archive_with(&[("SDK/custom/Live2DCubismCore.dll", b"core")]);
+        assert_eq!(read_cubism_core_from_archive(archive).unwrap(), b"core");
+    }
+
+    #[test]
+    fn sdk_zip_rejects_ambiguous_core_files() {
+        let archive = archive_with(&[
+            ("SDK/one/Live2DCubismCore.dll", b"one"),
+            ("SDK/two/Live2DCubismCore.dll", b"two"),
+        ]);
+        assert!(read_cubism_core_from_archive(archive)
+            .unwrap_err()
+            .contains("多个核心 DLL"));
+    }
+
+    #[test]
+    fn sdk_zip_reports_missing_core() {
+        let archive = archive_with(&[("SDK/readme.txt", b"no core here")]);
+        assert!(read_cubism_core_from_archive(archive)
+            .unwrap_err()
+            .contains("没有找到"));
+    }
 }
 
 #[derive(Debug, Serialize)]
