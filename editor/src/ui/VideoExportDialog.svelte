@@ -563,10 +563,10 @@
           <span class="settings-label">名称</span>
           <div class="video-output-name-row">
             <Input bind:value={outputName} oninput={editOutputName} title="导出文件名" />
-            {#if outputExists}
-              <span class="video-output-warning" role="status">同名文件已存在，导出将覆盖</span>
-            {/if}
           </div>
+          {#if outputExists}
+            <span class="video-output-warning" role="status">同名文件已存在，导出将覆盖</span>
+          {/if}
         </div>
       </section>
 

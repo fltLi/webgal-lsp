@@ -7217,8 +7217,6 @@ body.path-dragging * {
 
 .video-output-name-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
 }
 
@@ -7228,13 +7226,12 @@ body.path-dragging * {
 }
 
 .video-output-warning {
-  flex: 0 0 auto;
-  color: #d13438;
+  color: #b4540a;
   font-size: 12px;
 }
 
 [data-theme='dark'] .video-output-warning {
-  color: #f1707b;
+  color: #e0a16a;
 }
 
 /* 一排普通按钮 (设置页里的"导入 / 重新检测"): `.input-row` 会把首个子项拉满, 不适合这里 */
