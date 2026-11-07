@@ -31,6 +31,7 @@
 #include "common/log.hpp"
 #include "common/path.hpp"
 #include "live2d/core_loader.hpp"
+#include "live2d/layout.hpp"
 #include "live2d/model.hpp"
 #include "media/image.hpp"
 #include "media/preview.hpp"
@@ -2261,13 +2262,13 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
     const float ppu = std::max<float>(model->pixels_per_unit(), 1.0F);
     const float scale_x = fit * key.transform.scale.x;
     const float scale_y = fit * key.transform.scale.y;
-    // 贴底基准再补上 WebGAL `M_3_1_0` 的 child 偏移:
-    //   childY = stageH/1.8, pivot = stageH/2
-    // 旧实现完全贴底, 人物会比引擎高约 stageH/18。
-    const float bottom_y = static_cast<float>(plan.stage_h) + key.transform.position.y;
+    // 引擎 `M_3_1_0` 的垂直基准见 `live2d/layout.hpp`。
+    // 顶点着色器里的 `y` 是距底部的坐标 (Vulkan 的 NDC `+y` 朝下),
+    // 因此正 `position.y` 会减小这个值, 立绘向下移动; 是否额外居中只看
+    // 未乘 `transform.scale` 的模型高度, 与引擎 `setContainerInitialPosition` 一致。
     const float center_y =
-        bottom_y - static_cast<float>(canvas_h) * 0.5F * scale_y +
-        (static_cast<float>(plan.stage_h) / 1.8F - static_cast<float>(plan.stage_h) * 0.5F);
+        live2d::figure_center_bottom(static_cast<float>(plan.stage_h), static_cast<float>(canvas_h),
+                                     fit, key.transform.position.y);
 
     for (const auto& drawable : model->drawables()) {
         if (drawable.indices.empty() || drawable.positions.empty()) {

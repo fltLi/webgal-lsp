@@ -2,9 +2,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <string>
 
 #include "live2d/core_loader.hpp"
+#include "live2d/layout.hpp"
 
 TEST_CASE("missing Live2D Core reports a load error") {
     webgal::live2d::CoreApi api;
@@ -12,4 +14,23 @@ TEST_CASE("missing Live2D Core reports a load error") {
     REQUIRE_FALSE(webgal::live2d::load_core("does-not-exist.dll", api, error));
     REQUIRE_FALSE(error.empty());
     REQUIRE(api.get_version == nullptr);
+}
+
+TEST_CASE("M_3_1_0 live2d vertical placement matches the engine") {
+    constexpr float stage = 1080.0F;
+    constexpr float canvas = 9000.0F;
+    // 1920x1080 下 6000x9000 画布的 fit = min(0.32, 0.12) * 1.25 = 0.15。
+    // 未乘 transform.scale 的目标高度 1350 >= 1080, 引擎使用 baseY = stageH / 2,
+    // 不额外居中: 屏幕中心 = 1080/1.8 + 225 = 825 (距顶部), 即距底部 255。
+    const float tall = webgal::live2d::figure_center_bottom(stage, canvas, 0.15F, 225.0F);
+    REQUIRE(std::fabs(tall - 255.0F) < 1.0e-3F);
+
+    // 目标高度 800 < 1080 时引擎会把短模型垂直居中:
+    // baseY = 540 + 140 = 680, 中心 = 680 + 600 - 540 = 740, 距底部 340。
+    const float short_model = webgal::live2d::figure_center_bottom(stage, 800.0F, 1.0F, 0.0F);
+    REQUIRE(std::fabs(short_model - 340.0F) < 1.0e-3F);
+
+    // 屏幕里正 position.y 向下移动, 距底部的坐标随之减小。
+    const float moved = webgal::live2d::figure_center_bottom(stage, canvas, 0.15F, 300.0F);
+    REQUIRE(std::fabs((tall - moved) - 75.0F) < 1.0e-3F);
 }
