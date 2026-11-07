@@ -28,6 +28,7 @@ pub fn run() {
         .manage(LspState::default())
         .manage(Mutex::new(PreviewState::new()))
         .manage(Arc::new(VoiceState::default()))
+        .manage(Arc::new(service::video_export::VideoExportState::default()))
         .invoke_handler(tauri::generate_handler![
             service::browser::open_devtools,
             service::fs::copy_directory,
@@ -65,6 +66,12 @@ pub fn run() {
             service::preview::set_embedded_preview_launch_id,
             service::preview::send_preview_command,
             service::snapshot::pack_snapshot,
+            service::video_export::export_video,
+            service::video_export::cancel_video_export,
+            service::video_export::video_export_status,
+            service::video_export::video_project_info,
+            service::video_export::video_route_preview,
+            service::video_export::import_cubism_core,
             service::startup::startup_project_path,
             service::voice::voice_detect_runtime,
             service::voice::voice_default_launch_config,

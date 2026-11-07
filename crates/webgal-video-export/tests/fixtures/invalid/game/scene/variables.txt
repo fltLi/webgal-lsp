@@ -1,0 +1,3 @@
+setVar:name=WebGAL;
+:你好, {name};
+changeBg:missing.png -next;

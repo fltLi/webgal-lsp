@@ -1,0 +1,10 @@
+bgm:theme.wav -volume=50;
+changeBg:bg.png -next;
+changeFigure:fig.png -left -next;
+setTransform:{"position":{"x":200,"y":0},"alpha":0.5} -target=fig-left -duration=1000;
+:第一句;
+:第二句|换行;
+wait:100;
+choose:继续:end|离开:end;
+label:end;
+end;

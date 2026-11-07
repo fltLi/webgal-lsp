@@ -22,6 +22,8 @@ webgal-language-server.path = "./crates/webgal-language-server"
 webgal-simulate.path = "./crates/webgal-simulate"
 webgal-sentence-macro.path = "./crates/webgal-sentence-macro"     # private
 webgal-snapshot.path = "./crates/webgal-snapshot"
+webgal-video-export.path = "./crates/webgal-video-export"
+webgal-video-render-sys.path = "./crates/webgal-video-render-sys" # private
 
 anyhow = "1.0"
 thiserror = "2.0"
@@ -48,6 +50,7 @@ once_cell = "1.21"
 rayon = "1.12"
 rand = "0.10"
 percent-encoding = "2.3"
+tempfile = "3.27"
 walkdir = "2.5"
 zip = "8.6"
 

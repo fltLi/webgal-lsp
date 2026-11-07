@@ -80,4 +80,38 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({}).gitDiffView).toBe('sideBySide');
     expect(normalizeSettings({ gitDiffView: 'invalid' as never }).gitDiffView).toBe('sideBySide');
   });
+
+  it('视频导出参数会保存并在老数据上回落到默认值', () => {
+    expect(normalizeSettings({}).videoExport).toEqual(defaultSettings.videoExport);
+    const settings = normalizeSettings({
+      videoExport: {
+        resolution: '480',
+        fps: '60',
+        bitrate: '16000',
+        encoder: 'mf',
+        content: 'audio',
+        fontScale: '1.15',
+        autoSpeed: '20',
+        textSpeed: '30',
+        figureSide: 'modern',
+        enableFilters: false,
+        includeStage: false,
+        includeUi: true,
+      },
+    });
+    expect(settings.videoExport.resolution).toBe('480');
+    expect(settings.videoExport.content).toBe('audio');
+    expect(settings.videoExport.includeStage).toBe(false);
+    // 非法值回落到默认值, 不把损坏数据带进对话框
+    const broken = normalizeSettings({
+      videoExport: {
+        resolution: '999',
+        content: 'everything',
+        figureSide: 'yolo',
+      } as never,
+    });
+    expect(broken.videoExport.resolution).toBe(defaultSettings.videoExport.resolution);
+    expect(broken.videoExport.content).toBe(defaultSettings.videoExport.content);
+    expect(broken.videoExport.figureSide).toBe(defaultSettings.videoExport.figureSide);
+  });
 });

@@ -1,0 +1,6 @@
+changeFigure:fig.png -left -id=soyo -transform={"position":{"x":0}} -next;
+setTransform:{"position":{"x":500}} -target=soyo -duration=1000 -next;
+wait:100;
+changeFigure:fig.png -id=soyo;
+:测试立绘切换;
+end;

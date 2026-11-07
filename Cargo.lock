@@ -6179,6 +6179,8 @@ dependencies = [
  "webgal-language-server",
  "webgal-language-service",
  "webgal-snapshot",
+ "webgal-video-export",
+ "webgal-video-render-sys",
  "ws_stream_tungstenite",
  "zip",
 ]
@@ -6297,6 +6299,26 @@ dependencies = [
  "walkdir",
  "webgal-language-core",
  "zip",
+]
+
+[[package]]
+name = "webgal-video-export"
+version = "0.1.0"
+dependencies = [
+ "expression",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "walkdir",
+ "webgal-language-core",
+]
+
+[[package]]
+name = "webgal-video-render-sys"
+version = "0.1.0"
+dependencies = [
+ "webgal-video-export",
 ]
 
 [[package]]

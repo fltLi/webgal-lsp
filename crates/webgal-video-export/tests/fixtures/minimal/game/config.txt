@@ -1,0 +1,2 @@
+Game_name:Minimal;
+Game_key:test-key;
