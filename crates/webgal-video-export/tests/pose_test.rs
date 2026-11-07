@@ -74,3 +74,47 @@ end;
     assert_eq!(poses[5].motion.as_deref(), Some("serious01"));
     assert_eq!(poses[5].motion_start_us, 5_000_000);
 }
+
+#[test]
+fn blink_focus_and_expression_start_are_inherited() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let root = directory.path();
+    write(root, "game/config.txt", "Game_name:Blink;\n");
+    write(root, "game/figure/test/test.model3.json", "{}");
+    write(
+        root,
+        "game/scene/start.txt",
+        r#"changeFigure:test/test.model3.json -left -id=hero -blink={"blinkInterval":3000,"closingDuration":120} -focus={"x":0.5,"y":-0.25,"instant":true} -next;
+wait:1000;
+changeFigure:test/test.model3.json -left -id=hero -motion=idle01 -next;
+wait:1000;
+changeFigure:test/test.model3.json -left -id=hero -expression=sad01 -next;
+wait:1000;
+end;
+"#,
+    );
+
+    let plan = build_plan(&ExportOptions::new(root)).expect("build plan");
+    let poses = &plan.figures[0].poses;
+    assert_eq!(poses.len(), 3);
+
+    assert_eq!(poses[0].blink.interval_ms, 3000);
+    assert_eq!(poses[0].blink.closing_ms, 120);
+    assert_eq!(poses[0].blink.interval_random_ms, 1000);
+    assert_eq!(poses[0].focus.x, 0.5);
+    assert_eq!(poses[0].focus.y, -0.25);
+    assert!(poses[0].focus.instant);
+    assert_eq!(poses[0].expression_start_us, 0);
+
+    // 后续动作/表情语句没有重复写 blink/focus，参数应继续沿用。
+    assert_eq!(poses[1].blink.interval_ms, 3000);
+    assert_eq!(poses[1].blink.closing_ms, 120);
+    assert_eq!(poses[1].focus.x, 0.5);
+    assert_eq!(poses[1].focus.y, -0.25);
+    assert_eq!(poses[1].expression_start_us, 0);
+
+    assert_eq!(poses[2].blink.interval_ms, 3000);
+    assert_eq!(poses[2].focus.x, 0.5);
+    assert_eq!(poses[2].expression.as_deref(), Some("sad01"));
+    assert_eq!(poses[2].expression_start_us, 2_000_000);
+}

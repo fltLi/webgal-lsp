@@ -10,8 +10,8 @@ use webgal_video_export::plan::{
 };
 
 use crate::{
-    AudioKind, AudioSpec, BackgroundSpec, Error, FigureKeySpec, Meta, PlanBuilder, StageSpec,
-    TextSpec, Transform,
+    AudioKind, AudioSpec, BackgroundSpec, Blink, Error, FigureKeySpec, Focus, Meta, PlanBuilder,
+    StageSpec, TextSpec, Transform,
 };
 
 /// 把一份编译好的导出计划写进 C++ 渲染器。
@@ -78,12 +78,27 @@ pub fn from_plan(plan: &Plan) -> Result<PlanBuilder, Error> {
             )?;
         }
         for pose in &track.poses {
+            let blink = Blink {
+                interval_ms: pose.blink.interval_ms,
+                interval_random_ms: pose.blink.interval_random_ms,
+                closing_ms: pose.blink.closing_ms,
+                closed_ms: pose.blink.closed_ms,
+                opening_ms: pose.blink.opening_ms,
+            };
+            let focus = Focus {
+                x: pose.focus.x,
+                y: pose.focus.y,
+                instant: pose.focus.instant,
+            };
             builder.add_figure_pose(
                 &track.id,
                 pose.t_us,
                 pose.motion_start_us,
+                pose.expression_start_us,
                 pose.motion.as_deref(),
                 pose.expression.as_deref(),
+                &blink,
+                &focus,
             )?;
         }
     }

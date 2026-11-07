@@ -162,10 +162,51 @@ pub struct FigurePose {
     /// 当前 motion 的起播时间; 只改表情时沿用旧值, 动作不会倒回第一帧。
     #[serde(default)]
     pub motion_start_us: u64,
+    /// 当前表情的起播时间; 用于 exp3.json 的 FadeInTime/FadeOutTime。
+    #[serde(default)]
+    pub expression_start_us: u64,
     #[serde(default)]
     pub motion: Option<String>,
     #[serde(default)]
     pub expression: Option<String>,
+    /// 眨眼参数；未显式设置时使用 WebGAL 的默认值 (间隔 24h, 实际不眨眼)。
+    #[serde(default)]
+    pub blink: BlinkConfig,
+    /// 注视参数；未显式设置时看向正前方。
+    #[serde(default)]
+    pub focus: FocusConfig,
+}
+
+/// Live2D 眨眼参数，单位毫秒。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlinkConfig {
+    pub interval_ms: u32,
+    pub interval_random_ms: u32,
+    pub closing_ms: u32,
+    pub closed_ms: u32,
+    pub opening_ms: u32,
+}
+
+impl Default for BlinkConfig {
+    fn default() -> Self {
+        Self {
+            interval_ms: 24 * 60 * 60 * 1000,
+            interval_random_ms: 1000,
+            closing_ms: 100,
+            closed_ms: 50,
+            opening_ms: 150,
+        }
+    }
+}
+
+/// Live2D 注视参数；`x/y` 为 [-1, 1] 的归一化方向。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusConfig {
+    pub x: f32,
+    pub y: f32,
+    pub instant: bool,
 }
 /// 立绘关键帧。
 #[derive(Debug, Clone, Serialize, Deserialize)]

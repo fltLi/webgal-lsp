@@ -291,7 +291,6 @@ bool Model::load_motion(const std::filesystem::path& path, Motion& motion,
     try {
         const auto meta = json.value("Meta", nlohmann::json::object());
         motion.duration = meta.value("Duration", 0.0F);
-        motion.loop = meta.value("Loop", false);
         if (!json.contains("Curves") || !json.at("Curves").is_array()) {
             return true;
         }
@@ -327,19 +326,33 @@ bool Model::load_expression(const std::filesystem::path& path, Expression& expre
     if (!read_json(path, json, error)) {
         return false;
     }
-    if (!json.contains("Parameters") || !json.at("Parameters").is_array()) {
-        return true;
-    }
     try {
+        expression.fade_in = std::max<float>(0.0F, json.value("FadeInTime", 1.0F));
+        expression.fade_out = std::max<float>(0.0F, json.value("FadeOutTime", 1.0F));
+        if (!json.contains("Parameters") || !json.at("Parameters").is_array()) {
+            return true;
+        }
         for (const auto& parameter : json.at("Parameters")) {
             const auto found = parameter_index_.find(parameter.value("Id", std::string{}));
             if (found == parameter_index_.end()) {
                 continue;
             }
+            // MyGO 的 pixi-live2d-display 只识别字符串 Blend；exp3.json 里的
+            // 数字 Blend 会落到 default 分支按 Add 处理。这里保持同样的行为，
+            // 否则示例项目的 sad01 等表情会看起来完全没有生效。
+            int blend = 0;
+            if (parameter.contains("Blend") && parameter.at("Blend").is_string()) {
+                const std::string type = parameter.at("Blend").get<std::string>();
+                if (type == "Multiply") {
+                    blend = 1;
+                } else if (type == "Overwrite") {
+                    blend = 2;
+                }
+            }
             expression.parameters.push_back(ExpressionParameter{
                 .parameter = found->second,
                 .value = parameter.value("Value", 0.0F),
-                .blend = parameter.value("Blend", 1),
+                .blend = blend,
             });
         }
     } catch (const std::exception& exception) {
@@ -475,6 +488,50 @@ float blend_expression_value(float value, float expression, int blend) {
     }
 }
 
+float blink_openness(double time_ms, const Blink& blink) {
+    if (blink.interval_ms == 0) {
+        return 1.0F;
+    }
+    const double interval = static_cast<double>(blink.interval_ms);
+    const double time = std::max(time_ms, 0.0);
+    // 用周期序号生成确定性的抖动，避免逐帧随机导致同一帧不可复现。
+    const auto jitter_for = [&](double cycle) {
+        if (blink.interval_random_ms == 0) {
+            return 0.0;
+        }
+        const double noise = std::sin((cycle + 1.0) * 12.9898) * 43758.5453;
+        const double fraction = noise - std::floor(noise);
+        return (fraction * 2.0 - 1.0) * static_cast<double>(blink.interval_random_ms);
+    };
+    // 首帧保持睁眼，第一次眨眼要等一个间隔；否则导出开头会立刻闭眼。
+    const double first_delay = std::max(0.0, interval + jitter_for(0.0));
+    if (time < first_delay) {
+        return 1.0F;
+    }
+    const double elapsed = time - first_delay;
+    const double cycle = std::floor(elapsed / interval);
+    const double length = std::max(1.0, interval + jitter_for(cycle + 1.0));
+    const double phase = std::fmod(elapsed, length);
+    const double closing = static_cast<double>(blink.closing_ms);
+    const double closed = static_cast<double>(blink.closed_ms);
+    const double opening = static_cast<double>(blink.opening_ms);
+    if (phase < closing && closing > 0.0) {
+        return std::clamp(static_cast<float>(1.0 - phase / closing), 0.0F, 1.0F);
+    }
+    if (phase < closing + closed) {
+        return 0.0F;
+    }
+    if (phase < closing + closed + opening && opening > 0.0) {
+        return std::clamp(static_cast<float>((phase - closing - closed) / opening), 0.0F, 1.0F);
+    }
+    return 1.0F;
+}
+
+float motion_time_at(float time, float duration) {
+    const float at = std::max<float>(time, 0.0F);
+    return duration <= 0.0F ? at : std::min<float>(at, duration);
+}
+
 void Model::set_parameter(const char* id, float value) {
     const auto found = parameter_index_.find(id);
     if (found != parameter_index_.end()) {
@@ -482,8 +539,16 @@ void Model::set_parameter(const char* id, float value) {
     }
 }
 
+void Model::add_parameter(const char* id, float value) {
+    const auto found = parameter_index_.find(id);
+    if (found != parameter_index_.end()) {
+        parameter_values_[found->second] += value;
+    }
+}
+
 bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
                              const std::optional<std::string>& motion, float time, float mouth,
+                             const Blink& blink, const Focus& focus, float absolute_time,
                              std::string& error) {
     (void)api;
     if (parameter_values_ == nullptr || parameter_defaults_ == nullptr || parameter_count_ <= 0) {
@@ -504,10 +569,8 @@ bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string
             return false;
         }
         motion_data = &found->second;
-        if (motion_data->duration > 0.0F) {
-            // 动作结束后停在最后一帧; WebGAL 不会自动切回 idle。
-            at = std::min<float>(at, motion_data->duration);
-        }
+        // WebGAL 的 motion 只播放一次，结束后停在最后一帧，不自动切回 idle。
+        at = motion_time_at(at, motion_data->duration);
     }
 
     // 姿态时间同样使用夹取后的 `at`, 否则动作结束后呼吸/摆头还会继续漂移。
@@ -546,22 +609,49 @@ bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string
         }
     }
 
+    const float focus_x = std::clamp(focus.x, -1.0F, 1.0F);
+    const float focus_y = std::clamp(focus.y, -1.0F, 1.0F);
+    // 与 pixi-live2d-display 的 FocusController 保持同一组系数。
+    add_parameter("ParamEyeBallX", focus_x);
+    add_parameter("ParamEyeBallY", focus_y);
+    add_parameter("ParamAngleX", focus_x * 30.0F);
+    add_parameter("ParamAngleY", focus_y * 30.0F);
+    add_parameter("ParamAngleZ", focus_x * focus_y * -30.0F);
+    add_parameter("ParamBodyAngleX", focus_x * 10.0F);
+
+    // 眨眼在表情之后应用，避免表情里的眼睛开合值把眨眼盖掉。
+    const float openness = blink_openness(static_cast<double>(absolute_time) * 1000.0, blink);
+    if (openness < 0.999F) {
+        for (const char* id : {"ParamEyeLOpen", "ParamEyeROpen"}) {
+            const auto found = parameter_index_.find(id);
+            if (found != parameter_index_.end()) {
+                parameter_values_[found->second] *= openness;
+            }
+        }
+    }
+
     // 口型在表情之后写入, 否则表情里的 `ParamMouthOpenY` (常见为 Multiply 0)
     // 会把正在说话的嘴型压回去。
     set_parameter("ParamMouthOpenY", mouth);
     return true;
 }
 
-bool Model::apply_pose(const CoreApi& api, const std::optional<std::string>& expression,
-                       const std::optional<std::string>& motion, float time, float mouth,
-                       std::string& error) {
-    if (!apply_parameters(api, expression, motion, time, mouth, error)) {
-        return false;
-    }
-    api.reset_drawable_dynamic_flags(model_);
-    api.update_model(model_);
-    update_drawables(api);
-    return true;
+bool Model::has_expression(const std::string& name) const {
+    return expressions_.find(name) != expressions_.end();
+}
+
+bool Model::has_motion(const std::string& name) const {
+    return motions_.find(name) != motions_.end();
+}
+
+float Model::expression_fade_in(const std::string& name) const {
+    const auto found = expressions_.find(name);
+    return found == expressions_.end() ? -1.0F : found->second.fade_in;
+}
+
+float Model::expression_fade_out(const std::string& name) const {
+    const auto found = expressions_.find(name);
+    return found == expressions_.end() ? -1.0F : found->second.fade_out;
 }
 
 bool Model::apply_pose_blend(const CoreApi& api,
@@ -569,17 +659,21 @@ bool Model::apply_pose_blend(const CoreApi& api,
                              const std::optional<std::string>& previous_motion, float previous_time,
                              const std::optional<std::string>& expression,
                              const std::optional<std::string>& motion, float time, float blend,
-                             float mouth, std::string& error) {
+                             float mouth, const Blink& blink, const Focus& focus,
+                             float absolute_time, std::string& error) {
     const int count = parameter_count_;
     std::vector<float> previous_values;
-    if (previous_motion || previous_expression) {
+    // 首次设置表情时也要从“无表情”的基准淡入，因此 blend < 1 时即使没有
+    // previous_motion/expression 也先算一份基准参数。
+    if (previous_motion || previous_expression || (expression && blend < 0.999F)) {
         if (!apply_parameters(api, previous_expression, previous_motion, previous_time, mouth,
-                              error)) {
+                              blink, focus, absolute_time, error)) {
             return false;
         }
         previous_values.assign(parameter_values_, parameter_values_ + count);
     }
-    if (!apply_parameters(api, expression, motion, time, mouth, error)) {
+    if (!apply_parameters(api, expression, motion, time, mouth, blink, focus, absolute_time,
+                          error)) {
         return false;
     }
     if (!previous_values.empty()) {

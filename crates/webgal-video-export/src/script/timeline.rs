@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use expression::{EmptyEvaluationContext, Expression};
 use webgal_language_core::{
-    element::{FigureSide, Forward, Transform},
+    element::{FigureSide, Forward, Live2dBlink, Live2dFocus, Transform},
     resource::FigureKind,
     sentence::{
         BgmSentence, CallSceneSentence, ChangeBackgroundSentence, ChangeFigureSentence,
@@ -22,9 +22,10 @@ use crate::{
     Error, Result,
     config::{ExportConfig, FigureSideMode},
     plan::{
-        AssetInfo, AssetKind, AudioEvent, AudioKind, BackgroundKey, BlendMode, ChoiceOption,
-        ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack, IntroSegment, Meta,
-        Plan, StageKey, TextChar, TextLine, TextSegment, VideoSegment, Warning,
+        AssetInfo, AssetKind, AudioEvent, AudioKind, BackgroundKey, BlendMode, BlinkConfig,
+        ChoiceOption, ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack,
+        FocusConfig, IntroSegment, Meta, Plan, StageKey, TextChar, TextLine, TextSegment,
+        VideoSegment, Warning,
     },
     project::Project,
     script::{decision::ChoicePolicy, live2d::is_moc3, timing::Timing},
@@ -60,6 +61,10 @@ struct FigureState {
     motion: Option<String>,
     /// 当前 motion 的起播时间; 只改表情时不重置。
     motion_start_us: u64,
+    /// 当前表情的起播时间; 用于 exp3.json 的淡入淡出。
+    expression_start_us: u64,
+    blink: BlinkConfig,
+    focus: FocusConfig,
     side: FigureSide,
     transform: Transform,
 }
@@ -518,13 +523,6 @@ impl<'a> Compiler<'a> {
         } else {
             (None, None)
         };
-        if is_live2d && (sentence.blink.is_some() || sentence.focus.is_some()) {
-            self.warn(
-                "WG_LIVE2D_STATIC",
-                "blink/focus 尚未接入 Live2D，motion/expression 仍会应用",
-                self.line + 1,
-            );
-        }
         let previous = self.figures.get(&id);
         let modern = self.figure_side == FigureSideMode::Modern;
         // 4.6.3 及以前: 未写 `-left/-right` 时沿用旧基准 (自由立绘不会因为省略位置
@@ -617,8 +615,11 @@ impl<'a> Compiler<'a> {
             .as_deref()
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
-        // 同一身份下, 未写 `-expression/-motion` 时保留旧状态; 换模型时清空。
-        // 只改表情的语句不能把 motion 状态一起清掉, 否则后续动作会从默认姿势开始。
+        let requested_blink = sentence.blink;
+        let requested_focus = sentence.focus;
+        // 同一身份下, 未写 `-expression/-motion/-blink/-focus` 时保留旧状态;
+        // 换模型时清空。只改表情的语句不能把 motion 状态一起清掉,
+        // 否则后续动作会从默认姿势开始。
         let expression = if identity_same {
             requested_expression
                 .clone()
@@ -644,12 +645,49 @@ impl<'a> Compiler<'a> {
                 .map(|state| state.motion_start_us)
                 .unwrap_or(self.time_us)
         };
-        if visible && (requested_motion.is_some() || requested_expression.is_some()) {
+        // 同一表情再次写入时不重启淡入; 换表情或换模型时从当前时刻开始淡入。
+        let expression_start_us = match expression.as_deref() {
+            None => 0,
+            Some(name)
+                if identity_same
+                    && previous.and_then(|state| state.expression.as_deref()) == Some(name) =>
+            {
+                previous
+                    .map(|state| state.expression_start_us)
+                    .unwrap_or(self.time_us)
+            }
+            Some(_) => self.time_us,
+        };
+        let mut blink = if identity_same {
+            previous.map(|state| state.blink).unwrap_or_default()
+        } else {
+            BlinkConfig::default()
+        };
+        if let Some(update) = requested_blink.as_ref() {
+            merge_blink(&mut blink, update);
+        }
+        let mut focus = if identity_same {
+            previous.map(|state| state.focus).unwrap_or_default()
+        } else {
+            FocusConfig::default()
+        };
+        if let Some(update) = requested_focus.as_ref() {
+            merge_focus(&mut focus, update);
+        }
+        if visible
+            && (requested_motion.is_some()
+                || requested_expression.is_some()
+                || requested_blink.is_some()
+                || requested_focus.is_some())
+        {
             self.plan.figures[track].poses.push(FigurePose {
                 t_us: self.time_us,
                 motion_start_us,
+                expression_start_us,
                 motion: motion.clone(),
                 expression: expression.clone(),
+                blink,
+                focus,
             });
         }
         if asset.is_some() || live2d.is_some() {
@@ -662,6 +700,9 @@ impl<'a> Compiler<'a> {
                     expression,
                     motion,
                     motion_start_us,
+                    expression_start_us,
+                    blink,
+                    focus,
                     side: effective_side,
                     transform,
                 },
@@ -996,6 +1037,38 @@ fn collect_labels(project: &Project) -> HashMap<String, HashMap<String, usize>> 
         labels.insert(name.to_owned(), scene_labels);
     }
     labels
+}
+
+/// 把 `-blink` 的部分字段覆盖到当前参数上; 未写的字段沿用旧值。
+fn merge_blink(config: &mut BlinkConfig, update: &Live2dBlink) {
+    if let Some(value) = update.blink_interval {
+        config.interval_ms = value;
+    }
+    if let Some(value) = update.blink_interval_random {
+        config.interval_random_ms = value;
+    }
+    if let Some(value) = update.closing_duration {
+        config.closing_ms = value;
+    }
+    if let Some(value) = update.closed_duration {
+        config.closed_ms = value;
+    }
+    if let Some(value) = update.opening_duration {
+        config.opening_ms = value;
+    }
+}
+
+/// 把 `-focus` 的部分字段覆盖到当前参数上; `instant` 只在显式写入时改变。
+fn merge_focus(config: &mut FocusConfig, update: &Live2dFocus) {
+    if let Some(value) = update.x {
+        config.x = value;
+    }
+    if let Some(value) = update.y {
+        config.y = value;
+    }
+    if let Some(value) = update.instant {
+        config.instant = value;
+    }
 }
 
 fn evaluate_condition(expression: &Expression) -> Result<bool> {

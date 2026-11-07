@@ -79,12 +79,32 @@ struct FigureKey {
     bool snap_transform = false;
 };
 
+/// Live2D 眨眼参数，单位毫秒。
+struct Blink {
+    std::uint32_t interval_ms = 24U * 60U * 60U * 1000U;
+    std::uint32_t interval_random_ms = 1000;
+    std::uint32_t closing_ms = 100;
+    std::uint32_t closed_ms = 50;
+    std::uint32_t opening_ms = 150;
+};
+
+/// Live2D 注视方向；`x/y` 为 [-1, 1]。
+struct Focus {
+    float x = 0.0F;
+    float y = 0.0F;
+    bool instant = false;
+};
+
 struct FigurePose {
     std::uint64_t t_us = 0;
     /// 当前 motion 的起播时间; 只改表情时沿用旧值。
     std::uint64_t motion_start_us = 0;
+    /// 当前表情的起播时间; 用于 exp3.json 的 FadeInTime/FadeOutTime。
+    std::uint64_t expression_start_us = 0;
     std::optional<std::string> motion;
     std::optional<std::string> expression;
+    Blink blink;
+    Focus focus;
 };
 
 struct FigureTrack {

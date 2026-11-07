@@ -17,6 +17,29 @@ namespace webgal::live2d {
 /// 按 Cubism expression 的 `Blend` 数值融合参数: 0=Add, 1=Multiply, 2=Overwrite。
 float blend_expression_value(float value, float expression, int blend);
 
+/// 眨眼参数，单位毫秒。
+struct Blink {
+    std::uint32_t interval_ms = 24U * 60U * 60U * 1000U;
+    std::uint32_t interval_random_ms = 1000;
+    std::uint32_t closing_ms = 100;
+    std::uint32_t closed_ms = 50;
+    std::uint32_t opening_ms = 150;
+};
+
+/// 注视方向；`x/y` 为 [-1, 1]。
+struct Focus {
+    float x = 0.0F;
+    float y = 0.0F;
+    bool instant = false;
+};
+
+/// 计算 `time_ms` 时刻的眼睛开合度 (0 闭眼, 1 睁眼)。
+/// 间隔中的随机抖动按当前眨眼周期确定，保证同一时间点可复现。
+float blink_openness(double time_ms, const Blink& blink);
+
+/// 把动作时间夹到 [0, duration]；动作只播放一次，结束后停在最后一帧。
+float motion_time_at(float time, float duration);
+
 /// Cubism Core 拥有的 drawable 视图。
 ///
 /// 顶点/索引数组由 Core 原地更新，这里只保存指针与数量，避免每帧把整模型的
@@ -53,14 +76,18 @@ class Model {
     Model& operator=(const Model&) = delete;
 
     bool load(const CoreApi& api, const std::filesystem::path& model3, std::string& error);
-    bool apply_pose(const CoreApi& api, const std::optional<std::string>& expression,
-                    const std::optional<std::string>& motion, float time, float mouth,
-                    std::string& error);
     bool apply_pose_blend(const CoreApi& api, const std::optional<std::string>& previous_expression,
                           const std::optional<std::string>& previous_motion, float previous_time,
                           const std::optional<std::string>& expression,
                           const std::optional<std::string>& motion, float time, float blend,
-                          float mouth, std::string& error);
+                          float mouth, const Blink& blink, const Focus& focus, float absolute_time,
+                          std::string& error);
+    bool has_expression(const std::string& name) const;
+    bool has_motion(const std::string& name) const;
+    /// exp3.json 的淡入时长 (秒); 未定义时返回 -1。
+    float expression_fade_in(const std::string& name) const;
+    /// exp3.json 的淡出时长 (秒); 未定义时返回 -1。
+    float expression_fade_out(const std::string& name) const;
 
     const std::vector<Drawable>& drawables() const {
         return drawables_;
@@ -93,7 +120,6 @@ class Model {
     };
     struct Motion {
         float duration = 0.0F;
-        bool loop = false;
         std::vector<MotionCurve> curves;
     };
     struct ExpressionParameter {
@@ -102,6 +128,8 @@ class Model {
         int blend = 1;
     };
     struct Expression {
+        float fade_in = 1.0F;
+        float fade_out = 1.0F;
         std::vector<ExpressionParameter> parameters;
     };
 
@@ -113,8 +141,10 @@ class Model {
                          std::string& error) const;
     bool apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
                           const std::optional<std::string>& motion, float time, float mouth,
+                          const Blink& blink, const Focus& focus, float absolute_time,
                           std::string& error);
     void set_parameter(const char* id, float value);
+    void add_parameter(const char* id, float value);
 
     void* moc_memory_ = nullptr;
     void* model_memory_ = nullptr;

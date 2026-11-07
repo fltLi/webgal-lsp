@@ -2243,9 +2243,19 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
     float pose_time = 0.0F;
     float previous_time = 0.0F;
     float blend = 1.0F;
+    live2d::Blink blink;
+    live2d::Focus focus;
     if (current_pose != nullptr) {
         current_motion = current_pose->motion;
         current_expression = current_pose->expression;
+        blink.interval_ms = current_pose->blink.interval_ms;
+        blink.interval_random_ms = current_pose->blink.interval_random_ms;
+        blink.closing_ms = current_pose->blink.closing_ms;
+        blink.closed_ms = current_pose->blink.closed_ms;
+        blink.opening_ms = current_pose->blink.opening_ms;
+        focus.x = current_pose->focus.x;
+        focus.y = current_pose->focus.y;
+        focus.instant = current_pose->focus.instant;
         // motion 的进度从它真正起播的时刻算起; 只改表情的姿态事件不会重置进度。
         pose_time =
             static_cast<float>(elapsed_us(t_us, current_pose->motion_start_us)) / 1000000.0F;
@@ -2255,16 +2265,67 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
             previous_time =
                 static_cast<float>(elapsed_us(current_pose->t_us, previous_pose->motion_start_us)) /
                 1000000.0F;
-            const float linear =
-                std::clamp(static_cast<float>(t_us - current_pose->t_us) / 1000000.0F, 0.0F, 1.0F);
-            blend = 0.5F - 0.5F * std::cos(linear * 3.14159265358979323846F);
+            // focus 未要求瞬间切换时，用 250ms 从上一注视点平滑过去。
+            if (!current_pose->focus.instant) {
+                const float elapsed =
+                    static_cast<float>(elapsed_us(t_us, current_pose->t_us)) / 1000000.0F;
+                const float weight = std::clamp(elapsed / 0.25F, 0.0F, 1.0F);
+                focus.x = previous_pose->focus.x +
+                          ((current_pose->focus.x - previous_pose->focus.x) * weight);
+                focus.y = previous_pose->focus.y +
+                          ((current_pose->focus.y - previous_pose->focus.y) * weight);
+            }
         }
     } else if (key.motion) {
-        pose_time = static_cast<float>(t_us - key.t_us) / 1000000.0F;
+        pose_time = static_cast<float>(elapsed_us(t_us, key.t_us)) / 1000000.0F;
     }
+
+    // 换模型时旧模型的表情/动作名可能不存在；不要拿旧名字去驱动新模型。
+    if (previous_expression && !model->has_expression(*previous_expression)) {
+        previous_expression.reset();
+    }
+    if (previous_motion && !model->has_motion(*previous_motion)) {
+        previous_motion.reset();
+    }
+
+    // 表情切换按 exp3.json 自己的 FadeInTime/FadeOutTime 过渡；表情未变时
+    // 仍按原来的 1s 姿态混合处理动作切换。
+    const bool expression_changed = current_expression != previous_expression;
+    if (current_pose != nullptr && expression_changed) {
+        float fade_seconds = 1.0F;
+        if (current_expression && model->has_expression(*current_expression)) {
+            fade_seconds = model->expression_fade_in(*current_expression);
+            // A -> B 时旧表情也在淡出，取两者中较长的过渡时间。
+            if (previous_expression && model->has_expression(*previous_expression)) {
+                fade_seconds =
+                    std::max<float>(fade_seconds, model->expression_fade_out(*previous_expression));
+            }
+        } else if (previous_expression) {
+            const float fade = model->expression_fade_out(*previous_expression);
+            if (fade >= 0.0F) {
+                fade_seconds = fade;
+            }
+        }
+        const float elapsed =
+            static_cast<float>(elapsed_us(t_us, current_pose->expression_start_us)) / 1000000.0F;
+        const float linear =
+            std::clamp(elapsed / std::max<float>(fade_seconds, 1.0e-4F), 0.0F, 1.0F);
+        blend = 0.5F - 0.5F * std::cos(linear * 3.14159265358979323846F);
+        // 首次设置表情时，从同一动作但没有表情的基准参数淡入。
+        if (previous_pose == nullptr && current_expression) {
+            previous_motion = current_motion;
+            previous_time = pose_time;
+        }
+    } else if (current_pose != nullptr && previous_pose != nullptr) {
+        const float linear = std::clamp(
+            static_cast<float>(elapsed_us(t_us, current_pose->t_us)) / 1000000.0F, 0.0F, 1.0F);
+        blend = 0.5F - 0.5F * std::cos(linear * 3.14159265358979323846F);
+    }
+
+    const float absolute_time = static_cast<float>(t_us) / 1000000.0F;
     if (!model->apply_pose_blend(core_api_, previous_expression, previous_motion, previous_time,
-                                 current_expression, current_motion, pose_time, blend, mouth,
-                                 error)) {
+                                 current_expression, current_motion, pose_time, blend, mouth, blink,
+                                 focus, absolute_time, error)) {
         return false;
     }
 

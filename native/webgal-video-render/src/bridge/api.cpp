@@ -407,8 +407,9 @@ int webgal_plan_add_figure_key(WebgalPlan* plan, const char* figure_id, uint64_t
 }
 
 int webgal_plan_add_figure_pose(WebgalPlan* plan, const char* figure_id, uint64_t t_us,
-                                uint64_t motion_start_us, const char* motion,
-                                const char* expression) {
+                                uint64_t motion_start_us, uint64_t expression_start_us,
+                                const char* motion, const char* expression,
+                                const WebgalBlink* blink, const WebgalFocus* focus) {
     if (plan == nullptr) {
         return WEBGAL_STATUS_INVALID_ARGUMENT;
     }
@@ -420,8 +421,21 @@ int webgal_plan_add_figure_pose(WebgalPlan* plan, const char* figure_id, uint64_
         webgal::job::FigurePose pose;
         pose.t_us = t_us;
         pose.motion_start_us = motion_start_us;
+        pose.expression_start_us = expression_start_us;
         pose.motion = optional_string(motion);
         pose.expression = optional_string(expression);
+        if (blink != nullptr) {
+            pose.blink.interval_ms = blink->interval_ms;
+            pose.blink.interval_random_ms = blink->interval_random_ms;
+            pose.blink.closing_ms = blink->closing_ms;
+            pose.blink.closed_ms = blink->closed_ms;
+            pose.blink.opening_ms = blink->opening_ms;
+        }
+        if (focus != nullptr) {
+            pose.focus.x = clamp_finite(focus->x, -1.0F, 1.0F, 0.0F);
+            pose.focus.y = clamp_finite(focus->y, -1.0F, 1.0F, 0.0F);
+            pose.focus.instant = focus->instant != 0;
+        }
         track->poses.push_back(std::move(pose));
         return WEBGAL_STATUS_OK;
     } catch (...) {

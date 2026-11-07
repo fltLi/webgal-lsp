@@ -77,6 +77,22 @@ typedef struct WebgalTransform {
     float bevel_blue;
 } WebgalTransform;
 
+/* Live2D 眨眼参数, 单位毫秒。 */
+typedef struct WebgalBlink {
+    uint32_t interval_ms;
+    uint32_t interval_random_ms;
+    uint32_t closing_ms;
+    uint32_t closed_ms;
+    uint32_t opening_ms;
+} WebgalBlink;
+
+/* Live2D 注视方向; x/y 为 [-1, 1], instant 表示不插值直接切换。 */
+typedef struct WebgalFocus {
+    float x;
+    float y;
+    int instant;
+} WebgalFocus;
+
 /* 预览帧回调; png 是编码后的 PNG, 只在回调期间有效。
  * 渲染阶段约每 1 秒触发一次, 供前端显示当前画面。 */
 typedef struct WebgalRenderCallbacks {
@@ -145,8 +161,9 @@ int webgal_plan_add_figure_key(WebgalPlan* plan, const char* figure_id, uint64_t
                                const char* ease, int snap_transform);
 
 int webgal_plan_add_figure_pose(WebgalPlan* plan, const char* figure_id, uint64_t t_us,
-                                uint64_t motion_start_us, const char* motion,
-                                const char* expression);
+                                uint64_t motion_start_us, uint64_t expression_start_us,
+                                const char* motion, const char* expression,
+                                const WebgalBlink* blink, const WebgalFocus* focus);
 
 /* 开始一段对话; 之后用 webgal_plan_add_text_line / webgal_plan_add_text_char 填充内容。 */
 int webgal_plan_add_text(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, const char* speaker,

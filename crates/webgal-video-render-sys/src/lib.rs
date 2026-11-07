@@ -27,6 +27,46 @@ pub struct WebgalPlan {
     _private: [u8; 0],
 }
 
+/// Live2D 眨眼参数; 单位毫秒。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Blink {
+    pub interval_ms: u32,
+    pub interval_random_ms: u32,
+    pub closing_ms: u32,
+    pub closed_ms: u32,
+    pub opening_ms: u32,
+}
+
+impl Default for Blink {
+    fn default() -> Self {
+        Self {
+            interval_ms: 24 * 60 * 60 * 1000,
+            interval_random_ms: 1000,
+            closing_ms: 100,
+            closed_ms: 50,
+            opening_ms: 150,
+        }
+    }
+}
+
+/// Live2D 注视方向; `x/y` 为 [-1, 1]。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Focus {
+    pub x: f32,
+    pub y: f32,
+    pub instant: bool,
+}
+
+/// C ABI 里的 `WebgalFocus`; `instant` 必须按 4 字节 int 传递。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct WebgalFocus {
+    x: f32,
+    y: f32,
+    instant: c_int,
+}
+
 /// 与 `WebgalTransform` 对应的渲染变换; 颜色分量为 0..1。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -345,8 +385,11 @@ unsafe extern "C" {
         figure_id: *const c_char,
         t_us: u64,
         motion_start_us: u64,
+        expression_start_us: u64,
         motion: *const c_char,
         expression: *const c_char,
+        blink: *const Blink,
+        focus: *const WebgalFocus,
     ) -> c_int;
     #[allow(clippy::too_many_arguments)]
     fn webgal_plan_add_text(
@@ -596,26 +639,38 @@ impl PlanBuilder {
         })
     }
 
-    /// 追加 Live2D 动作/表情事件。
+    /// 追加 Live2D 动作/表情/眨眼/注视事件。
+    #[allow(clippy::too_many_arguments)]
     pub fn add_figure_pose(
         &mut self,
         figure_id: &str,
         t_us: u64,
         motion_start_us: u64,
+        expression_start_us: u64,
         motion: Option<&str>,
         expression: Option<&str>,
+        blink: &Blink,
+        focus: &Focus,
     ) -> Result<(), Error> {
         let figure_id = cstring(figure_id)?;
         let motion = optional_cstring(motion)?;
         let expression = optional_cstring(expression)?;
+        let focus = WebgalFocus {
+            x: focus.x,
+            y: focus.y,
+            instant: flag(focus.instant),
+        };
         check(unsafe {
             webgal_plan_add_figure_pose(
                 self.raw,
                 figure_id.as_ptr(),
                 t_us,
                 motion_start_us,
+                expression_start_us,
                 motion.as_ptr(),
                 expression.as_ptr(),
+                blink,
+                &focus,
             )
         })
     }

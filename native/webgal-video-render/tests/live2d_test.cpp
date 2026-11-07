@@ -28,6 +28,33 @@ TEST_CASE("expression blend modes follow Cubism") {
     REQUIRE(webgal::live2d::blend_expression_value(0.2F, 0.5F, 9) == Approx(0.7F));
 }
 
+TEST_CASE("blink openness follows closing, closed and opening phases") {
+    using Catch::Approx;
+    webgal::live2d::Blink blink;
+    blink.interval_ms = 1000;
+    blink.interval_random_ms = 0;
+    blink.closing_ms = 100;
+    blink.closed_ms = 50;
+    blink.opening_ms = 150;
+
+    REQUIRE(webgal::live2d::blink_openness(0.0, blink) == Approx(1.0F));
+    REQUIRE(webgal::live2d::blink_openness(200.0, blink) == Approx(1.0F));
+    REQUIRE(webgal::live2d::blink_openness(1050.0, blink) == Approx(0.5F));
+    REQUIRE(webgal::live2d::blink_openness(1100.0, blink) == Approx(0.0F));
+    REQUIRE(webgal::live2d::blink_openness(1120.0, blink) == Approx(0.0F));
+    REQUIRE(webgal::live2d::blink_openness(1225.0, blink) == Approx(0.5F));
+    REQUIRE(webgal::live2d::blink_openness(1300.0, blink) == Approx(1.0F));
+    REQUIRE(webgal::live2d::blink_openness(2000.0, blink) == Approx(1.0F));
+}
+
+TEST_CASE("one-shot motion holds the last frame") {
+    using Catch::Approx;
+    REQUIRE(webgal::live2d::motion_time_at(5.0F, 2.0F) == Approx(2.0F));
+    REQUIRE(webgal::live2d::motion_time_at(1.0F, 2.0F) == Approx(1.0F));
+    REQUIRE(webgal::live2d::motion_time_at(-1.0F, 2.0F) == Approx(0.0F));
+    REQUIRE(webgal::live2d::motion_time_at(1.0F, 0.0F) == Approx(1.0F));
+}
+
 TEST_CASE("M_3_1_0 live2d vertical placement matches the engine") {
     constexpr float stage = 1080.0F;
     constexpr float canvas = 9000.0F;
