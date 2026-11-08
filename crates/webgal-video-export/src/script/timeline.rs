@@ -634,11 +634,16 @@ impl<'a> Compiler<'a> {
         } else {
             requested_motion.clone()
         };
-        // 只有显式 `-motion` 才重新起播; 表情事件沿用已有 motion 的起点,
-        // 否则动作会在每次改表情时倒回第一帧。
+        // WebGAL 的 `changeModelMotionByKey` 只在 motion 名变化时重新起播;
+        // 重复写同一条 `-motion` 只更新 focus/blink 等参数, 不会把动作倒回
+        // 第一帧。首次出现或换模型时仍然从当前时刻起播。
+        let previous_motion = previous.and_then(|state| state.motion.as_deref());
+        let motion_changed = requested_motion
+            .as_deref()
+            .is_some_and(|requested| Some(requested) != previous_motion);
         let motion_start_us = if motion.is_none() {
             0
-        } else if requested_motion.is_some() {
+        } else if !identity_same || motion_changed {
             self.time_us
         } else {
             previous

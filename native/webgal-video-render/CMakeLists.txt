@@ -7,7 +7,7 @@
 # 构建入口在仓库根 CMakeLists.txt, 依赖清单在根 vcpkg.json。
 
 find_package(Vulkan REQUIRED)
-# Live2D 的 model3.json / motion3.json / exp3.json 仍需要 JSON 解析;
+# Live2D 的 model3.json / motion3.json / exp3.json / physics3.json 仍需要 JSON 解析;
 # 这里只为读取资源清单, 与 Rust 侧的通信已改走 C ABI。
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -73,6 +73,7 @@ add_library(webgal-video-render STATIC
     src/common/log.cpp
     src/live2d/core_loader.cpp
     src/live2d/model.cpp
+    src/live2d/physics.cpp
     src/media/audio.cpp
     src/media/image.cpp
     src/media/mf_encoder.cpp

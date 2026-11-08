@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "live2d/core_loader.hpp"
+#include "live2d/physics.hpp"
 
 namespace webgal::live2d {
 
@@ -39,6 +40,24 @@ float blink_openness(double time_ms, const Blink& blink);
 
 /// 把动作时间夹到 [0, duration]；动作只播放一次，结束后停在最后一帧。
 float motion_time_at(float time, float duration);
+
+/// 求 motion3.json 一条曲线在 `at` 秒处的值（段格式见 Cubism motion 规范）。
+float evaluate_motion_curve(const std::vector<float>& segments, float at);
+
+/// CubismMotion 的淡入淡出权重。
+///
+/// WebGAL 的 `CubismMotion.doUpdateParameters` 每帧都算
+/// `easing(time/fadeIn) * easing((duration-time)/fadeOut)`，再用它把曲线值
+/// 滤波到上一帧的参数值上。短 motion 的淡入淡出会重叠，所以不能只做一次
+/// 起播 crossfade。
+float motion_fade_weight(float time, float duration, float fade_in, float fade_out);
+
+/// WebGAL `CubismBreath` 的 `ParamBreath` 增量。
+///
+/// 引擎固定为 `0.5 * sin(2πt / 3.2345)`，再乘 0.5 的权重；这里返回要加到
+/// 参数上的量，因此范围是 [-0.25, 0.25]，负值由 Core 按参数下限夹掉。它必须
+/// 用绝对时间驱动，不能跟着已经结束的 motion 一起停住。
+float breath_value(float absolute_time);
 
 /// Cubism Core 拥有的 drawable 视图。
 ///
@@ -77,7 +96,6 @@ class Model {
 
     bool load(const CoreApi& api, const std::filesystem::path& model3, std::string& error);
     bool apply_pose_blend(const CoreApi& api, const std::optional<std::string>& previous_expression,
-                          const std::optional<std::string>& previous_motion, float previous_time,
                           const std::optional<std::string>& expression,
                           const std::optional<std::string>& motion, float time, float blend,
                           float mouth, const Blink& blink, const Focus& focus, float absolute_time,
@@ -88,7 +106,6 @@ class Model {
     float expression_fade_in(const std::string& name) const;
     /// exp3.json 的淡出时长 (秒); 未定义时返回 -1。
     float expression_fade_out(const std::string& name) const;
-
     const std::vector<Drawable>& drawables() const {
         return drawables_;
     }
@@ -116,10 +133,17 @@ class Model {
   private:
     struct MotionCurve {
         int parameter = -1;
+        // motion3.json 每条曲线可单独覆盖淡入淡出; -1 表示跟随 motion 全局值。
+        float fade_in = -1.0F;
+        float fade_out = -1.0F;
         std::vector<float> segments;
     };
     struct Motion {
         float duration = 0.0F;
+        // WebGAL 的 `config.motionFadingDuration` 默认 500ms, `Idle` 组是
+        // 2000ms; motion3.json 的 Meta 写了 FadeInTime/FadeOutTime 时以文件为准。
+        float fade_in = 0.5F;
+        float fade_out = 0.5F;
         std::vector<MotionCurve> curves;
     };
     struct ExpressionParameter {
@@ -136,15 +160,16 @@ class Model {
     void release();
     void build_drawables(const CoreApi& api);
     void update_drawables(const CoreApi& api);
-    bool load_motion(const std::filesystem::path& path, Motion& motion, std::string& error) const;
+    bool load_motion(const std::filesystem::path& path, float default_fade, Motion& motion,
+                     std::string& error) const;
     bool load_expression(const std::filesystem::path& path, Expression& expression,
                          std::string& error) const;
-    bool apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
-                          const std::optional<std::string>& motion, float time, float mouth,
-                          const Blink& blink, const Focus& focus, float absolute_time,
-                          std::string& error);
+    bool apply_motion(const std::optional<std::string>& motion, float time, std::string& error);
+    void apply_expression_values(const std::optional<std::string>& expression,
+                                 std::vector<float>& values, std::string& error) const;
     void set_parameter(const char* id, float value);
     void add_parameter(const char* id, float value);
+    float physics_delta(float absolute_time);
 
     void* moc_memory_ = nullptr;
     void* model_memory_ = nullptr;
@@ -159,6 +184,11 @@ class Model {
     std::vector<std::filesystem::path> textures_;
     std::map<std::string, Motion> motions_;
     std::map<std::string, Expression> expressions_;
+    /// motion 层参数的上一帧值; WebGAL 的 `loadParameters` 每帧恢复的就是它。
+    std::vector<float> motion_values_;
+    Physics physics_;
+    float last_physics_time_ = -1.0F;
+    float first_update_time_ = -1.0F;
     std::unordered_map<std::string, int> parameter_index_;
     std::vector<int> mouth_parameters_;
     const float* parameter_defaults_ = nullptr;

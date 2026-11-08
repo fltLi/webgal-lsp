@@ -115,7 +115,8 @@ float evaluate_curve(const std::vector<float>& segments, float at) {
             v1 = segments[index + 1];
             index += 2;
             if (at < t1) {
-                return v0;
+                // Stepped 保持前一个关键帧; InverseStepped 提前取后一个关键帧。
+                return type == 2 ? v0 : v1;
             }
         } else {
             break;
@@ -128,6 +129,26 @@ float evaluate_curve(const std::vector<float>& segments, float at) {
 }
 
 } // namespace
+
+float evaluate_motion_curve(const std::vector<float>& segments, float at) {
+    return evaluate_curve(segments, at);
+}
+
+float motion_fade_weight(float time, float duration, float fade_in, float fade_out) {
+    const auto easing_sine = [](float value) {
+        if (value < 0.0F) {
+            return 0.0F;
+        }
+        if (value > 1.0F) {
+            return 1.0F;
+        }
+        return 0.5F - (0.5F * std::cos(value * 3.14159265358979323846F));
+    };
+    const float fade_in_weight = fade_in <= 0.0F ? 1.0F : easing_sine(time / fade_in);
+    const float fade_out_weight =
+        (fade_out <= 0.0F || duration <= 0.0F) ? 1.0F : easing_sine((duration - time) / fade_out);
+    return fade_in_weight * fade_out_weight;
+}
 
 Model::Model() = default;
 
@@ -151,6 +172,10 @@ void Model::release() {
     textures_.clear();
     motions_.clear();
     expressions_.clear();
+    motion_values_.clear();
+    physics_.release();
+    last_physics_time_ = -1.0F;
+    first_update_time_ = -1.0F;
     parameter_index_.clear();
     mouth_parameters_.clear();
     parameter_defaults_ = nullptr;
@@ -224,6 +249,7 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
     }
     parameter_values_ = api.parameter_values(model_);
     parameter_defaults_ = api.parameter_defaults(model_);
+    motion_values_.assign(parameter_defaults_, parameter_defaults_ + parameter_count_);
     parameter_minimums_ =
         api.parameter_minimum_values != nullptr ? api.parameter_minimum_values(model_) : nullptr;
     parameter_maximums_ =
@@ -253,7 +279,9 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
                     continue;
                 }
                 Motion motion;
-                if (!load_motion(base / from_utf8(file), motion, error)) {
+                // WebGAL 的 `idleMotionFadingDuration` 是 2s，普通 motion 是 0.5s。
+                const float default_fade = name == "Idle" ? 2.0F : 0.5F;
+                if (!load_motion(base / from_utf8(file), default_fade, motion, error)) {
                     return false;
                 }
                 motions_.emplace(name, std::move(motion));
@@ -273,8 +301,14 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
                 expressions_.emplace(name, std::move(parsed));
             }
         }
+        const std::string physics_file = references.value("Physics", std::string{});
+        if (!physics_file.empty() &&
+            !physics_.load(base / from_utf8(physics_file), parameter_index_, error)) {
+            return false;
+        }
     } catch (const std::exception& exception) {
-        error = "model3.json 的 Motion/Expression 清单无效: " + std::string(exception.what());
+        error =
+            "model3.json 的 Motion/Expression/Physics 清单无效: " + std::string(exception.what());
         return false;
     }
 
@@ -282,7 +316,7 @@ bool Model::load(const CoreApi& api, const std::filesystem::path& model3, std::s
     return true;
 }
 
-bool Model::load_motion(const std::filesystem::path& path, Motion& motion,
+bool Model::load_motion(const std::filesystem::path& path, float default_fade, Motion& motion,
                         std::string& error) const {
     nlohmann::json json;
     if (!read_json(path, json, error)) {
@@ -291,6 +325,8 @@ bool Model::load_motion(const std::filesystem::path& path, Motion& motion,
     try {
         const auto meta = json.value("Meta", nlohmann::json::object());
         motion.duration = meta.value("Duration", 0.0F);
+        motion.fade_in = std::max<float>(0.0F, meta.value("FadeInTime", default_fade));
+        motion.fade_out = std::max<float>(0.0F, meta.value("FadeOutTime", default_fade));
         if (!json.contains("Curves") || !json.at("Curves").is_array()) {
             return true;
         }
@@ -305,6 +341,8 @@ bool Model::load_motion(const std::filesystem::path& path, Motion& motion,
             }
             MotionCurve parsed;
             parsed.parameter = found->second;
+            parsed.fade_in = curve.value("FadeInTime", -1.0F);
+            parsed.fade_out = curve.value("FadeOutTime", -1.0F);
             parsed.segments.reserve(curve.at("Segments").size());
             for (const auto& value : curve.at("Segments")) {
                 parsed.segments.push_back(value.get<float>());
@@ -532,81 +570,159 @@ float motion_time_at(float time, float duration) {
     return duration <= 0.0F ? at : std::min<float>(at, duration);
 }
 
+float breath_value(float absolute_time) {
+    // WebGAL 的 BreathParameterData 是 (offset=0, peak=0.5, cycle=3.2345,
+    // weight=0.5)，所以增量是 0.5*sin(...) * 0.5，而不是常见的 0.5+0.5*sin。
+    constexpr float kCycleSeconds = 3.2345F;
+    constexpr float kTwoPi = 6.28318530717958647692F;
+    return 0.25F * std::sin(kTwoPi * absolute_time / kCycleSeconds);
+}
+
 void Model::set_parameter(const char* id, float value) {
     const auto found = parameter_index_.find(id);
-    if (found != parameter_index_.end()) {
-        parameter_values_[found->second] = value;
+    if (found == parameter_index_.end()) {
+        return;
     }
+    const int index = found->second;
+    if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
+        value = std::clamp(value, parameter_minimums_[index], parameter_maximums_[index]);
+    }
+    parameter_values_[index] = value;
 }
 
 void Model::add_parameter(const char* id, float value) {
     const auto found = parameter_index_.find(id);
-    if (found != parameter_index_.end()) {
-        parameter_values_[found->second] += value;
+    if (found == parameter_index_.end()) {
+        return;
     }
+    const int index = found->second;
+    float result = parameter_values_[index] + value;
+    if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
+        result = std::clamp(result, parameter_minimums_[index], parameter_maximums_[index]);
+    }
+    parameter_values_[index] = result;
 }
 
-bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string>& expression,
-                             const std::optional<std::string>& motion, float time, float mouth,
-                             const Blink& blink, const Focus& focus, float absolute_time,
-                             std::string& error) {
-    (void)api;
-    if (parameter_values_ == nullptr || parameter_defaults_ == nullptr || parameter_count_ <= 0) {
+float Model::physics_delta(float absolute_time) {
+    float delta = 0.0F;
+    if (last_physics_time_ >= 0.0F) {
+        delta = absolute_time - last_physics_time_;
+    }
+    last_physics_time_ = absolute_time;
+    return std::clamp(delta, 0.0F, 0.1F);
+}
+
+bool Model::apply_motion(const std::optional<std::string>& motion, float time, std::string& error) {
+    if (parameter_values_ == nullptr || parameter_count_ <= 0 ||
+        static_cast<int>(motion_values_.size()) != parameter_count_) {
         error = "Core 缺少参数 API";
         return false;
     }
-    std::copy(parameter_defaults_, parameter_defaults_ + parameter_count_, parameter_values_);
-    for (const int index : mouth_parameters_) {
-        parameter_values_[index] = 0.0F;
+
+    if (!motion) {
+        std::copy(motion_values_.begin(), motion_values_.end(), parameter_values_);
+        return true;
     }
 
-    const Motion* motion_data = nullptr;
-    float at = std::max<float>(time, 0.0F);
-    if (motion) {
-        const auto found = motions_.find(*motion);
-        if (found == motions_.end()) {
-            error = "model3.json 中不存在 motion: " + *motion;
-            return false;
-        }
-        motion_data = &found->second;
-        // WebGAL 的 motion 只播放一次，结束后停在最后一帧，不自动切回 idle。
-        at = motion_time_at(at, motion_data->duration);
+    const auto found = motions_.find(*motion);
+    if (found == motions_.end()) {
+        error = "model3.json 中不存在 motion: " + *motion;
+        return false;
     }
+    const Motion& motion_data = found->second;
+    // WebGAL 的 motion 只播放一次，结束后停在最后一帧，不自动切回 idle。
+    const float at = motion_time_at(std::max<float>(time, 0.0F), motion_data.duration);
+    // WebGAL 每帧把 motion 曲线值滤波到上一帧的 motion 参数上；没有被 motion
+    // 覆盖的参数保持上一帧的值。这里从 `motion_values_` 起步，而不是每帧从
+    // 默认值重来。
+    std::copy(motion_values_.begin(), motion_values_.end(), parameter_values_);
+    for (const auto& curve : motion_data.curves) {
+        if (curve.parameter < 0 || curve.parameter >= parameter_count_) {
+            continue;
+        }
+        const float target = evaluate_curve(curve.segments, at);
+        const float fade_in = curve.fade_in >= 0.0F ? curve.fade_in : motion_data.fade_in;
+        const float fade_out = curve.fade_out >= 0.0F ? curve.fade_out : motion_data.fade_out;
+        const float weight = motion_fade_weight(at, motion_data.duration, fade_in, fade_out);
+        const float source = motion_values_[static_cast<std::size_t>(curve.parameter)];
+        const float value = source + ((target - source) * weight);
+        parameter_values_[curve.parameter] = value;
+        motion_values_[static_cast<std::size_t>(curve.parameter)] = value;
+    }
+    return true;
+}
 
-    // 姿态时间同样使用夹取后的 `at`, 否则动作结束后呼吸/摆头还会继续漂移。
-    set_parameter("ParamAngleX", std::sin(at * 0.72F) * 7.0F);
-    set_parameter("ParamAngleY", std::sin(at * 0.53F) * 3.5F);
-    set_parameter("ParamAngleZ", std::sin(at * 0.41F) * 1.5F);
-    set_parameter("ParamBodyAngleX", std::sin(at * 0.72F) * 2.0F);
-    set_parameter("ParamBodyAngleY", std::sin(at * 0.45F) * 1.2F);
-    set_parameter("ParamBreath", 0.5F + (0.5F * std::sin(at * 1.1F)));
-
-    if (motion_data != nullptr) {
-        for (const auto& curve : motion_data->curves) {
-            if (curve.parameter >= 0 && curve.parameter < parameter_count_) {
-                parameter_values_[curve.parameter] = evaluate_curve(curve.segments, at);
-            }
+void Model::apply_expression_values(const std::optional<std::string>& expression,
+                                    std::vector<float>& values, std::string& error) const {
+    if (!expression) {
+        return;
+    }
+    const auto found = expressions_.find(*expression);
+    if (found == expressions_.end()) {
+        // 某些模型用名为 `default` 的表情回到默认脸; 没有该表情时按“清除覆盖”处理。
+        if (*expression != "default") {
+            error = "model3.json 中不存在表情: " + *expression;
+        }
+        return;
+    }
+    for (const auto& parameter : found->second.parameters) {
+        if (parameter.parameter < 0 || parameter.parameter >= parameter_count_) {
+            continue;
+        }
+        float& value = values[static_cast<std::size_t>(parameter.parameter)];
+        value = blend_expression_value(value, parameter.value, parameter.blend);
+        if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
+            value = std::clamp(value, parameter_minimums_[parameter.parameter],
+                               parameter_maximums_[parameter.parameter]);
         }
     }
+}
 
-    if (expression) {
-        const auto found = expressions_.find(*expression);
-        if (found == expressions_.end()) {
-            // 某些模型用名为 `default` 的表情回到默认脸; 没有该表情时按“清除覆盖”处理。
-            if (*expression != "default") {
-                error = "model3.json 中不存在表情: " + *expression;
-                return false;
-            }
-        } else {
-            for (const auto& parameter : found->second.parameters) {
-                float& value = parameter_values_[parameter.parameter];
-                value = blend_expression_value(value, parameter.value, parameter.blend);
-                if (parameter_minimums_ != nullptr && parameter_maximums_ != nullptr) {
-                    value = std::clamp(value, parameter_minimums_[parameter.parameter],
-                                       parameter_maximums_[parameter.parameter]);
-                }
-            }
-        }
+bool Model::has_expression(const std::string& name) const {
+    return expressions_.find(name) != expressions_.end();
+}
+
+bool Model::has_motion(const std::string& name) const {
+    return motions_.find(name) != motions_.end();
+}
+
+float Model::expression_fade_in(const std::string& name) const {
+    const auto found = expressions_.find(name);
+    return found == expressions_.end() ? -1.0F : found->second.fade_in;
+}
+
+float Model::expression_fade_out(const std::string& name) const {
+    const auto found = expressions_.find(name);
+    return found == expressions_.end() ? -1.0F : found->second.fade_out;
+}
+
+bool Model::apply_pose_blend(const CoreApi& api,
+                             const std::optional<std::string>& previous_expression,
+                             const std::optional<std::string>& expression,
+                             const std::optional<std::string>& motion, float time, float blend,
+                             float mouth, const Blink& blink, const Focus& focus,
+                             float absolute_time, std::string& error) {
+    error.clear();
+    const int count = parameter_count_;
+    if (!apply_motion(motion, time, error)) {
+        return false;
+    }
+    std::vector<float> base(parameter_values_, parameter_values_ + count);
+    std::vector<float> previous_values = base;
+    std::vector<float> current_values = base;
+    apply_expression_values(previous_expression, previous_values, error);
+    if (!error.empty()) {
+        return false;
+    }
+    apply_expression_values(expression, current_values, error);
+    if (!error.empty()) {
+        return false;
+    }
+    const float weight = std::clamp(blend, 0.0F, 1.0F);
+    for (int index = 0; index < count; ++index) {
+        const auto offset = static_cast<std::size_t>(index);
+        parameter_values_[offset] =
+            previous_values[offset] + ((current_values[offset] - previous_values[offset]) * weight);
     }
 
     const float focus_x = std::clamp(focus.x, -1.0F, 1.0F);
@@ -630,61 +746,20 @@ bool Model::apply_parameters(const CoreApi& api, const std::optional<std::string
         }
     }
 
-    // 口型在表情之后写入, 否则表情里的 `ParamMouthOpenY` (常见为 Multiply 0)
-    // 会把正在说话的嘴型压回去。
+    // 呼吸与物理都在动作/表情混合之后、`csmUpdateModel` 之前。WebGAL 的
+    // `CubismBreath` 从模型加载时刻开始计时, 所以扣掉首次更新时间；它也不会
+    // 跟着已经结束的 motion 停住。物理再根据当前参数和上一帧的粒子状态算出
+    // 头发/胸/裙摆的滞后。
+    if (first_update_time_ < 0.0F) {
+        first_update_time_ = absolute_time;
+    }
+    add_parameter("ParamBreath", breath_value(absolute_time - first_update_time_));
+    physics_.evaluate(parameter_values_, parameter_minimums_, parameter_maximums_,
+                      parameter_defaults_, parameter_count_, physics_delta(absolute_time));
+    // WebGAL 的 lip-sync 挂在 `beforeModelUpdate` 上, 在物理之后写入；这里保持
+    // 同样的顺序, 同时保证表情里的 `ParamMouthOpenY` (常见为 Multiply 0) 不会
+    // 把正在说话的嘴型压回去。
     set_parameter("ParamMouthOpenY", mouth);
-    return true;
-}
-
-bool Model::has_expression(const std::string& name) const {
-    return expressions_.find(name) != expressions_.end();
-}
-
-bool Model::has_motion(const std::string& name) const {
-    return motions_.find(name) != motions_.end();
-}
-
-float Model::expression_fade_in(const std::string& name) const {
-    const auto found = expressions_.find(name);
-    return found == expressions_.end() ? -1.0F : found->second.fade_in;
-}
-
-float Model::expression_fade_out(const std::string& name) const {
-    const auto found = expressions_.find(name);
-    return found == expressions_.end() ? -1.0F : found->second.fade_out;
-}
-
-bool Model::apply_pose_blend(const CoreApi& api,
-                             const std::optional<std::string>& previous_expression,
-                             const std::optional<std::string>& previous_motion, float previous_time,
-                             const std::optional<std::string>& expression,
-                             const std::optional<std::string>& motion, float time, float blend,
-                             float mouth, const Blink& blink, const Focus& focus,
-                             float absolute_time, std::string& error) {
-    const int count = parameter_count_;
-    std::vector<float> previous_values;
-    // 首次设置表情时也要从“无表情”的基准淡入，因此 blend < 1 时即使没有
-    // previous_motion/expression 也先算一份基准参数。
-    if (previous_motion || previous_expression || (expression && blend < 0.999F)) {
-        if (!apply_parameters(api, previous_expression, previous_motion, previous_time, mouth,
-                              blink, focus, absolute_time, error)) {
-            return false;
-        }
-        previous_values.assign(parameter_values_, parameter_values_ + count);
-    }
-    if (!apply_parameters(api, expression, motion, time, mouth, blink, focus, absolute_time,
-                          error)) {
-        return false;
-    }
-    if (!previous_values.empty()) {
-        const float weight = std::clamp(blend, 0.0F, 1.0F);
-        for (int index = 0; index < count; ++index) {
-            parameter_values_[index] =
-                previous_values[static_cast<std::size_t>(index)] +
-                ((parameter_values_[index] - previous_values[static_cast<std::size_t>(index)]) *
-                 weight);
-        }
-    }
     api.reset_drawable_dynamic_flags(model_);
     api.update_model(model_);
     update_drawables(api);

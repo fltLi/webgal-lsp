@@ -118,3 +118,30 @@ end;
     assert_eq!(poses[2].expression.as_deref(), Some("sad01"));
     assert_eq!(poses[2].expression_start_us, 2_000_000);
 }
+
+#[test]
+fn repeated_motion_keeps_its_start_time() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let root = directory.path();
+    write(root, "game/config.txt", "Game_name:Repeat;\n");
+    write(root, "game/figure/test/test.model3.json", "{}");
+    write(
+        root,
+        "game/scene/start.txt",
+        "\
+changeFigure:test/test.model3.json -left -id=hero -motion=idle01 -next;
+wait:1000;
+changeFigure:test/test.model3.json -left -id=hero -motion=idle01 -focus={\"x\":0.5,\"y\":0.0} -next;
+wait:1000;
+end;
+",
+    );
+
+    let plan = build_plan(&ExportOptions::new(root)).expect("build plan");
+    let poses = &plan.figures[0].poses;
+    assert_eq!(poses.len(), 2);
+    // 同一条 motion 再次写入只更新 focus，不重新起播。
+    assert_eq!(poses[0].motion_start_us, 0);
+    assert_eq!(poses[1].motion_start_us, 0);
+    assert_eq!(poses[1].focus.x, 0.5);
+}

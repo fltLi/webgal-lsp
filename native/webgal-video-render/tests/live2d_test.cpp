@@ -4,11 +4,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "live2d/core_loader.hpp"
 #include "live2d/layout.hpp"
 #include "live2d/model.hpp"
+#include "live2d/physics.hpp"
 
 TEST_CASE("missing Live2D Core reports a load error") {
     webgal::live2d::CoreApi api;
@@ -53,6 +58,99 @@ TEST_CASE("one-shot motion holds the last frame") {
     REQUIRE(webgal::live2d::motion_time_at(1.0F, 2.0F) == Approx(1.0F));
     REQUIRE(webgal::live2d::motion_time_at(-1.0F, 2.0F) == Approx(0.0F));
     REQUIRE(webgal::live2d::motion_time_at(1.0F, 0.0F) == Approx(1.0F));
+}
+
+TEST_CASE("breath follows WebGAL's fixed breath cycle") {
+    using Catch::Approx;
+    // 0.5 * sin(2πt / 3.2345)，再乘权重 0.5。
+    REQUIRE(webgal::live2d::breath_value(0.0F) == Approx(0.0F));
+    REQUIRE(webgal::live2d::breath_value(3.2345F / 4.0F) == Approx(0.25F));
+    REQUIRE(webgal::live2d::breath_value(3.2345F / 2.0F) == Approx(0.0F).margin(1.0e-6F));
+    REQUIRE(webgal::live2d::breath_value(3.2345F * 0.75F) == Approx(-0.25F));
+}
+
+TEST_CASE("physics3 rig moves a spring-driven output parameter") {
+    namespace fs = std::filesystem;
+    const fs::path path = fs::temp_directory_path() / "webgal-physics-test.physics3.json";
+    {
+        std::ofstream output(path);
+        output << R"json({
+            "PhysicsSettings": [{
+                "Id": "PhysicsSetting1",
+                "Input": [{
+                    "Source": {"Target": "Parameter", "Id": "ParamAngleY"},
+                    "Weight": 100,
+                    "Type": "Angle",
+                    "Reflect": false
+                }],
+                "Output": [{
+                    "Destination": {"Target": "Parameter", "Id": "ParamBodyAngleY"},
+                    "VertexIndex": 1,
+                    "Scale": 44.558,
+                    "Weight": 100,
+                    "Type": "Angle",
+                    "Reflect": false
+                }],
+                "Vertices": [
+                    {"Position": {"X": 0, "Y": 0}, "Mobility": 1, "Delay": 1, "Acceleration": 1, "Radius": 0},
+                    {"Position": {"X": 0, "Y": 11}, "Mobility": 0.85, "Delay": 0.8, "Acceleration": 1, "Radius": 11}
+                ],
+                "Normalization": {
+                    "Position": {"Minimum": -10, "Default": 0, "Maximum": 10},
+                    "Angle": {"Minimum": -10, "Default": 0, "Maximum": 10}
+                }
+            }]
+        })json";
+    }
+
+    webgal::live2d::Physics physics;
+    const std::unordered_map<std::string, int> parameters{{"ParamAngleY", 0},
+                                                          {"ParamBodyAngleY", 1}};
+    std::string error;
+    REQUIRE(physics.load(path, parameters, error));
+    REQUIRE(physics.ready());
+
+    std::vector<float> values{10.0F, 0.0F};
+    const std::vector<float> minimums{-30.0F, -10.0F};
+    const std::vector<float> maximums{30.0F, 10.0F};
+    const std::vector<float> defaults{0.0F, 0.0F};
+    for (int frame = 0; frame < 120; ++frame) {
+        physics.evaluate(values.data(), minimums.data(), maximums.data(), defaults.data(), 2,
+                         1.0F / 60.0F);
+        REQUIRE(std::isfinite(values[1]));
+    }
+    REQUIRE(values[1] >= -10.0F);
+    REQUIRE(values[1] <= 10.0F);
+    // 输入 +10 时弹簧必须把输出推离 0；如果只剩解析、没有积分，这里会是 0。
+    REQUIRE(std::fabs(values[1]) > 0.01F);
+
+    std::error_code code;
+    fs::remove(path, code);
+}
+
+TEST_CASE("motion fade weights match CubismMotion's overlapping fades") {
+    using Catch::Approx;
+    REQUIRE(webgal::live2d::motion_fade_weight(0.0F, 1.0F, 1.0F, 1.0F) == Approx(0.0F));
+    REQUIRE(webgal::live2d::motion_fade_weight(0.5F, 1.0F, 1.0F, 1.0F) == Approx(0.25F));
+    REQUIRE(webgal::live2d::motion_fade_weight(1.0F, 2.0F, 1.0F, 1.0F) == Approx(1.0F));
+    REQUIRE(webgal::live2d::motion_fade_weight(1.533F, 1.533F, 1.0F, 1.0F) == Approx(0.0F));
+    // 短 motion 的淡入和淡出会重叠，中段权重远小于 1。
+    REQUIRE(webgal::live2d::motion_fade_weight(1.0F, 1.533F, 1.0F, 1.0F) < 0.6F);
+}
+
+TEST_CASE("motion curve segment types follow Cubism") {
+    using Catch::Approx;
+    const std::vector<float> linear{0.0F, 0.0F, 0.0F, 1.0F, 1.0F};
+    REQUIRE(webgal::live2d::evaluate_motion_curve(linear, 0.25F) == Approx(0.25F));
+    REQUIRE(webgal::live2d::evaluate_motion_curve(linear, 1.0F) == Approx(1.0F));
+
+    const std::vector<float> stepped{0.0F, 0.0F, 2.0F, 1.0F, 1.0F};
+    REQUIRE(webgal::live2d::evaluate_motion_curve(stepped, 0.5F) == Approx(0.0F));
+    REQUIRE(webgal::live2d::evaluate_motion_curve(stepped, 1.0F) == Approx(1.0F));
+
+    // InverseStepped 在段起点就取后一个关键帧。
+    const std::vector<float> inverse{0.0F, 0.0F, 3.0F, 1.0F, 1.0F};
+    REQUIRE(webgal::live2d::evaluate_motion_curve(inverse, 0.5F) == Approx(1.0F));
 }
 
 TEST_CASE("M_3_1_0 live2d vertical placement matches the engine") {
