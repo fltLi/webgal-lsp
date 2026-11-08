@@ -10,13 +10,14 @@
 
   参数分四组, 对应"输出 → 路线 → 画面 → 演出"的心智模型:
   - 画面 = 视频编码参数 (分辨率 / 帧率 / 码率 / 编码);
-  - 演出 = 字号、两个速度、导出内容、立绘方位判定、滤镜与图层开关。
+  - 演出 = 字号、两个速度、导出内容、背景/语音音量、立绘方位判定、滤镜与图层开关。
   开关一律用肯定式 (勾选 = 有), 否定语义只在提交时翻译成后端字段
   (`audioOnly` / `disableFilters` / `uiOnly` / `stageOnly`)。
   两个速度的语义与 WebGAL 一致 (0..100, 越大越快), 默认 12 / 24。
 
   导出开始后对话框**不关闭、也不回到表单**: 左列实时显示渲染器推来的预览帧与进度,
-  右列保留本次导出的参数摘要; 底部按钮变成"取消"。完成/失败后仍停在这一屏。
+  右列保留本次导出的参数摘要; 底部按钮变成"取消"。完成/失败后仍停在这一屏;
+  完成后预览位置换成成片播放器 (WAV 用 audio 控件)。
 
   组件相关 (Live2D Core 导入) **不在这里**: 它是全局设置, 放在「设置 → 渲染 → 视频导出」。
 
@@ -25,6 +26,7 @@
 
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { onMount, untrack } from 'svelte';
@@ -156,6 +158,10 @@
   let cancelRequested = $state(false);
   let resultPath = $state('');
 
+  /* 导出完成后，预览位置变成成片播放器；WAV 用 audio 控件。 */
+  const playbackUrl = $derived(phase === 'done' && resultPath ? convertFileSrc(resultPath) : '');
+  const audioOutput = $derived(contentMode === 'audio' || /\.wav$/i.test(resultPath));
+
   const busy = $derived(phase === 'working');
   const hasVisual = $derived(includeStage || includeUi);
   const canExport = $derived(
@@ -184,6 +190,16 @@
     return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
   }
   const elapsedText = $derived(formatDuration(elapsedSeconds));
+  const targetFps = $derived(Math.max(1, Math.round(clampNumber(fpsText, 30, 1, 120))));
+  /** 视频时间进度: 按目标帧率把帧号换算成播放时间。 */
+  const timeProgressText = $derived.by(() => {
+    if (progressTotal <= 0 || contentMode === 'audio') return '';
+    const total = formatDuration(progressTotal / targetFps);
+    // 导出完成后只给成片总时长，避免再显示一个无意义的 x / x。
+    if (phase === 'done') return `时长 ${total}`;
+    const current = formatDuration(progressCurrent / targetFps);
+    return `视频 ${current} / ${total}`;
+  });
   /** 按当前吞吐估算剩余时间 (只在实际渲染阶段显示)。 */
   const etaText = $derived.by(() => {
     if (phase !== 'working' || progressCurrent <= 0 || progressTotal <= 0) return '';
@@ -204,10 +220,13 @@
   const contentLabel = $derived(
     CONTENT_OPTIONS.find((item) => item.value === contentMode)?.label ?? CONTENT_OPTIONS[0].label
   );
-  const layerSummary = $derived(
-    [includeStage ? '舞台画面' : '', includeUi ? '文本框与选项' : ''].filter((item) => item.length > 0).join(' + ') ||
-      '无'
-  );
+  const layerSummary = $derived.by(() => {
+    const layers: string[] = [];
+    if (includeStage) layers.push('舞台画面');
+    if (includeUi) layers.push('文本框与选项');
+    if (enableFilters) layers.push('舞台滤镜');
+    return layers.join(' + ') || '无';
+  });
   const fontScaleLabel = $derived(FONT_SCALE_OPTIONS.find((item) => item.value === fontScale)?.label ?? fontScale);
   /* 自动模式的摘要写清解析结果，避免“自动”变成一个黑盒。 */
 
@@ -533,7 +552,7 @@
         ? '导出失败'
         : '正在导出视频'}
   iconName="Video"
-  size="large"
+  size="medium"
   height={phase === 'idle' ? 660 : 560}
   closeOnBackdrop={!busy}
   onClose={() => {
@@ -743,14 +762,23 @@
   {:else}
     <div class="video-progress">
       <div class="video-progress-main">
-        <div class="video-preview" class:video-preview-empty={previewUrl === ''}>
-          {#if previewUrl}
+        <div class="video-preview" class:video-preview-empty={previewUrl === '' && !playbackUrl}>
+          {#if playbackUrl}
+            {#if audioOutput}
+              <audio class="video-playback-audio" src={playbackUrl} controls></audio>
+            {:else}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video src={playbackUrl} controls playsinline preload="metadata"></video>
+            {/if}
+          {:else if previewUrl}
             <img src={previewUrl} alt="当前画面" />
           {:else}
             <span class="muted">等待第一帧…</span>
           {/if}
           {#if busy}
             <span class="video-preview-badge">预览</span>
+          {:else if playbackUrl}
+            <span class="video-preview-badge">成片</span>
           {/if}
         </div>
 
@@ -770,7 +798,7 @@
             {/if}
           </span>
           <span>{percent}%</span>
-          <span>{progressTotal > 0 ? `${progressCurrent} / ${progressTotal} 帧` : ''}</span>
+          <span>{timeProgressText}</span>
           <span>{startedAt > 0 ? `已用 ${elapsedText}` : ''}</span>
           {#if etaText}
             <span>{etaText}</span>
@@ -815,8 +843,6 @@
           <dd>{fontScaleLabel}</dd>
           <dt>图层</dt>
           <dd>{layerSummary}</dd>
-          <dt>舞台滤镜</dt>
-          <dd>{enableFilters ? '开启' : '关闭'}</dd>
         </dl>
       </aside>
     </div>
