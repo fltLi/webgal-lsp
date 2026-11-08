@@ -279,6 +279,9 @@ float font_px(std::string_view name) {
     return 25.6F * percent / 100.0F;
 }
 
+/// 姓名牌字号在 WebGAL 的 200% 基础上再略微放大, 让名字比默认效果更醒目。
+constexpr float kNameFontBoost = 1.1F;
+
 std::vector<int> utf8_codepoints(std::string_view text) {
     std::vector<int> codepoints;
     for (std::size_t index = 0; index < text.size();) {
@@ -837,7 +840,10 @@ class Renderer {
     std::map<std::string, MaskSurface> mask_surfaces_;
     std::map<std::string, VkDescriptorSet> mask_draw_descriptors_;
     UiStyle ui_style_;
+    /// C ABI 传入的原始字号缩放。
     float font_scale_ = 1.0F;
+    /// 三档字号统一抬高一级后的实际缩放; 文本框/姓名牌的几何也用它。
+    float ui_font_scale_ = 1.0F;
     /// 选中的字体本身是否已经是粗体; 是的话不再用重绘模拟加粗。
     bool font_is_bold_ = false;
     bool disable_filters_ = false;
@@ -937,6 +943,9 @@ bool Renderer::prepare(const job::Plan& plan, const run::Context& context, std::
     load_ui_style(project_root, static_cast<float>(plan.stage_w), ui_style_);
     disable_filters_ = plan.disable_filters;
     font_scale_ = plan.font_scale > 0.0F ? plan.font_scale : 1.0F;
+    // 三档字号在导出成片里各自小了一级, 这里统一补一级 (0.85/1.0/1.15 → 1.0/1.15/1.30),
+    // 不改 C ABI 与前端已经保存的取值。
+    ui_font_scale_ = font_scale_ + 0.15F;
     if (!plan.ui_enabled) {
         return true;
     }
@@ -1104,25 +1113,30 @@ bool Renderer::prepare_text(const job::Plan& plan, std::string& error) {
     };
 
     // 必须与绘制时用**同一个**字号, 否则这些字形不会进图集, 名字会只画出一个空底板。
-    const int style_size =
-        std::max(12, static_cast<int>(std::lround(font_px("medium") * ui_style_.text_scale *
-                                                  ui_style_.scale * font_scale_)));
     const int style_name_size = std::max(
         12, static_cast<int>(std::lround(25.6F * ui_style_.name_font_ratio * ui_style_.name_scale *
-                                         ui_style_.scale * font_scale_)));
+                                         ui_style_.scale * ui_font_scale_ * kNameFontBoost)));
     for (const auto& segment : plan.texts) {
+        // 对白支持 -fontSize=small/medium/large, 每个字号都要单独预生成。
+        const int text_size = std::max(
+            12, static_cast<int>(std::lround(font_px(segment.font_size) * ui_style_.text_scale *
+                                             ui_style_.scale * ui_font_scale_)));
         if (!add(segment.speaker, style_name_size)) {
             return false;
         }
         for (const auto& line : segment.lines) {
-            if (!add(line_text(line), style_size)) {
+            if (!add(line_text(line), text_size)) {
                 return false;
             }
         }
     }
+    // 选项的字号来自 `.Choose_item` 的 font-size, 与正文的 text_scale 不是一回事。
+    const int choice_size =
+        std::max(12, static_cast<int>(std::lround(font_px("medium") * ui_style_.choice_font_ratio *
+                                                  ui_style_.scale * ui_font_scale_)));
     for (const auto& choice : plan.choices) {
         for (const auto& option : choice.options) {
-            if (!add(option.prompt, style_size)) {
+            if (!add(option.prompt, choice_size)) {
                 return false;
             }
         }
@@ -1133,7 +1147,7 @@ bool Renderer::prepare_text(const job::Plan& plan, std::string& error) {
             intro.font_size == "small" ? 280.0F : (intro.font_size == "large" ? 420.0F : 350.0F);
         const int intro_size =
             std::max(12, static_cast<int>(std::lround(25.6F * percent / 100.0F * ui_style_.scale *
-                                                      font_scale_)));
+                                                      ui_font_scale_)));
         for (const auto& line : intro.lines) {
             if (!add(line, intro_size)) {
                 return false;
@@ -3196,23 +3210,29 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
 
     if (active_text != nullptr) {
         // 布局全部按 2560×1440 舞台里的 CSS px 计算, 再乘 `scale` 落到导出画面。
+        // 文本框与姓名牌的尺寸都再乘 `ui_font_scale_`, 保证字号和底板一起变大。
         const float k = ui_style_.scale;
         const float box_w = std::max(1.0F, static_cast<float>(stage_w_) -
                                                (ui_style_.box_left + ui_style_.box_right) * k);
-        const float box_h = ui_style_.box_height * k;
+        const float base_box_h = ui_style_.box_height * k;
+        const float box_h = base_box_h * ui_font_scale_;
         const float box_x = ui_style_.box_left * k;
         // 只上移 UI (文本框/姓名), 舞台元素保持原位; 56 CSS px 约等于 1080p 上的 42px。
+        // 底边保持不动, 只让文本框向上长高。
         constexpr float kTextBoxLift = 56.0F;
         const float box_y =
             static_cast<float>(stage_h_) - ui_style_.box_bottom * k - box_h - kTextBoxLift * k;
+        // 姓名牌按 WebGAL 的固定文本框顶部锚定: 字号变大时牌子只放大, 中心不跟着上移。
+        const float base_box_y = box_y + box_h - base_box_h;
         if (ui_style_.box_color[3] > 0.001F) {
             add_rect(box_x, box_y, box_w, box_h, ui_style_.box_color[0], ui_style_.box_color[1],
-                     ui_style_.box_color[2], ui_style_.box_color[3], ui_style_.box_radius * k);
+                     ui_style_.box_color[2], ui_style_.box_color[3],
+                     ui_style_.box_radius * k * ui_font_scale_);
         }
 
         const int size =
             std::max(12, static_cast<int>(std::lround(font_px(active_text->font_size) *
-                                                      ui_style_.text_scale * k * font_scale_)));
+                                                      ui_style_.text_scale * k * ui_font_scale_)));
         const float line_height = ui_style_.line_height * static_cast<float>(size);
         const float spacing = ui_style_.letter_spacing * static_cast<float>(size);
         const float center_x = static_cast<float>(stage_w_) * 0.5F;
@@ -3224,21 +3244,24 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         // ---- 姓名名牌: 粉色圆角块 + 白边 + 白字 ----
         if (!active_text->speaker.empty() && ui_style_.name_bg[3] > 0.001F) {
             const float name_css = 25.6F * ui_style_.name_font_ratio;
-            const int name_size = std::max(
-                12,
-                static_cast<int>(std::lround(name_css * ui_style_.name_scale * k * font_scale_)));
+            const int name_size =
+                std::max(12, static_cast<int>(std::lround(name_css * ui_style_.name_scale * k *
+                                                          ui_font_scale_ * kNameFontBoost)));
             const float name_spacing = ui_style_.letter_spacing * static_cast<float>(name_size);
-            const float pad = ui_style_.name_padding * name_css * ui_style_.name_scale * k;
-            const float border = ui_style_.name_border * ui_style_.name_scale * k;
-            const float radius = ui_style_.name_radius * ui_style_.name_scale * k;
-            const float badge_h = ui_style_.name_height * ui_style_.name_scale * k;
-            const float center_y = box_y + ui_style_.name_height * k * 0.5F;
+            const float pad =
+                ui_style_.name_padding * name_css * ui_style_.name_scale * k * ui_font_scale_;
+            const float border = ui_style_.name_border * ui_style_.name_scale * k * ui_font_scale_;
+            const float radius = ui_style_.name_radius * ui_style_.name_scale * k * ui_font_scale_;
+            const float badge_h = ui_style_.name_height * ui_style_.name_scale * k * ui_font_scale_;
+            const float center_y = base_box_y + ui_style_.name_height * k * 0.5F;
             const float badge_w =
                 measure_text(active_text->speaker, name_size, name_spacing) + 2.0F * (pad + border);
             const float badge_x = center_x - badge_w * 0.5F;
             const float badge_y = center_y - badge_h * 0.5F;
             if (ui_style_.name_shadow_color[3] > 0.001F) {
-                add_rect(badge_x, badge_y + ui_style_.name_box_shadow_dy * ui_style_.name_scale * k,
+                add_rect(badge_x,
+                         badge_y + ui_style_.name_box_shadow_dy * ui_style_.name_scale * k *
+                                       ui_font_scale_,
                          badge_w, badge_h, 0.0F, 0.0F, 0.0F, ui_style_.name_shadow_color[3] * 0.55F,
                          radius);
             }
@@ -3252,7 +3275,8 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             if (ui_style_.name_shadow_color[3] > 0.001F) {
                 std::size_t shadow_revealed = 0;
                 append_text(items, active_text->speaker, center_x,
-                            name_baseline + ui_style_.name_shadow_dy * ui_style_.name_scale * k,
+                            name_baseline + ui_style_.name_shadow_dy * ui_style_.name_scale * k *
+                                                ui_font_scale_,
                             name_size, 1.0F, shadow_revealed, all, ui_style_.name_shadow_color,
                             false, name_spacing, true);
             }
@@ -3270,9 +3294,10 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                       elapsed /
                       (static_cast<std::uint64_t>(active_text->reveal_ms_per_char) * 1000));
 
-        // `.text` 从文本框顶部 125px 开始, 每行 line-height; 首行基线补上
-        // (行高 - 字号) / 2 与字体的 ascent 偏移。
-        float baseline = box_y + ui_style_.text_top * k +
+        // `.text` 与姓名牌一样锚定在 WebGAL 的固定文本框顶部: 字号变大时只放大文字,
+        // 不从抬高后的背景上沿重新排版, 否则会顶到姓名牌上。
+        // 首行基线补上 (行高 - 字号) / 2 与字体的 ascent 偏移。
+        float baseline = base_box_y + ui_style_.text_top * k +
                          0.5F * (line_height - static_cast<float>(size)) +
                          0.80F * static_cast<float>(size);
         std::size_t revealed = 0;
@@ -3291,9 +3316,9 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             continue;
         }
         const float k = ui_style_.scale;
-        const int font =
-            std::max(12, static_cast<int>(std::lround(
-                             font_px("medium") * ui_style_.choice_font_ratio * k * font_scale_)));
+        const int font = std::max(
+            12, static_cast<int>(std::lround(font_px("medium") * ui_style_.choice_font_ratio * k *
+                                             ui_font_scale_)));
         const float pad_x = ui_style_.choice_padding_x * k;
         const float pad_y = ui_style_.choice_padding_y * k;
         const float row_h = static_cast<float>(font) * 1.2F + pad_y * 2.0F;
@@ -3338,7 +3363,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             intro.font_size == "small" ? 280.0F : (intro.font_size == "large" ? 420.0F : 350.0F);
         const int intro_size =
             std::max(12, static_cast<int>(std::lround(25.6F * percent / 100.0F * ui_style_.scale *
-                                                      font_scale_)));
+                                                      ui_font_scale_)));
         const float left = 4.0F * static_cast<float>(intro_size);
         const std::array<float, 4> intro_color{1.0F, 1.0F, 1.0F, 1.0F};
         float baseline =
