@@ -389,21 +389,24 @@ impl<'a> Compiler<'a> {
             .filter(|character| *character != '|')
             .count();
 
-        let vocal = sentence
+        let vocal = match sentence
             .vocal
             .as_deref()
             .filter(|value| looks_like_audio(value))
-            .map(|value| self.add_asset("vocal", value, AssetKind::Vocal))
-            .transpose()?;
+        {
+            Some(value) => Some(self.vocal_asset(value)?),
+            None => None,
+        };
+        let voice_us = vocal.as_ref().map_or(0, |(_, duration)| *duration);
         let say_ms = if sentence.notend {
             0
         } else {
-            self.timing.say_ms(char_count, 0)
+            self.timing.say_ms(char_count, voice_us / 1000)
         };
         let start = self.time_us;
         let end = start.saturating_add(say_ms * 1000);
 
-        if let Some(vocal) = &vocal {
+        if let Some((vocal, _)) = &vocal {
             self.plan.audio.push(AudioEvent {
                 start_us: start,
                 end_us: Some(end),
@@ -424,7 +427,7 @@ impl<'a> Compiler<'a> {
             font_size: sentence.font_size.to_string(),
             reveal_ms_per_char: self.timing.text_delay_ms.round() as u32,
             fade_ms: self.timing.text_anim_ms,
-            vocal,
+            vocal: vocal.as_ref().map(|(path, _)| path.clone()),
             figure: sentence.figure.as_ref().map(ToString::to_string),
             mini_avatar: self.mini_avatar.clone(),
             clear: !sentence.concat,
@@ -1033,6 +1036,29 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// 登记语音资源并探测时长；同一文件只探测一次，结果缓存在资源表里。
+    fn vocal_asset(&mut self, raw: &str) -> Result<(String, u64)> {
+        let path = self.add_asset("vocal", raw, AssetKind::Vocal)?;
+        if let Some(duration) = self
+            .plan
+            .assets
+            .get(&path)
+            .and_then(|asset| asset.duration_us)
+        {
+            return Ok((path, duration));
+        }
+        let absolute = self
+            .project
+            .asset_path("vocal", raw)
+            .ok_or_else(|| Error::Unsupported(format!("资源不存在: {raw} (vocal)")))?;
+        let duration = probe_audio_duration(&absolute)
+            .map_err(|error| Error::Unsupported(format!("无法探测语音时长: {raw} ({error})")))?;
+        if let Some(asset) = self.plan.assets.get_mut(&path) {
+            asset.duration_us = Some(duration);
+        }
+        Ok((path, duration))
+    }
+
     fn add_asset(&mut self, kind_dir: &str, raw: &str, kind: AssetKind) -> Result<String> {
         let path = self
             .project
@@ -1076,6 +1102,21 @@ fn probe_video_duration(path: &Path) -> std::result::Result<u64, String> {
     {
         let _ = path;
         Err("视频时长探测仅在 Windows 可用".to_owned())
+    }
+}
+
+/// 音频时长由 C++ 渲染器里与混音器相同的解码器提供；计划编译阶段只消费结果。
+///
+/// 非 Windows 上渲染器不存在、导出本身也不可用；这里返回 0 让计划仍能编译。
+fn probe_audio_duration(path: &Path) -> std::result::Result<u64, String> {
+    #[cfg(windows)]
+    {
+        webgal_video_render_sys::probe_audio_duration(path).map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Ok(0)
     }
 }
 

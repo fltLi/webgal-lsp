@@ -618,6 +618,34 @@ int webgal_probe_video_duration(const char* path, uint64_t* duration_us, char* e
     }
 }
 
+int webgal_probe_audio_duration(const char* path, uint64_t* duration_us, char* error_buffer,
+                                size_t error_buffer_len) {
+    if (error_buffer != nullptr && error_buffer_len > 0) {
+        error_buffer[0] = '\0';
+    }
+    if (!valid_string(path) || duration_us == nullptr) {
+        write_error(error_buffer, error_buffer_len, "缺少音频路径或时长输出");
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+    try {
+        std::uint64_t duration = 0;
+        std::string error;
+        if (!webgal::media::probe_audio_duration(from_utf8(path), duration, error)) {
+            write_error(error_buffer, error_buffer_len, error.empty() ? "无法读取音频时长" : error);
+            return WEBGAL_STATUS_RENDER_FAILED;
+        }
+        *duration_us = duration;
+        return WEBGAL_STATUS_OK;
+    } catch (const std::exception& exception) {
+        write_error(error_buffer, error_buffer_len,
+                    std::string("探测音频时长异常: ") + exception.what());
+        return WEBGAL_STATUS_RENDER_FAILED;
+    } catch (...) {
+        write_error(error_buffer, error_buffer_len, "探测音频时长时抛出未知异常");
+        return WEBGAL_STATUS_RENDER_FAILED;
+    }
+}
+
 int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, int has_end,
                           const char* path, int kind, float volume, int loop, uint32_t fade_in_ms,
                           uint32_t fade_out_ms) {

@@ -244,6 +244,81 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
     return false;
 }
 
+bool probe_audio_duration(const std::filesystem::path& path, std::uint64_t& duration_us,
+                          std::string& error) {
+    duration_us = 0;
+    const auto extension = extension_of(path);
+    std::uint64_t frames = 0;
+    std::uint32_t sample_rate = 0;
+    if (extension == ".wav") {
+        drwav wav{};
+        if (drwav_init_file_w(&wav, path.wstring().c_str(), nullptr) == 0) {
+            error = "无法读取 WAV 时长: " + to_utf8(path);
+            return false;
+        }
+        frames = wav.totalPCMFrameCount;
+        sample_rate = wav.sampleRate;
+        drwav_uninit(&wav);
+    } else if (extension == ".mp3") {
+        drmp3 mp3{};
+        if (drmp3_init_file_w(&mp3, path.wstring().c_str(), nullptr) == 0) {
+            error = "无法读取 MP3 时长: " + to_utf8(path);
+            return false;
+        }
+        frames = drmp3_get_pcm_frame_count(&mp3);
+        sample_rate = mp3.sampleRate;
+        drmp3_uninit(&mp3);
+    } else if (extension == ".flac") {
+        drflac* flac = drflac_open_file_w(path.wstring().c_str(), nullptr);
+        if (flac == nullptr) {
+            error = "无法读取 FLAC 时长: " + to_utf8(path);
+            return false;
+        }
+        frames = flac->totalPCMFrameCount;
+        sample_rate = flac->sampleRate;
+        drflac_close(flac);
+    } else if (extension == ".ogg") {
+        // 与 load_audio 一样先整文件读入内存：stb_vorbis 没有宽字符入口。
+        std::ifstream input(path, std::ios::binary | std::ios::ate);
+        if (!input) {
+            error = "无法读取 OGG 时长: " + to_utf8(path);
+            return false;
+        }
+        const auto size = input.tellg();
+        if (size <= 0 || static_cast<std::uint64_t>(size) > std::numeric_limits<int>::max()) {
+            error = "OGG 文件大小无效: " + to_utf8(path);
+            return false;
+        }
+        std::vector<unsigned char> data(static_cast<std::size_t>(size));
+        input.seekg(0);
+        input.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        if (!input) {
+            error = "读取 OGG 失败: " + to_utf8(path);
+            return false;
+        }
+        int vorbis_error = 0;
+        stb_vorbis* vorbis = stb_vorbis_open_memory(data.data(), static_cast<int>(data.size()),
+                                                    &vorbis_error, nullptr);
+        if (vorbis == nullptr) {
+            error = "无法读取 OGG 时长: " + to_utf8(path);
+            return false;
+        }
+        frames = stb_vorbis_stream_length_in_samples(vorbis);
+        sample_rate = stb_vorbis_get_info(vorbis).sample_rate;
+        stb_vorbis_close(vorbis);
+    } else {
+        error = "不支持的音频格式: " + extension;
+        return false;
+    }
+
+    if (frames == 0 || sample_rate == 0) {
+        error = "音频时长为 0: " + to_utf8(path);
+        return false;
+    }
+    duration_us = frames * 1'000'000ULL / sample_rate;
+    return true;
+}
+
 AudioMixer::AudioMixer(const job::Plan& plan, const run::Context& context)
     : plan_(plan), context_(context) {}
 

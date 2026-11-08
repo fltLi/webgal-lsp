@@ -25,6 +25,10 @@ struct AudioClip {
 [[nodiscard]] bool load_audio(const std::filesystem::path& path, AudioClip& clip,
                               std::string& error);
 
+/// 读取 WAV/MP3/FLAC/OGG 的时长 (微秒)，不分配整段 PCM。
+[[nodiscard]] bool probe_audio_duration(const std::filesystem::path& path,
+                                        std::uint64_t& duration_us, std::string& error);
+
 /// 分块混音器：解码一次音频事件，之后按区间混音，避免为整条时间线分配浮点缓冲。
 class AudioMixer {
   public:

@@ -3,6 +3,7 @@
 find_package(Catch2 3 CONFIG REQUIRED)
 
 add_executable(webgal-render-tests
+    audio_test.cpp
     bridge_test.cpp
     live2d_test.cpp
     shaders_test.cpp

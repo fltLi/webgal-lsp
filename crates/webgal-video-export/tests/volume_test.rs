@@ -2,6 +2,8 @@
 
 //! 用户音量设置必须进入计划：BGM 按 `bgmVolume`，语音按 `vocalVolume`。
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 
@@ -22,7 +24,7 @@ fn bgm_and_vocal_apply_the_user_volume() {
     let root = directory.path();
     write(root, "game/config.txt", b"Game_name:Volume;\n");
     write(root, "game/bgm/theme.wav", b"RIFF");
-    write(root, "game/vocal/theme.wav", b"RIFF");
+    write(root, "game/vocal/theme.wav", &common::silence_wav(1));
     write(
         root,
         "game/scene/start.txt",

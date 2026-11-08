@@ -191,6 +191,10 @@ int webgal_plan_add_video(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, 
 int webgal_probe_video_duration(const char* path, uint64_t* duration_us, char* error_buffer,
                                 size_t error_buffer_len);
 
+/* 读取音频时长 (微秒)。供计划编译阶段探测 `say -vocal`，避免语音比文本长时被截断。 */
+int webgal_probe_audio_duration(const char* path, uint64_t* duration_us, char* error_buffer,
+                                size_t error_buffer_len);
+
 /* has_end 为 0 时忽略 end_us。 */
 int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, int has_end,
                           const char* path, int kind, float volume, int loop, uint32_t fade_in_ms,

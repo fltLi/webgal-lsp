@@ -436,6 +436,12 @@ unsafe extern "C" {
         error_buffer: *mut c_char,
         error_buffer_len: usize,
     ) -> c_int;
+    fn webgal_probe_audio_duration(
+        path: *const c_char,
+        duration_us: *mut u64,
+        error_buffer: *mut c_char,
+        error_buffer_len: usize,
+    ) -> c_int;
     #[allow(clippy::too_many_arguments)]
     fn webgal_plan_add_audio(
         plan: *mut WebgalPlan,
@@ -817,11 +823,30 @@ impl Drop for PlanBuilder {
 /// 由 C++ 侧用 Media Foundation 实现；`webgal-video-export` 编译 `playVideo`
 /// 时间线前调用它。
 pub fn probe_video_duration(path: &Path) -> Result<u64, Error> {
+    probe_duration(path, webgal_probe_video_duration, "视频")
+}
+
+/// 读取音频时长（微秒）。
+///
+/// 由 C++ 侧用与混音器相同的 WAV/MP3/FLAC/OGG 解码器实现；
+/// `webgal-video-export` 用它让 `say -vocal` 的文本段覆盖完整语音。
+pub fn probe_audio_duration(path: &Path) -> Result<u64, Error> {
+    probe_duration(path, webgal_probe_audio_duration, "音频")
+}
+
+type ProbeDurationFn = unsafe extern "C" fn(
+    path: *const c_char,
+    duration_us: *mut u64,
+    error_buffer: *mut c_char,
+    error_buffer_len: usize,
+) -> c_int;
+
+fn probe_duration(path: &Path, probe: ProbeDurationFn, label: &str) -> Result<u64, Error> {
     let path = cstring(&path_text(path))?;
     let mut duration = 0u64;
     let mut error_buffer = [0 as c_char; 1024];
     let code = unsafe {
-        webgal_probe_video_duration(
+        probe(
             path.as_ptr(),
             &mut duration,
             error_buffer.as_mut_ptr(),
@@ -841,7 +866,7 @@ pub fn probe_video_duration(path: &Path) -> Result<u64, Error> {
     Err(Error::new(
         status,
         if message.is_empty() {
-            "无法读取视频时长".to_owned()
+            format!("无法读取{label}时长")
         } else {
             message
         },
