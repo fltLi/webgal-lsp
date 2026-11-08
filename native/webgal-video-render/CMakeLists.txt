@@ -6,6 +6,8 @@
 # 通过 C ABI (include/webgal-video-render.h) 链接进 Ink, 不再提供命令行可执行文件。
 # 构建入口在仓库根 CMakeLists.txt, 依赖清单在根 vcpkg.json。
 
+project(webgal-video-render VERSION 0.1.0 LANGUAGES CXX)
+
 find_package(Vulkan REQUIRED)
 # Live2D 的 model3.json / motion3.json / exp3.json / physics3.json 仍需要 JSON 解析;
 # 这里只为读取资源清单, 与 Rust 侧的通信已改走 C ABI。
@@ -79,6 +81,7 @@ add_library(webgal-video-render STATIC
     src/media/mf_encoder.cpp
     src/media/preview.cpp
     src/media/stb_vorbis_impl.cpp
+    src/media/video.cpp
     src/pipeline/export.cpp
     src/stage/renderer.cpp
     "${WEBGAL_EMBEDDED_SHADERS}"

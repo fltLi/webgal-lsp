@@ -6,6 +6,7 @@ add_executable(webgal-render-tests
     bridge_test.cpp
     live2d_test.cpp
     shaders_test.cpp
+    video_test.cpp
 )
 
 target_link_libraries(webgal-render-tests

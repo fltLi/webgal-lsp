@@ -13,6 +13,7 @@ repository.workspace = true
 expression.workspace = true
 
 webgal-language-core = { workspace = true, features = ["serde"] }
+webgal-video-render-sys.workspace = true
 
 thiserror.workspace = true
 

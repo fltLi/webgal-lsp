@@ -266,6 +266,10 @@ fn scale_time(plan: &mut plan::Plan, speed: f32) {
         key.enter_ms = ms(key.enter_ms, speed);
     }
 
+    for key in &mut plan.film {
+        key.t_us = us(key.t_us, speed);
+    }
+
     for track in &mut plan.figures {
         for key in &mut track.keys {
             key.t_us = us(key.t_us, speed);

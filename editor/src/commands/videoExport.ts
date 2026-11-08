@@ -52,6 +52,10 @@ export interface VideoExportOptions {
   bitrateKbps?: number;
   encoder?: string;
   includeAudio?: boolean;
+  /** 用户设置的背景音乐音量（0–100）。 */
+  bgmVolume?: number;
+  /** 用户设置的语音音量（0–100）。 */
+  vocalVolume?: number;
   uiOnly?: boolean;
   stageOnly?: boolean;
   selected?: Record<string, number>;

@@ -6180,7 +6180,6 @@ dependencies = [
  "webgal-language-service",
  "webgal-snapshot",
  "webgal-video-export",
- "webgal-video-render-sys",
  "ws_stream_tungstenite",
  "zip",
 ]
@@ -6312,14 +6311,12 @@ dependencies = [
  "thiserror 2.0.20",
  "walkdir",
  "webgal-language-core",
+ "webgal-video-render-sys",
 ]
 
 [[package]]
 name = "webgal-video-render-sys"
 version = "0.1.0"
-dependencies = [
- "webgal-video-export",
-]
 
 [[package]]
 name = "webkit2gtk"

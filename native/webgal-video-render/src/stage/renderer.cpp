@@ -35,6 +35,7 @@
 #include "live2d/model.hpp"
 #include "media/image.hpp"
 #include "media/preview.hpp"
+#include "media/video.hpp"
 #include "shaders/embedded_shaders.hpp"
 
 namespace webgal::stage {
@@ -732,6 +733,8 @@ class Renderer {
     bool upload_atlas(std::string& error);
     bool upload_pixels(std::uint32_t width, std::uint32_t height,
                        const std::vector<std::uint8_t>& pixels, GpuImage& gpu, std::string& error);
+    bool update_video_pixels(std::uint32_t width, std::uint32_t height,
+                             const std::vector<std::uint8_t>& pixels, std::string& error);
 
     std::uint32_t find_memory_type(std::uint32_t type_bits, VkMemoryPropertyFlags properties) const;
 
@@ -745,6 +748,9 @@ class Renderer {
                     VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage);
 
     GpuImage* image_for(const job::Plan& plan, const std::string& asset, std::string& error);
+    media::VideoDecoder* video_decoder(const job::Plan& plan, const std::string& asset,
+                                       std::string& error);
+    const job::VideoSegment* video_at(const job::Plan& plan, std::uint64_t t_us) const;
     GpuImage* live2d_texture(const std::filesystem::path& path, std::string& error);
     bool ensure_core(std::string& error);
     bool ensure_live2d_model(const job::Plan& plan, const std::string& asset, live2d::Model*& model,
@@ -772,12 +778,13 @@ class Renderer {
     void build_quad(const GpuImage& image, const job::Transform& transform, bool cover,
                     const std::string& id, std::uint32_t stage_w, std::uint32_t stage_h,
                     std::array<Vertex, 6>& vertices);
+    void build_video_quad(const GpuImage& image, bool film, std::array<Vertex, 6>& vertices);
     void build_rect(float x, float y, float width, float height, float u0, float v0, float u1,
                     float v1, std::array<Vertex, 6>& vertices);
     void append_text(std::vector<DrawItem>& items, const std::string& text, float center_x,
                      float baseline, int size, float alpha, std::size_t& revealed,
                      std::size_t reveal_count, const std::array<float, 4>& color, bool outline,
-                     float spacing, bool center);
+                     float spacing, bool center, float slant = 0.0F);
     float measure_text(const std::string& text, int size, float spacing = 0.0F) const;
     std::vector<std::string> wrap_text(const std::string& text, int size, float spacing,
                                        float max_width) const;
@@ -878,6 +885,9 @@ class Renderer {
     std::map<std::string, GpuImage> images_;
     std::map<std::string, GpuImage> live2d_textures_;
     std::map<std::string, std::unique_ptr<live2d::Model>> live2d_models_;
+    std::map<std::string, std::unique_ptr<media::VideoDecoder>> video_decoders_;
+    /// 当前视频帧纹理；跨帧复用，避免每个视频帧都重新分配 image/descriptor。
+    GpuImage video_image_;
     /// 按 z-index 预排序的立绘轨道；plan 在导出期间不变。
     std::vector<const job::FigureTrack*> sorted_tracks_;
     std::uint32_t stage_w_ = 1920;
@@ -946,6 +956,11 @@ bool Renderer::prepare(const job::Plan& plan, const run::Context& context, std::
     // 三档字号在导出成片里各自小了一级, 这里统一补一级 (0.85/1.0/1.15 → 1.0/1.15/1.30),
     // 不改 C ABI 与前端已经保存的取值。
     ui_font_scale_ = font_scale_ + 0.15F;
+    for (const auto& video : plan.videos) {
+        if (video_decoder(plan, video.path, error) == nullptr) {
+            return false;
+        }
+    }
     if (!plan.ui_enabled) {
         return true;
     }
@@ -1134,6 +1149,16 @@ bool Renderer::prepare_text(const job::Plan& plan, std::string& error) {
     const int choice_size =
         std::max(12, static_cast<int>(std::lround(font_px("medium") * ui_style_.choice_font_ratio *
                                                   ui_style_.scale * ui_font_scale_)));
+    // 电影模式字幕固定用 medium 的 250%, 与 `textboxFilm.module.scss` 一致。
+    const int film_size = std::max(
+        12, static_cast<int>(std::lround(25.6F * 2.5F * ui_style_.scale * ui_font_scale_)));
+    for (const auto& segment : plan.texts) {
+        for (const auto& line : segment.lines) {
+            if (!add(line_text(line), film_size)) {
+                return false;
+            }
+        }
+    }
     for (const auto& choice : plan.choices) {
         for (const auto& option : choice.options) {
             if (!add(option.prompt, choice_size)) {
@@ -1597,6 +1622,7 @@ bool Renderer::create_descriptors(std::string& error) {
     size.descriptorCount = 4096;
     VkDescriptorPoolCreateInfo pool{};
     pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     pool.maxSets = 4096;
     pool.poolSizeCount = 1;
     pool.pPoolSizes = &size;
@@ -2043,6 +2069,60 @@ bool Renderer::upload_pixels(std::uint32_t width, std::uint32_t height,
     return true;
 }
 
+bool Renderer::update_video_pixels(std::uint32_t width, std::uint32_t height,
+                                   const std::vector<std::uint8_t>& pixels, std::string& error) {
+    if (width == 0 || height == 0 || pixels.size() < static_cast<std::size_t>(width) * height * 4) {
+        error = "视频帧像素数据无效";
+        return false;
+    }
+    if (video_image_.image == VK_NULL_HANDLE || video_image_.width != width ||
+        video_image_.height != height) {
+        destroy_image(video_image_);
+        return upload_pixels(width, height, pixels, video_image_, error);
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    const auto bytes = static_cast<VkDeviceSize>(pixels.size());
+    if (!create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       staging, staging_memory, error)) {
+        return false;
+    }
+    void* mapped = nullptr;
+    if (!ok(vkMapMemory(device_, staging_memory, 0, bytes, 0, &mapped), "映射视频 staging",
+            error)) {
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, staging_memory, nullptr);
+        return false;
+    }
+    std::memcpy(mapped, pixels.data(), pixels.size());
+    vkUnmapMemory(device_, staging_memory);
+
+    if (!begin_commands(error)) {
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, staging_memory, nullptr);
+        return false;
+    }
+    transition(video_image_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+               VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+               VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {width, height, 1};
+    vkCmdCopyBufferToImage(command_, staging, video_image_.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    transition(video_image_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+               VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    const bool submitted = submit_and_wait(error);
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, staging_memory, nullptr);
+    return submitted;
+}
+
 bool Renderer::upload_image(const std::filesystem::path& path, GpuImage& gpu, std::string& error) {
     media::Image decoded;
     if (!media::decode_image(path, decoded, error)) {
@@ -2072,6 +2152,34 @@ GpuImage* Renderer::image_for(const job::Plan& plan, const std::string& asset, s
     const auto [it, inserted] = images_.emplace(asset, gpu);
     (void)inserted;
     return &it->second;
+}
+
+media::VideoDecoder* Renderer::video_decoder(const job::Plan& plan, const std::string& asset,
+                                             std::string& error) {
+    std::filesystem::path path = from_utf8(asset);
+    if (path.is_relative()) {
+        path = from_utf8(plan.project_root) / "game" / path;
+    }
+    const std::string key = to_utf8(path);
+    if (const auto found = video_decoders_.find(key); found != video_decoders_.end()) {
+        return found->second.get();
+    }
+    auto decoder = std::make_unique<media::VideoDecoder>();
+    if (!decoder->open(path, error)) {
+        return nullptr;
+    }
+    const auto [it, inserted] = video_decoders_.emplace(key, std::move(decoder));
+    (void)inserted;
+    return it->second.get();
+}
+
+const job::VideoSegment* Renderer::video_at(const job::Plan& plan, std::uint64_t t_us) const {
+    for (const auto& video : plan.videos) {
+        if (t_us >= video.start_us && t_us < video.end_us) {
+            return &video;
+        }
+    }
+    return nullptr;
 }
 
 GpuImage* Renderer::live2d_texture(const std::filesystem::path& path, std::string& error) {
@@ -2501,6 +2609,10 @@ void Renderer::destroy_image(GpuImage& image) {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
+    if (image.descriptor != VK_NULL_HANDLE && descriptor_pool_ != VK_NULL_HANDLE) {
+        vkFreeDescriptorSets(device_, descriptor_pool_, 1, &image.descriptor);
+        image.descriptor = VK_NULL_HANDLE;
+    }
     if (image.view != VK_NULL_HANDLE) {
         vkDestroyImageView(device_, image.view, nullptr);
         image.view = VK_NULL_HANDLE;
@@ -2651,6 +2763,15 @@ float stage_alpha_at(const job::Plan& plan, std::uint64_t t_us) {
     const float eased =
         ease_progress(current.ease, key_progress(current.t_us, current.enter_ms, t_us));
     return lerp(previous, current.alpha, eased);
+}
+
+/// 电影模式在 t 时刻是否启用；没有关键帧时为 false。
+bool film_enabled_at(const job::Plan& plan, std::uint64_t t_us) {
+    if (plan.film.empty()) {
+        return false;
+    }
+    const std::size_t index = key_index_at(plan.film, t_us);
+    return index < plan.film.size() && plan.film[index].enabled;
 }
 
 std::optional<job::BackgroundKey> Renderer::background_at(const job::Plan& plan,
@@ -2828,6 +2949,20 @@ void Renderer::build_quad(const GpuImage& image, const job::Transform& transform
     };
 }
 
+void Renderer::build_video_quad(const GpuImage& image, bool film, std::array<Vertex, 6>& vertices) {
+    const float width = static_cast<float>(stage_w_);
+    const float height = static_cast<float>(stage_h_);
+    const float top = film ? height * 0.12F : 0.0F;
+    const float area_height = film ? height * 0.76F : height;
+    const float image_w = static_cast<float>(image.width);
+    const float image_h = static_cast<float>(image.height);
+    const float fit = std::min(width / image_w, area_height / image_h);
+    const float quad_w = image_w * fit;
+    const float quad_h = image_h * fit;
+    build_rect((width - quad_w) * 0.5F, top + (area_height - quad_h) * 0.5F, quad_w, quad_h, 0.0F,
+               0.0F, 1.0F, 1.0F, vertices);
+}
+
 void Renderer::build_rect(float x, float y, float width, float height, float u0, float v0, float u1,
                           float v1, std::array<Vertex, 6>& vertices) {
     const float left = x / static_cast<float>(stage_w_) * 2.0F - 1.0F;
@@ -2848,7 +2983,7 @@ void Renderer::build_rect(float x, float y, float width, float height, float u0,
 void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text, float center_x,
                            float baseline, int size, float alpha, std::size_t& revealed,
                            std::size_t reveal_count, const std::array<float, 4>& color,
-                           bool outline, float spacing, bool center) {
+                           bool outline, float spacing, bool center, float slant) {
     const auto codepoints = utf8_codepoints(text);
     float width = 0.0F;
     for (const int codepoint : codepoints) {
@@ -2879,6 +3014,13 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
         build_rect(glyph_x, glyph_y, static_cast<float>(glyph.width),
                    static_cast<float>(glyph.height), glyph.u0, glyph.v0, glyph.u1, glyph.v1,
                    item.vertices);
+        if (slant != 0.0F) {
+            // 伪斜体: 以基线为轴做水平剪切, 电影模式字幕用。
+            const float baseline_ndc = baseline / static_cast<float>(stage_h_) * 2.0F - 1.0F;
+            for (auto& vertex : item.vertices) {
+                vertex.x += slant * (baseline_ndc - vertex.y);
+            }
+        }
         items.push_back(item);
     };
 
@@ -3130,6 +3272,25 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     mesh_indices.clear();
     mesh_draws.clear();
     items.reserve(plan.background.size() + plan.figures.size() * 2 + 64);
+
+    const bool film = film_enabled_at(plan, t_us);
+    const job::VideoSegment* active_video = video_at(plan, t_us);
+    const media::VideoFrame* video_frame = nullptr;
+    if (active_video != nullptr) {
+        auto* decoder = video_decoder(plan, active_video->path, error);
+        if (decoder == nullptr) {
+            return false;
+        }
+        if (!decoder->frame_at(t_us - active_video->start_us, video_frame, error) ||
+            video_frame == nullptr) {
+            return false;
+        }
+        if (!update_video_pixels(video_frame->width, video_frame->height, video_frame->pixels,
+                                 error)) {
+            return false;
+        }
+    }
+
     for (const auto& layer : background_layers(plan, t_us)) {
         if (!layer.asset) {
             continue;
@@ -3209,84 +3370,9 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     };
 
     if (active_text != nullptr) {
-        // 布局全部按 2560×1440 舞台里的 CSS px 计算, 再乘 `scale` 落到导出画面。
-        // 文本框与姓名牌的尺寸都再乘 `ui_font_scale_`, 保证字号和底板一起变大。
-        const float k = ui_style_.scale;
-        const float box_w = std::max(1.0F, static_cast<float>(stage_w_) -
-                                               (ui_style_.box_left + ui_style_.box_right) * k);
-        const float base_box_h = ui_style_.box_height * k;
-        const float box_h = base_box_h * ui_font_scale_;
-        const float box_x = ui_style_.box_left * k;
-        // 只上移 UI (文本框/姓名), 舞台元素保持原位; 56 CSS px 约等于 1080p 上的 42px。
-        // 底边保持不动, 只让文本框向上长高。
-        constexpr float kTextBoxLift = 56.0F;
-        const float box_y =
-            static_cast<float>(stage_h_) - ui_style_.box_bottom * k - box_h - kTextBoxLift * k;
-        // 姓名牌按 WebGAL 的固定文本框顶部锚定: 字号变大时牌子只放大, 中心不跟着上移。
-        const float base_box_y = box_y + box_h - base_box_h;
-        if (ui_style_.box_color[3] > 0.001F) {
-            add_rect(box_x, box_y, box_w, box_h, ui_style_.box_color[0], ui_style_.box_color[1],
-                     ui_style_.box_color[2], ui_style_.box_color[3],
-                     ui_style_.box_radius * k * ui_font_scale_);
-        }
-
-        const int size =
-            std::max(12, static_cast<int>(std::lround(font_px(active_text->font_size) *
-                                                      ui_style_.text_scale * k * ui_font_scale_)));
-        const float line_height = ui_style_.line_height * static_cast<float>(size);
-        const float spacing = ui_style_.letter_spacing * static_cast<float>(size);
-        const float center_x = static_cast<float>(stage_w_) * 0.5F;
-        // `.text` 左右各 250px margin, 再整体 scale; 换行宽度按缩放后的舞台像素算。
-        const float max_width =
-            std::max(64.0F, (box_w - 2.0F * ui_style_.text_margin_x * k) * ui_style_.text_scale);
-        const std::size_t all = std::numeric_limits<std::size_t>::max();
-
-        // ---- 姓名名牌: 粉色圆角块 + 白边 + 白字 ----
-        if (!active_text->speaker.empty() && ui_style_.name_bg[3] > 0.001F) {
-            const float name_css = 25.6F * ui_style_.name_font_ratio;
-            const int name_size =
-                std::max(12, static_cast<int>(std::lround(name_css * ui_style_.name_scale * k *
-                                                          ui_font_scale_ * kNameFontBoost)));
-            const float name_spacing = ui_style_.letter_spacing * static_cast<float>(name_size);
-            const float pad =
-                ui_style_.name_padding * name_css * ui_style_.name_scale * k * ui_font_scale_;
-            const float border = ui_style_.name_border * ui_style_.name_scale * k * ui_font_scale_;
-            const float radius = ui_style_.name_radius * ui_style_.name_scale * k * ui_font_scale_;
-            const float badge_h = ui_style_.name_height * ui_style_.name_scale * k * ui_font_scale_;
-            const float center_y = base_box_y + ui_style_.name_height * k * 0.5F;
-            const float badge_w =
-                measure_text(active_text->speaker, name_size, name_spacing) + 2.0F * (pad + border);
-            const float badge_x = center_x - badge_w * 0.5F;
-            const float badge_y = center_y - badge_h * 0.5F;
-            if (ui_style_.name_shadow_color[3] > 0.001F) {
-                add_rect(badge_x,
-                         badge_y + ui_style_.name_box_shadow_dy * ui_style_.name_scale * k *
-                                       ui_font_scale_,
-                         badge_w, badge_h, 0.0F, 0.0F, 0.0F, ui_style_.name_shadow_color[3] * 0.55F,
-                         radius);
-            }
-            add_rect(badge_x, badge_y, badge_w, badge_h, ui_style_.name_border_color[0],
-                     ui_style_.name_border_color[1], ui_style_.name_border_color[2],
-                     ui_style_.name_border_color[3], radius);
-            add_rect(badge_x + border, badge_y + border, badge_w - 2.0F * border,
-                     badge_h - 2.0F * border, ui_style_.name_bg[0], ui_style_.name_bg[1],
-                     ui_style_.name_bg[2], ui_style_.name_bg[3], std::max(0.0F, radius - border));
-            const float name_baseline = center_y + 0.32F * static_cast<float>(name_size);
-            if (ui_style_.name_shadow_color[3] > 0.001F) {
-                std::size_t shadow_revealed = 0;
-                append_text(items, active_text->speaker, center_x,
-                            name_baseline + ui_style_.name_shadow_dy * ui_style_.name_scale * k *
-                                                ui_font_scale_,
-                            name_size, 1.0F, shadow_revealed, all, ui_style_.name_shadow_color,
-                            false, name_spacing, true);
-            }
-            std::size_t speaker_revealed = 0;
-            append_text(items, active_text->speaker, center_x, name_baseline, name_size, 1.0F,
-                        speaker_revealed, all, ui_style_.name_color, false, name_spacing, true);
-        }
-
         const std::uint64_t elapsed =
             t_us >= active_text->start_us ? t_us - active_text->start_us : 0;
+        const std::size_t all = std::numeric_limits<std::size_t>::max();
         const std::size_t reveal_count =
             active_text->reveal_ms_per_char == 0
                 ? all
@@ -3294,18 +3380,120 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                       elapsed /
                       (static_cast<std::uint64_t>(active_text->reveal_ms_per_char) * 1000));
 
-        // `.text` 与姓名牌一样锚定在 WebGAL 的固定文本框顶部: 字号变大时只放大文字,
-        // 不从抬高后的背景上沿重新排版, 否则会顶到姓名牌上。
-        // 首行基线补上 (行高 - 字号) / 2 与字体的 ascent 偏移。
-        float baseline = base_box_y + ui_style_.text_top * k +
-                         0.5F * (line_height - static_cast<float>(size)) +
-                         0.80F * static_cast<float>(size);
-        std::size_t revealed = 0;
-        for (const auto& line : active_text->lines) {
-            for (const auto& row : wrap_text(line_text(line), size, spacing, max_width)) {
-                append_text(items, row, center_x, baseline, size, 1.0F, revealed, reveal_count,
-                            ui_style_.text_color, true, spacing, ui_style_.text_center);
+        if (film) {
+            // WebGAL 电影模式: 底部 12% 纯黑字幕条, 白字居中, 不显示姓名牌。
+            const float band_height = static_cast<float>(stage_h_) * 0.12F;
+            const float band_y = static_cast<float>(stage_h_) - band_height;
+            add_rect(0.0F, band_y, static_cast<float>(stage_w_), band_height, 0.0F, 0.0F, 0.0F,
+                     1.0F);
+            const int size = std::max(
+                12, static_cast<int>(std::lround(25.6F * 2.5F * ui_style_.scale * ui_font_scale_)));
+            const float spacing = 0.2F * static_cast<float>(size);
+            const float line_height = 1.2F * static_cast<float>(size);
+            const float center_x = static_cast<float>(stage_w_) * 0.5F;
+            const float total_height = line_height * static_cast<float>(active_text->lines.size());
+            float baseline =
+                band_y + (band_height - total_height) * 0.5F + 0.80F * static_cast<float>(size);
+            const std::array<float, 4> color{1.0F, 1.0F, 1.0F, 1.0F};
+            std::size_t revealed = 0;
+            for (const auto& line : active_text->lines) {
+                append_text(items, line_text(line), center_x, baseline, size, 1.0F, revealed,
+                            reveal_count, color, false, spacing, true, 0.12F);
                 baseline += line_height;
+            }
+        } else {
+            // 布局全部按 2560×1440 舞台里的 CSS px 计算, 再乘 `scale` 落到导出画面。
+            // 文本框与姓名牌的尺寸都再乘 `ui_font_scale_`, 保证字号和底板一起变大。
+            const float k = ui_style_.scale;
+            const float box_w = std::max(1.0F, static_cast<float>(stage_w_) -
+                                                   (ui_style_.box_left + ui_style_.box_right) * k);
+            const float base_box_h = ui_style_.box_height * k;
+            const float box_h = base_box_h * ui_font_scale_;
+            const float box_x = ui_style_.box_left * k;
+            // 只上移 UI (文本框/姓名), 舞台元素保持原位; 56 CSS px 约等于 1080p 上的 42px。
+            // 底边保持不动, 只让文本框向上长高。
+            constexpr float kTextBoxLift = 56.0F;
+            const float box_y =
+                static_cast<float>(stage_h_) - ui_style_.box_bottom * k - box_h - kTextBoxLift * k;
+            // 姓名牌按 WebGAL 的固定文本框顶部锚定: 字号变大时牌子只放大, 中心不跟着上移。
+            const float base_box_y = box_y + box_h - base_box_h;
+            if (ui_style_.box_color[3] > 0.001F) {
+                add_rect(box_x, box_y, box_w, box_h, ui_style_.box_color[0], ui_style_.box_color[1],
+                         ui_style_.box_color[2], ui_style_.box_color[3],
+                         ui_style_.box_radius * k * ui_font_scale_);
+            }
+
+            const int size = std::max(
+                12, static_cast<int>(std::lround(font_px(active_text->font_size) *
+                                                 ui_style_.text_scale * k * ui_font_scale_)));
+            const float line_height = ui_style_.line_height * static_cast<float>(size);
+            const float spacing = ui_style_.letter_spacing * static_cast<float>(size);
+            const float center_x = static_cast<float>(stage_w_) * 0.5F;
+            // `.text` 左右各 250px margin, 再整体 scale; 换行宽度按缩放后的舞台像素算。
+            const float max_width = std::max(64.0F, (box_w - 2.0F * ui_style_.text_margin_x * k) *
+                                                        ui_style_.text_scale);
+
+            // ---- 姓名名牌: 粉色圆角块 + 白边 + 白字 ----
+            if (!active_text->speaker.empty() && ui_style_.name_bg[3] > 0.001F) {
+                const float name_css = 25.6F * ui_style_.name_font_ratio;
+                const int name_size =
+                    std::max(12, static_cast<int>(std::lround(name_css * ui_style_.name_scale * k *
+                                                              ui_font_scale_ * kNameFontBoost)));
+                const float name_spacing = ui_style_.letter_spacing * static_cast<float>(name_size);
+                const float pad =
+                    ui_style_.name_padding * name_css * ui_style_.name_scale * k * ui_font_scale_;
+                const float border =
+                    ui_style_.name_border * ui_style_.name_scale * k * ui_font_scale_;
+                const float radius =
+                    ui_style_.name_radius * ui_style_.name_scale * k * ui_font_scale_;
+                const float badge_h =
+                    ui_style_.name_height * ui_style_.name_scale * k * ui_font_scale_;
+                const float center_y = base_box_y + ui_style_.name_height * k * 0.5F;
+                const float badge_w = measure_text(active_text->speaker, name_size, name_spacing) +
+                                      2.0F * (pad + border);
+                const float badge_x = center_x - badge_w * 0.5F;
+                const float badge_y = center_y - badge_h * 0.5F;
+                if (ui_style_.name_shadow_color[3] > 0.001F) {
+                    add_rect(badge_x,
+                             badge_y + ui_style_.name_box_shadow_dy * ui_style_.name_scale * k *
+                                           ui_font_scale_,
+                             badge_w, badge_h, 0.0F, 0.0F, 0.0F,
+                             ui_style_.name_shadow_color[3] * 0.55F, radius);
+                }
+                add_rect(badge_x, badge_y, badge_w, badge_h, ui_style_.name_border_color[0],
+                         ui_style_.name_border_color[1], ui_style_.name_border_color[2],
+                         ui_style_.name_border_color[3], radius);
+                add_rect(badge_x + border, badge_y + border, badge_w - 2.0F * border,
+                         badge_h - 2.0F * border, ui_style_.name_bg[0], ui_style_.name_bg[1],
+                         ui_style_.name_bg[2], ui_style_.name_bg[3],
+                         std::max(0.0F, radius - border));
+                const float name_baseline = center_y + 0.32F * static_cast<float>(name_size);
+                if (ui_style_.name_shadow_color[3] > 0.001F) {
+                    std::size_t shadow_revealed = 0;
+                    append_text(items, active_text->speaker, center_x,
+                                name_baseline + ui_style_.name_shadow_dy * ui_style_.name_scale *
+                                                    k * ui_font_scale_,
+                                name_size, 1.0F, shadow_revealed, all, ui_style_.name_shadow_color,
+                                false, name_spacing, true);
+                }
+                std::size_t speaker_revealed = 0;
+                append_text(items, active_text->speaker, center_x, name_baseline, name_size, 1.0F,
+                            speaker_revealed, all, ui_style_.name_color, false, name_spacing, true);
+            }
+
+            // `.text` 与姓名牌一样锚定在 WebGAL 的固定文本框顶部: 字号变大时只放大文字,
+            // 不从抬高后的背景上沿重新排版, 否则会顶到姓名牌上。
+            // 首行基线补上 (行高 - 字号) / 2 与字体的 ascent 偏移。
+            float baseline = base_box_y + ui_style_.text_top * k +
+                             0.5F * (line_height - static_cast<float>(size)) +
+                             0.80F * static_cast<float>(size);
+            std::size_t revealed = 0;
+            for (const auto& line : active_text->lines) {
+                for (const auto& row : wrap_text(line_text(line), size, spacing, max_width)) {
+                    append_text(items, row, center_x, baseline, size, 1.0F, revealed, reveal_count,
+                                ui_style_.text_color, true, spacing, ui_style_.text_center);
+                    baseline += line_height;
+                }
             }
         }
     }
@@ -3455,6 +3643,30 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
                1.0F, 1.0F, bevel_quad.vertices);
     items.push_back(bevel_quad);
+
+    // 视频覆盖背景、立绘与 UI：先铺黑底，再按 contain 居中绘制当前视频帧。
+    // 电影模式下黑底与视频只占中间 76% 高度，上下露出舞台。
+    const std::size_t video_quad_index = items.size();
+    if (video_frame != nullptr) {
+        const float video_top = film ? static_cast<float>(stage_h_) * 0.12F : 0.0F;
+        const float video_height =
+            film ? static_cast<float>(stage_h_) * 0.76F : static_cast<float>(stage_h_);
+        DrawItem black;
+        black.descriptor = solid_.descriptor;
+        black.alpha = 1.0F;
+        black.transform.color_r = 0.0F;
+        black.transform.color_g = 0.0F;
+        black.transform.color_b = 0.0F;
+        build_rect(0.0F, video_top, static_cast<float>(stage_w_), video_height, 0.0F, 0.0F, 1.0F,
+                   1.0F, black.vertices);
+        items.push_back(black);
+
+        DrawItem video;
+        video.descriptor = video_image_.descriptor;
+        video.alpha = 1.0F;
+        build_video_quad(video_image_, film, video.vertices);
+        items.push_back(video);
+    }
 
     if (items.size() > kMaxQuads) {
         error = "单帧四边形数量超过上限";
@@ -3826,6 +4038,11 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                        items[index].radius, items[index].width, items[index].height);
         draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), items[index].descriptor);
     }
+    for (std::size_t index = video_quad_index; index < items.size(); ++index) {
+        push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
+                       items[index].radius, items[index].width, items[index].height);
+        draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), items[index].descriptor);
+    }
     end_pass();
 
     VkBufferImageCopy copy{};
@@ -3894,10 +4111,13 @@ void Renderer::destroy() {
         destroy_image(image);
     }
     live2d_models_.clear();
+    video_decoders_.clear();
     images_.clear();
+    live2d_textures_.clear();
     destroy_image(text_.image);
     destroy_image(solid_);
     destroy_image(rounded_);
+    destroy_image(video_image_);
     if (device_ != VK_NULL_HANDLE) {
         if (sampler_ != VK_NULL_HANDLE) {
             vkDestroySampler(device_, sampler_, nullptr);

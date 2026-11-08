@@ -49,6 +49,8 @@ class AudioMixer {
         std::uint64_t fade_in = 0;
         std::uint64_t fade_out = 0;
         bool loop = false;
+        /// BGM/语音在视频播放期间静音；音效与视频本身不静音。
+        bool ducked = false;
     };
 
     const job::Plan& plan_;
@@ -57,6 +59,8 @@ class AudioMixer {
     std::vector<AudioClip> clips_;
     std::map<std::string, std::size_t> clip_index_;
     std::vector<Event> events_;
+    /// 视频播放区间；用于把 BGM/语音的增益压到 0。
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ducked_ranges_;
 };
 
 /// 把 plan 中的 BGM/vocal/effect 混合为 48kHz stereo PCM16 WAV。

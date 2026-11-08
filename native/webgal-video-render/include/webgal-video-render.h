@@ -44,7 +44,8 @@ typedef enum WebgalEncoder {
 typedef enum WebgalAudioKind {
     WEBGAL_AUDIO_BGM = 0,
     WEBGAL_AUDIO_VOCAL = 1,
-    WEBGAL_AUDIO_EFFECT = 2
+    WEBGAL_AUDIO_EFFECT = 2,
+    WEBGAL_AUDIO_VIDEO = 3
 } WebgalAudioKind;
 
 /* 与 webgal-language-core 的 Transform 渲染子集对应; 缺省值见 webgal_transform_default。 */
@@ -152,6 +153,9 @@ int webgal_plan_add_background(WebgalPlan* plan, uint64_t t_us, const char* asse
 int webgal_plan_add_stage(WebgalPlan* plan, uint64_t t_us, float alpha, uint32_t enter_ms,
                           const char* ease);
 
+/* 电影模式状态关键帧; enabled 非 0 表示启用。 */
+int webgal_plan_add_film(WebgalPlan* plan, uint64_t t_us, int enabled);
+
 int webgal_plan_add_figure(WebgalPlan* plan, const char* id, int z_index);
 
 int webgal_plan_add_figure_key(WebgalPlan* plan, const char* figure_id, uint64_t t_us,
@@ -179,6 +183,13 @@ int webgal_plan_add_choice_option(WebgalPlan* plan, const char* prompt, const ch
 int webgal_plan_add_intro(WebgalPlan* plan, uint64_t start_us, uint64_t end_us,
                           const char* font_size, const char* animation);
 int webgal_plan_add_intro_line(WebgalPlan* plan, const char* text);
+
+/* 全屏视频段; 覆盖背景、立绘与 UI，按 contain 居中显示。 */
+int webgal_plan_add_video(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, const char* path);
+
+/* 读取视频时长 (微秒)。供计划编译阶段在写时间线之前探测 `playVideo`。 */
+int webgal_probe_video_duration(const char* path, uint64_t* duration_us, char* error_buffer,
+                                size_t error_buffer_len);
 
 /* has_end 为 0 时忽略 end_us。 */
 int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, int has_end,

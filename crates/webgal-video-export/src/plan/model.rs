@@ -23,6 +23,9 @@ pub struct Plan {
     /// 整舞台 alpha (`setTransform -target=stage-main`); 只用于淡入淡出黑场。
     #[serde(default)]
     pub stage: Vec<StageKey>,
+    /// 电影模式状态；`filmMode` 是布尔状态，不是一次性演出。
+    #[serde(default)]
+    pub film: Vec<FilmKey>,
     pub texts: Vec<TextSegment>,
     pub choices: Vec<ChoiceSegment>,
     pub intros: Vec<IntroSegment>,
@@ -140,6 +143,14 @@ pub struct StageKey {
     pub enter_ms: u32,
     #[serde(default)]
     pub ease: String,
+}
+
+/// 电影模式状态关键帧。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilmKey {
+    pub t_us: u64,
+    pub enabled: bool,
 }
 
 /// 单条立绘轨道。
@@ -323,7 +334,6 @@ pub struct VideoSegment {
     pub start_us: u64,
     pub end_us: u64,
     pub path: String,
-    pub fit: String,
 }
 
 /// 音频事件。
@@ -348,6 +358,8 @@ pub enum AudioKind {
     Bgm,
     Vocal,
     Effect,
+    /// 视频文件自带的音轨；时间与 `videos` 段一致。
+    Video,
 }
 
 /// 非致命警告。

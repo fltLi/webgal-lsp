@@ -2,8 +2,9 @@
 
 # WebGAL 原生代码 workspace。
 #
-# 唯一的 CMake 入口: 构建产物在 build/<preset>/ 下, 子目录不再自带 presets、
-# vcpkg 清单或 project() 声明。依赖清单见根 vcpkg.json。
+# 唯一的 CMake 入口: 构建产物在 build/<preset>/ 下。子目录不再自带 presets 或
+# vcpkg 清单; `native/webgal-video-render` 只声明自己的项目名与版本号, 供
+# `--target` 和打包脚本识别。依赖清单见根 vcpkg.json。
 
 cmake_minimum_required(VERSION 3.28)
 

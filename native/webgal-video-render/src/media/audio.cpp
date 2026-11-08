@@ -3,6 +3,7 @@
 #include "media/audio.hpp"
 
 #include "common/path.hpp"
+#include "media/video.hpp"
 
 #include <algorithm>
 #include <array>
@@ -187,8 +188,8 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         clip.samples.resize(static_cast<std::size_t>(read) * clip.channels);
         return true;
     }
-    if (extension == ".ogg") {
-        // stb_vorbis 没有宽字符入口；先整文件读进内存，避免按系统代码页解释路径。
+    if (extension ==
+        ".ogg") { // stb_vorbis 没有宽字符入口；先整文件读进内存，避免按系统代码页解释路径。
         std::ifstream input(path, std::ios::binary | std::ios::ate);
         if (!input) {
             error = "无法读取 OGG: " + to_utf8(path);
@@ -235,6 +236,10 @@ bool load_audio(const std::filesystem::path& path, AudioClip& clip, std::string&
         }
         return true;
     }
+    if (extension == ".mp4" || extension == ".m4v" || extension == ".mov" || extension == ".webm" ||
+        extension == ".mkv" || extension == ".avi") {
+        return load_video_audio(path, clip, error);
+    }
     error = "不支持的音频格式: " + extension;
     return false;
 }
@@ -250,6 +255,14 @@ bool AudioMixer::prepare(std::string& error) {
     }
 
     events_.clear();
+    ducked_ranges_.clear();
+    for (const auto& video : plan_.videos) {
+        const std::uint64_t start = video.start_us * kSampleRate / 1'000'000ULL;
+        const std::uint64_t end = video.end_us * kSampleRate / 1'000'000ULL;
+        if (start < end) {
+            ducked_ranges_.emplace_back(start, end);
+        }
+    }
     events_.reserve(plan_.audio.size());
     for (std::size_t index = 0; index < plan_.audio.size(); ++index) {
         if (context_.cancel_requested()) {
@@ -298,6 +311,7 @@ bool AudioMixer::prepare(std::string& error) {
         mixed.fade_in = static_cast<std::uint64_t>(event.fade_in_ms) * kSampleRate / 1000ULL;
         mixed.fade_out = static_cast<std::uint64_t>(event.fade_out_ms) * kSampleRate / 1000ULL;
         mixed.loop = event.loop;
+        mixed.ducked = event.kind == job::AudioKind::Bgm || event.kind == job::AudioKind::Vocal;
         events_.push_back(mixed);
     }
     return true;
@@ -315,6 +329,18 @@ bool AudioMixer::mix(std::uint64_t start_frame, std::uint32_t frame_count,
         }
         const AudioClip& clip = clips_[event.clip];
         for (std::uint64_t frame = begin; frame < end; ++frame) {
+            if (event.ducked) {
+                bool muted = false;
+                for (const auto& [ducked_start, ducked_end] : ducked_ranges_) {
+                    if (frame >= ducked_start && frame < ducked_end) {
+                        muted = true;
+                        break;
+                    }
+                }
+                if (muted) {
+                    continue;
+                }
+            }
             const std::uint64_t offset =
                 event.loop ? (frame - event.start) % clip.frames : frame - event.start;
             if (offset >= clip.frames) {

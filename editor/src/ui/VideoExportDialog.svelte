@@ -130,6 +130,8 @@
   let actualEncoder = $state('');
 
   let fontScale = $state(stored.fontScale);
+  let bgmVolumeText = $state(stored.bgmVolume);
+  let vocalVolumeText = $state(stored.vocalVolume);
   let autoSpeedText = $state(stored.autoSpeed);
   let textSpeedText = $state(stored.textSpeed);
   /* 勾选 = 4.6.4+ 的立绘方位判定; 不勾选 = 4.6.3 及以前。 */
@@ -227,6 +229,8 @@
       bitrate,
       encoder,
       content: contentMode,
+      bgmVolume: bgmVolumeText,
+      vocalVolume: vocalVolumeText,
       fontScale,
       autoSpeed: autoSpeedText,
       textSpeed: textSpeedText,
@@ -470,6 +474,8 @@
         figureSide: figureSideModern ? 'modern' : 'legacy',
         audioOnly: !exportVideoClip,
         includeAudio,
+        bgmVolume: Math.round(clampNumber(bgmVolumeText, 25, 0, 100)),
+        vocalVolume: Math.round(clampNumber(vocalVolumeText, 100, 0, 100)),
         uiOnly: !includeStage,
         stageOnly: !includeUi,
         disableFilters: !enableFilters,
@@ -696,6 +702,18 @@
           <div class="settings-field">
             <span class="settings-label">文字显示速度</span>
             <Input type="number" bind:value={textSpeedText} title="与 WebGAL 一致：0–100，越大字出得越快" />
+          </div>
+          <div class="settings-field">
+            <span class="settings-label">背景音量</span>
+            <Input
+              type="number"
+              bind:value={bgmVolumeText}
+              title="与 WebGAL 用户设置一致：0–100；视频音轨也使用这个音量"
+            />
+          </div>
+          <div class="settings-field">
+            <span class="settings-label">语音音量</span>
+            <Input type="number" bind:value={vocalVolumeText} title="与 WebGAL 用户设置一致：0–100" />
           </div>
         </div>
         <!-- 开关单独一行左对齐: 放进参数网格会被每格居中, 看起来像缩进 -->

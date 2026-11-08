@@ -52,6 +52,10 @@ export interface VideoExportPreferences {
   encoder: string;
   /** 导出内容: 视频+音频 / 仅视频 / 仅音频。 */
   content: 'video-audio' | 'video' | 'audio';
+  /** 用户设置的背景音乐音量（0–100），对应 WebGAL bgmVolume。 */
+  bgmVolume: string;
+  /** 用户设置的语音音量（0–100），对应 WebGAL vocalVolume。 */
+  vocalVolume: string;
   fontScale: string;
   autoSpeed: string;
   textSpeed: string;
@@ -121,6 +125,8 @@ export const defaultSettings: Settings = {
     bitrate: '8000',
     encoder: 'auto',
     content: 'video-audio',
+    bgmVolume: '25',
+    vocalVolume: '100',
     // 导出正文默认偏大：720p 下按模板原尺寸会显得偏小。
     fontScale: '1.15',
     autoSpeed: '12',
@@ -195,6 +201,14 @@ function normalizeVideoExport(raw: unknown): VideoExportPreferences {
     bitrate: text(value.bitrate, defaults.bitrate, ['4000', '8000', '16000']),
     encoder: text(value.encoder, defaults.encoder, ['auto', 'mf', 'ffmpeg']),
     content,
+    bgmVolume:
+      typeof value.bgmVolume === 'string' && /^\d+$/.test(value.bgmVolume) && Number(value.bgmVolume) <= 100
+        ? value.bgmVolume
+        : defaults.bgmVolume,
+    vocalVolume:
+      typeof value.vocalVolume === 'string' && /^\d+$/.test(value.vocalVolume) && Number(value.vocalVolume) <= 100
+        ? value.vocalVolume
+        : defaults.vocalVolume,
     fontScale: text(value.fontScale, defaults.fontScale, ['0.85', '1', '1.15']),
     autoSpeed:
       typeof value.autoSpeed === 'string' && /^\d+$/.test(value.autoSpeed) && Number(value.autoSpeed) <= 100

@@ -114,16 +114,17 @@ python -m pyright                    # 严格模式，配置在根 pyproject.tom
 cargo check -p webgal-ink            # 只查编辑器后端；需要 editor/dist 与系统依赖
 cargo clippy -p webgal-ink -- --deny warnings
 
-# 视频导出：Rust 编译计划 + C++ 静态库（由 sys crate 的 build.rs 链接，没有独立渲染器进程）
+# 视频导出：export 直接依赖 sys；sys 的 build.rs 构建并静态链接 C++ 渲染器
 cargo check -p webgal-video-export
-cargo test -p webgal-video-export
-cargo test -p webgal-video-render-sys   # 需要 CMake + Vulkan SDK + vcpkg；dev 下 C++ 用 RelWithDebInfo
+cargo test -p webgal-video-export    # Windows 上会一并编译渲染器
+cargo test -p webgal-video-render-sys  # 只测 C ABI 封装；C++ 用 RelWithDebInfo
 # 只改 C++ 时：仓库根是唯一的 CMake workspace（子目录没有 presets）
 cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
 
-# 真实 GPU 导出验收（可选）：设 WEBGAL_RENDER_GPU_TEST=1 后同一测试会渲染 fixture；
+# 真实 GPU 导出验收（可选）：设 WEBGAL_RENDER_GPU_TEST=1 后 render_export 会渲染 fixture；
 # 再用 WEBGAL_RENDER_GPU_PROJECT / _RESOLUTION / _SPEED / _OUTPUT / _LIVE2D_CORE 指向样本。
 # 不要给 _PROJECT 设空串——那会覆盖默认 fixture 路径。
+cargo test -p webgal-video-export --test render_export -- --nocapture
 
 # 改了 crates/webgal-language-service/src/wasm.rs 时额外跑（它只随 wasm32 编译，宿主目标查不到）
 cargo check -p webgal-language-service --features simulate-diagnose --target wasm32-unknown-unknown
@@ -155,9 +156,11 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
   `video-export-cpp`（根 workspace 的 format-check + build + tidy + ctest）、`playground`（wasm + 构建）、
   `python`（black + pyright）。
   本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
-- **视频导出没有 CLI、没有 JSON、没有独立渲染器进程**：`webgal-video-export` 只产出计划，
-  `webgal-video-render-sys` 用 C ABI（`native/webgal-video-render/include/webgal-video-render.h`）
-  把计划写进 C++ 侧再同步导出。想加单帧/调试渲染时扩展这个 ABI，**不要**恢复命令行或 plan.json。
+- **视频导出没有 CLI、没有 JSON、没有独立渲染器进程**：`webgal-video-export` 直接依赖
+  `webgal-video-render-sys`（计划映射、视频时长探测与渲染入口都在 export 侧），后者用 C ABI
+  （`native/webgal-video-render/include/webgal-video-render.h`）把计划写进 C++ 侧再同步导出；
+  Ink 的 `video-export` 特性只依赖 `webgal-video-export`。想加单帧/调试渲染时扩展这个 ABI，
+  **不要**恢复命令行或 plan.json。
 
 ### 测试写在哪儿
 
@@ -203,9 +206,10 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   service/preview.rs        预览静态服务器 + /api/webgalsync WebSocket 网关（兼容两代引擎）
   service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
   service/video_export.rs    视频导出 Tauri command：计划 → C ABI → 后台导出/进度/取消
+  service/video_export_stub.rs  未启用 `video-export` 时的同签名占位实现
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
-crates/webgal-video-export/ 视频导出: 读取 WebGAL 项目并编译成时间线计划 (纯 Rust, 不渲染)
+crates/webgal-video-export/ 视频导出: 读取项目、编译时间线、映射计划并探测/渲染视频
 crates/webgal-video-render-sys/ C ABI 绑定; build.rs 构建并静态链接 C++ 渲染器 (仅 Windows)
 native/webgal-video-render/ C++ Vulkan 离屏渲染器 (静态库; 仓库根是唯一的 CMake workspace)
 CMakeLists.txt / CMakePresets.json / vcpkg.json  原生代码 workspace 入口 (只服务 native/)
@@ -382,8 +386,9 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
 | `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器 |
 | `cargo` 报 `RuntimeLibrary` 不匹配 / `_calloc_dbg` 未解析 | 渲染器的 C++ 运行时和 rustc 不一致。`build.rs` 已把 dev 配置映到 `RelWithDebInfo`（rustc 在 MSVC 上始终用 release CRT）；自己手动 CMake 构建时要跟着用 Release/RelWithDebInfo，别用 Debug |
-| `cargo test -p webgal-video-render-sys` 报 `InvalidProject { path: "", ... }` | 环境里把 `WEBGAL_RENDER_GPU_PROJECT` 设成了空串，覆盖了 fixture 默认路径；删掉该变量再跑 |
+| `cargo test -p webgal-video-export --test render_export` 报 `InvalidProject { path: "", ... }` | 环境里把 `WEBGAL_RENDER_GPU_PROJECT` 设成了空串，覆盖了 fixture 默认路径；删掉该变量再跑 |
 | 导出报 `model3.json 中不存在表情/motion` | 先确认 `FileReferences.Expressions` / `Motions` 里确有该名字；渲染器在加载时缓存这两张表，不再逐帧读盘 |
+| `playVideo` 画面出现斜向条纹/逐行错位 | Media Foundation 的 RGB32 缓冲区可能按 16 像素对齐（如 1918×1080 实际为 1920×1088），`MF_MT_DEFAULT_STRIDE` 仍是 1918×4；行距必须从 buffer 长度推断，见 `media/video.cpp` 的 `decode()` |
 | 导出的视频没有声音 / 图层开关无效 | 检查 `ExportConfig.include_audio` 与 `layers`；计划完成后会按它们裁剪 `plan.audio` / `plan.background` / `plan.figures` / UI，不在渲染器里猜 |
 | 导出 WAV 报 `WAV 超过 4 GiB` | WAV 头是 32 位长度；改用 MP4（AAC）或缩短时长 |
 | 仓库里出现 `target-xxx/` 之类的目录 | 设了自定义 `CARGO_TARGET_DIR`（例如验证 `+crt-static` 时）。`.gitignore` 的 `target-*/` 已覆盖；不需要就删掉，它会占几 GB |

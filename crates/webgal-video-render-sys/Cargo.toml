@@ -11,4 +11,3 @@ repository.workspace = true
 links = "webgal-video-render"
 
 [dependencies]
-webgal-video-export.workspace = true

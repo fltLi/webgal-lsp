@@ -7,5 +7,9 @@ pub mod lsp;
 pub mod preview;
 pub mod snapshot;
 pub mod startup;
+#[cfg(feature = "video-export")]
+pub mod video_export;
+#[cfg(not(feature = "video-export"))]
+#[path = "service/video_export_stub.rs"]
 pub mod video_export;
 pub mod voice;

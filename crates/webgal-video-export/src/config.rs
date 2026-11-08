@@ -27,6 +27,10 @@ pub struct ExportConfig {
     pub layers: LayerConfig,
     /// 是否输出音频轨。
     pub include_audio: bool,
+    /// 用户设置的背景音乐音量（0–100），对应 WebGAL `bgmVolume`。
+    pub bgm_volume: u8,
+    /// 用户设置的语音音量（0–100），对应 WebGAL `vocalVolume`。
+    pub vocal_volume: u8,
     /// 文本框字号缩放（1.0 为模板原尺寸）。
     pub font_scale: f32,
     /// 播放速度（1.0 为原速）。
@@ -45,6 +49,8 @@ impl Default for ExportConfig {
             choices: ChoiceConfig::default(),
             layers: LayerConfig::default(),
             include_audio: true,
+            bgm_volume: 25,
+            vocal_volume: 100,
             font_scale: 1.0,
             playback_speed: 1.0,
             figure_side: FigureSideMode::default(),
@@ -230,6 +236,8 @@ mod tests {
     fn defaults_are_export_ready() {
         let config = ExportConfig::default();
         assert!(config.include_audio);
+        assert_eq!(config.bgm_volume, 25);
+        assert_eq!(config.vocal_volume, 100);
         assert!((config.font_scale - 1.0).abs() < f32::EPSILON);
         assert!((config.playback_speed - 1.0).abs() < f32::EPSILON);
         assert!(config.layers.background && config.layers.figures && config.layers.ui);

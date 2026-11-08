@@ -6,6 +6,7 @@
 //! 变量、运行时输入与循环直接报错，不做“猜一个值”的降级。
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use expression::{EmptyEvaluationContext, Expression};
 use webgal_language_core::{
@@ -13,8 +14,8 @@ use webgal_language_core::{
     resource::FigureKind,
     sentence::{
         BgmSentence, CallSceneSentence, ChangeBackgroundSentence, ChangeFigureSentence,
-        ChangeSceneSentence, ChooseSentence, IntroSentence, PlayEffectSentence, PlayVideoSentence,
-        SaySentence, Sentence, SentenceExt, SetTransformSentence, WaitSentence,
+        ChangeSceneSentence, ChooseSentence, FilmModeSentence, IntroSentence, PlayEffectSentence,
+        PlayVideoSentence, SaySentence, Sentence, SentenceExt, SetTransformSentence, WaitSentence,
     },
 };
 
@@ -23,7 +24,7 @@ use crate::{
     config::{ExportConfig, FigureSideMode},
     plan::{
         AssetInfo, AssetKind, AudioEvent, AudioKind, BackgroundKey, BlendMode, BlinkConfig,
-        ChoiceOption, ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack,
+        ChoiceOption, ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack, FilmKey,
         FocusConfig, IntroSegment, Meta, Plan, StageKey, TextChar, TextLine, TextSegment,
         VideoSegment, Warning,
     },
@@ -267,7 +268,7 @@ impl<'a> Compiler<'a> {
                     self.line += 1;
                 }
                 Sentence::PlayVideo(sentence) => {
-                    self.play_video(sentence, line)?;
+                    self.play_video(sentence)?;
                     self.line += 1;
                 }
                 Sentence::Intro(sentence) => {
@@ -316,8 +317,12 @@ impl<'a> Compiler<'a> {
                     self.warn("WG_TEXTBOX", "setTextbox 不改变导出 UI 状态", line);
                     self.line += 1;
                 }
-                Sentence::FilmMode(_) | Sentence::PixiInit(_) | Sentence::PixiPerform(_) => {
-                    self.warn("WG_UNSUPPORTED_EFFECT", "特效/电影模式不参与导出", line);
+                Sentence::FilmMode(sentence) => {
+                    self.film_mode(sentence);
+                    self.line += 1;
+                }
+                Sentence::PixiInit(_) | Sentence::PixiPerform(_) => {
+                    self.warn("WG_UNSUPPORTED_EFFECT", "Pixi 特效不参与导出", line);
                     self.line += 1;
                 }
                 Sentence::UnlockCg(_) | Sentence::UnlockBgm(_) | Sentence::CallSteam(_) => {
@@ -404,7 +409,7 @@ impl<'a> Compiler<'a> {
                 end_us: Some(end),
                 path: vocal.clone(),
                 kind: AudioKind::Vocal,
-                volume: 1.0,
+                volume: percent(self.config.vocal_volume),
                 fade_in_ms: 0,
                 fade_out_ms: 0,
                 loop_: false,
@@ -817,7 +822,7 @@ impl<'a> Compiler<'a> {
             end_us: None,
             path,
             kind: AudioKind::Bgm,
-            volume: volume(sentence.volume),
+            volume: volume(sentence.volume) * percent(self.config.bgm_volume),
             fade_in_ms: sentence.enter.unwrap_or(0),
             fade_out_ms: 0,
             loop_: true,
@@ -846,19 +851,37 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn play_video(&mut self, sentence: &PlayVideoSentence, line: usize) -> Result<()> {
+    fn play_video(&mut self, sentence: &PlayVideoSentence) -> Result<()> {
+        let absolute = self
+            .project
+            .asset_path("video", &sentence.video)
+            .ok_or_else(|| Error::Unsupported(format!("视频不存在: {}", sentence.video)))?;
+        let duration_us = probe_video_duration(&absolute).map_err(|error| {
+            Error::Unsupported(format!("无法探测视频时长: {} ({error})", sentence.video))
+        })?;
         let path = self.add_asset("video", &sentence.video, AssetKind::Video)?;
-        self.warn(
-            "WG_VIDEO_DURATION",
-            "视频时长尚未探测, plan 中先按 0 处理",
-            line,
-        );
+        if let Some(asset) = self.plan.assets.get_mut(&path) {
+            asset.duration_us = Some(duration_us);
+        }
+        let start_us = self.time_us;
+        let end_us = start_us.saturating_add(duration_us);
         self.plan.videos.push(VideoSegment {
-            start_us: self.time_us,
-            end_us: self.time_us,
-            path,
-            fit: "contain".to_owned(),
+            start_us,
+            end_us,
+            path: path.clone(),
         });
+        // 视频音轨作为独立事件进入混音器；`include_audio=false` 时会被一起裁掉。
+        self.plan.audio.push(AudioEvent {
+            start_us,
+            end_us: Some(end_us),
+            path,
+            kind: AudioKind::Video,
+            volume: percent(self.config.bgm_volume),
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            loop_: false,
+        });
+        self.time_us = end_us;
         Ok(())
     }
 
@@ -895,6 +918,20 @@ impl<'a> Compiler<'a> {
         });
         self.time_us = end;
         Ok(())
+    }
+
+    fn film_mode(&mut self, sentence: &FilmModeSentence) {
+        if self
+            .plan
+            .film
+            .last()
+            .is_none_or(|key| key.enabled != sentence.enable)
+        {
+            self.plan.film.push(FilmKey {
+                t_us: self.time_us,
+                enabled: sentence.enable,
+            });
+        }
     }
 
     fn wait(&mut self, sentence: &WaitSentence) {
@@ -1029,6 +1066,19 @@ impl<'a> Compiler<'a> {
     }
 }
 
+/// 视频时长由 C++ 渲染器的 Media Foundation 实现；计划编译阶段只消费结果。
+fn probe_video_duration(path: &Path) -> std::result::Result<u64, String> {
+    #[cfg(windows)]
+    {
+        webgal_video_render_sys::probe_video_duration(path).map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("视频时长探测仅在 Windows 可用".to_owned())
+    }
+}
+
 fn collect_labels(project: &Project) -> HashMap<String, HashMap<String, usize>> {
     let mut labels = HashMap::new();
     for (name, entry) in project.scenes() {
@@ -1152,6 +1202,11 @@ fn scale_transform(transform: &Transform, scale: f32) -> Transform {
 
 fn volume(value: Option<u32>) -> f32 {
     value.unwrap_or(100).min(100) as f32 / 100.0
+}
+
+/// 用户音量设置（0–100）→ 混音增益。
+fn percent(value: u8) -> f32 {
+    f32::from(value.min(100)) / 100.0
 }
 
 fn color(value: Option<webgal_language_core::element::Color>) -> String {

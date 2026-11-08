@@ -63,6 +63,12 @@ struct StageKey {
     std::string ease;
 };
 
+/// 电影模式状态；启用后视频/文本框使用上下留白的遮幅布局。
+struct FilmKey {
+    std::uint64_t t_us = 0;
+    bool enabled = false;
+};
+
 struct FigureKey {
     std::uint64_t t_us = 0;
     std::optional<std::string> asset;
@@ -153,10 +159,19 @@ struct IntroSegment {
     std::string animation;
 };
 
+/// 全屏视频段。视频覆盖背景、立绘与 UI，按 `contain` 居中并铺黑边。
+struct VideoSegment {
+    std::uint64_t start_us = 0;
+    std::uint64_t end_us = 0;
+    std::string path;
+};
+
 enum class AudioKind {
     Bgm,
     Vocal,
     Effect,
+    /// 视频文件自带音轨。
+    Video,
 };
 
 struct AudioEvent {
@@ -187,10 +202,12 @@ struct Plan {
     std::map<std::string, std::string> assets;
     std::vector<BackgroundKey> background;
     std::vector<StageKey> stage;
+    std::vector<FilmKey> film;
     std::vector<FigureTrack> figures;
     std::vector<TextSegment> texts;
     std::vector<ChoiceSegment> choices;
     std::vector<IntroSegment> intros;
+    std::vector<VideoSegment> videos;
     std::vector<AudioEvent> audio;
 };
 

@@ -15,7 +15,7 @@ use webgal_video_export::api::{build_plan, route_preview, ExportOptions};
 use webgal_video_export::project::Project;
 
 #[cfg(all(feature = "video-export", target_os = "windows"))]
-use webgal_video_render_sys::{
+use webgal_video_export::render::{
     from_plan, render, Callbacks, Encoder, Preview, Progress, RenderOptions,
 };
 
@@ -336,6 +336,10 @@ pub struct VideoExportOptions {
     pub bitrate_kbps: Option<u32>,
     pub encoder: Option<String>,
     pub include_audio: Option<bool>,
+    /// 用户设置的背景音乐音量（0–100）。
+    pub bgm_volume: Option<u8>,
+    /// 用户设置的语音音量（0–100）。
+    pub vocal_volume: Option<u8>,
     pub ui_only: Option<bool>,
     pub stage_only: Option<bool>,
     pub selected: Option<std::collections::BTreeMap<String, usize>>,
@@ -400,6 +404,12 @@ pub async fn export_video(
         }
         if let Some(enabled) = config.include_audio {
             export_options.config.include_audio = enabled;
+        }
+        if let Some(volume) = config.bgm_volume {
+            export_options.config.bgm_volume = volume.min(100);
+        }
+        if let Some(volume) = config.vocal_volume {
+            export_options.config.vocal_volume = volume.min(100);
         }
         let ui_only = config.ui_only.unwrap_or(false);
         let stage_only = config.stage_only.unwrap_or(false);

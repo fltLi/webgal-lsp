@@ -124,10 +124,17 @@ TEST_CASE("plan builder records the fields the renderer consumes") {
     REQUIRE(webgal_plan_add_intro(raw, 0, 1'000'000, "large", "fadeIn") == WEBGAL_STATUS_OK);
     REQUIRE(webgal_plan_add_intro_line(raw, "第一行") == WEBGAL_STATUS_OK);
 
+    REQUIRE(webgal_plan_add_film(raw, 0, 1) == WEBGAL_STATUS_OK);
+    REQUIRE(webgal_plan_add_film(raw, 1'500'000, 0) == WEBGAL_STATUS_OK);
+
+    REQUIRE(webgal_plan_add_video(raw, 0, 2'000'000, "video/clip.mp4") == WEBGAL_STATUS_OK);
+
     REQUIRE(webgal_plan_add_audio(raw, 0, 0, 0, "bgm/theme.wav", WEBGAL_AUDIO_BGM, 0.8F, 1, 0,
                                   500) == WEBGAL_STATUS_OK);
     REQUIRE(webgal_plan_add_audio(raw, 0, 1'000'000, 1, "vocal/a.wav", WEBGAL_AUDIO_VOCAL, 1.0F, 0,
                                   0, 0) == WEBGAL_STATUS_OK);
+    REQUIRE(webgal_plan_add_audio(raw, 0, 2'000'000, 1, "video/clip.mp4", WEBGAL_AUDIO_VIDEO, 1.0F,
+                                  0, 0, 0) == WEBGAL_STATUS_OK);
 }
 
 TEST_CASE("audio only export writes a wav without touching vulkan") {
@@ -225,6 +232,8 @@ TEST_CASE("builder validates arguments") {
             WEBGAL_STATUS_INVALID_ARGUMENT);
     REQUIRE(webgal_plan_add_asset(raw, nullptr, "a.png") == WEBGAL_STATUS_INVALID_ARGUMENT);
     REQUIRE(webgal_plan_add_asset(raw, "a", "") == WEBGAL_STATUS_INVALID_ARGUMENT);
+    REQUIRE(webgal_plan_add_video(raw, 0, 1, nullptr) == WEBGAL_STATUS_INVALID_ARGUMENT);
+    REQUIRE(webgal_plan_add_video(raw, 2, 1, "video/a.mp4") == WEBGAL_STATUS_INVALID_ARGUMENT);
     REQUIRE(webgal_plan_add_audio(raw, 0, 0, 0, nullptr, WEBGAL_AUDIO_BGM, 1.0F, 0, 0, 0) ==
             WEBGAL_STATUS_INVALID_ARGUMENT);
 }

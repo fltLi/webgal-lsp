@@ -6,20 +6,17 @@
 //! 额外的可执行文件、shader 或 JSON 文件。计划通过 opaque 的 [`PlanBuilder`] 逐项填充,
 //! 再由 [`render`] 同步执行一次导出。
 //!
-//! 只有 Windows 有实现; 其他平台 compile 出来是空 crate, 由 Ink 的 `cfg(windows)` 依赖排除。
+//! 只有 Windows 有实现; 其他平台编译出来是空 crate, 因此 `webgal-video-export` 的
+//! `render` 模块只在 Windows 暴露, Ink 也用 `target_os` 区分实际命令。
 
 #![cfg(windows)]
 
 use std::{
     ffi::{CStr, CString, c_char, c_int, c_void},
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
-
-pub use plan::from_plan;
-
-pub mod plan;
 
 /// C ABI 的 opaque 计划指针。
 #[repr(C)]
@@ -136,6 +133,8 @@ pub enum AudioKind {
     Bgm,
     Vocal,
     Effect,
+    /// 视频文件自带的音轨。
+    Video,
 }
 
 impl AudioKind {
@@ -144,6 +143,7 @@ impl AudioKind {
             Self::Bgm => 0,
             Self::Vocal => 1,
             Self::Effect => 2,
+            Self::Video => 3,
         }
     }
 }
@@ -361,6 +361,7 @@ unsafe extern "C" {
         enter_ms: u32,
         ease: *const c_char,
     ) -> c_int;
+    fn webgal_plan_add_film(plan: *mut WebgalPlan, t_us: u64, enabled: c_int) -> c_int;
     fn webgal_plan_add_figure(plan: *mut WebgalPlan, id: *const c_char, z_index: c_int) -> c_int;
     #[allow(clippy::too_many_arguments)]
     fn webgal_plan_add_figure_key(
@@ -423,6 +424,18 @@ unsafe extern "C" {
         animation: *const c_char,
     ) -> c_int;
     fn webgal_plan_add_intro_line(plan: *mut WebgalPlan, text: *const c_char) -> c_int;
+    fn webgal_plan_add_video(
+        plan: *mut WebgalPlan,
+        start_us: u64,
+        end_us: u64,
+        path: *const c_char,
+    ) -> c_int;
+    fn webgal_probe_video_duration(
+        path: *const c_char,
+        duration_us: *mut u64,
+        error_buffer: *mut c_char,
+        error_buffer_len: usize,
+    ) -> c_int;
     #[allow(clippy::too_many_arguments)]
     fn webgal_plan_add_audio(
         plan: *mut WebgalPlan,
@@ -480,6 +493,13 @@ pub struct StageSpec<'a> {
     pub ease: &'a str,
 }
 
+/// 一条电影模式状态关键帧。
+#[derive(Debug, Clone, Copy)]
+pub struct FilmSpec {
+    pub t_us: u64,
+    pub enabled: bool,
+}
+
 /// 一条立绘关键帧。
 #[derive(Debug, Clone, Copy)]
 pub struct FigureKeySpec<'a> {
@@ -508,6 +528,14 @@ pub struct TextSpec<'a> {
     pub reveal_ms_per_char: u32,
     pub fade_ms: u32,
     pub figure: Option<&'a str>,
+}
+
+/// 一段全屏视频。
+#[derive(Debug, Clone, Copy)]
+pub struct VideoSpec<'a> {
+    pub start_us: u64,
+    pub end_us: u64,
+    pub path: &'a str,
 }
 
 /// 一条音频事件。
@@ -579,6 +607,11 @@ impl PlanBuilder {
                 ease.as_ptr(),
             )
         })
+    }
+
+    /// 追加一条电影模式状态关键帧。
+    pub fn add_film(&mut self, spec: &FilmSpec) -> Result<(), Error> {
+        check(unsafe { webgal_plan_add_film(self.raw, spec.t_us, flag(spec.enabled)) })
     }
 
     /// 追加一条背景关键帧。
@@ -744,6 +777,12 @@ impl PlanBuilder {
         check(unsafe { webgal_plan_add_intro_line(self.raw, text.as_ptr()) })
     }
 
+    /// 追加一段全屏视频。
+    pub fn add_video(&mut self, spec: &VideoSpec<'_>) -> Result<(), Error> {
+        let path = cstring(spec.path)?;
+        check(unsafe { webgal_plan_add_video(self.raw, spec.start_us, spec.end_us, path.as_ptr()) })
+    }
+
     /// 追加一条音频事件。
     pub fn add_audio(&mut self, spec: &AudioSpec<'_>) -> Result<(), Error> {
         let path = cstring(spec.path)?;
@@ -771,6 +810,42 @@ impl Drop for PlanBuilder {
             self.raw = std::ptr::null_mut();
         }
     }
+}
+
+/// 读取视频容器时长（微秒）。
+///
+/// 由 C++ 侧用 Media Foundation 实现；`webgal-video-export` 编译 `playVideo`
+/// 时间线前调用它。
+pub fn probe_video_duration(path: &Path) -> Result<u64, Error> {
+    let path = cstring(&path_text(path))?;
+    let mut duration = 0u64;
+    let mut error_buffer = [0 as c_char; 1024];
+    let code = unsafe {
+        webgal_probe_video_duration(
+            path.as_ptr(),
+            &mut duration,
+            error_buffer.as_mut_ptr(),
+            error_buffer.len(),
+        )
+    };
+    let status = Status::from_code(code);
+    if status == Status::Ok {
+        return Ok(duration);
+    }
+    let bytes = unsafe {
+        std::slice::from_raw_parts(error_buffer.as_ptr().cast::<u8>(), error_buffer.len())
+    };
+    let message = CStr::from_bytes_until_nul(bytes)
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Err(Error::new(
+        status,
+        if message.is_empty() {
+            "无法读取视频时长".to_owned()
+        } else {
+            message
+        },
+    ))
 }
 
 /// 同步执行一次导出; 成功返回 `Ok(())`。

@@ -21,6 +21,7 @@
 #include "common/path.hpp"
 #include "job/plan.hpp"
 #include "media/audio.hpp"
+#include "media/video.hpp"
 #include "pipeline/export.hpp"
 #include "stage/renderer.hpp"
 
@@ -357,6 +358,18 @@ int webgal_plan_add_stage(WebgalPlan* plan, uint64_t t_us, float alpha, uint32_t
     }
 }
 
+int webgal_plan_add_film(WebgalPlan* plan, uint64_t t_us, int enabled) {
+    if (plan == nullptr) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+    try {
+        plan->plan.film.push_back(webgal::job::FilmKey{t_us, enabled != 0});
+        return WEBGAL_STATUS_OK;
+    } catch (...) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+}
+
 int webgal_plan_add_figure(WebgalPlan* plan, const char* id, int z_index) {
     if (plan == nullptr || !valid_string(id)) {
         return WEBGAL_STATUS_INVALID_ARGUMENT;
@@ -561,6 +574,50 @@ int webgal_plan_add_intro_line(WebgalPlan* plan, const char* text) {
     }
 }
 
+int webgal_plan_add_video(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, const char* path) {
+    if (plan == nullptr || !valid_string(path) || end_us < start_us) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+    try {
+        webgal::job::VideoSegment segment;
+        segment.start_us = start_us;
+        segment.end_us = end_us;
+        segment.path = path;
+        plan->plan.videos.push_back(std::move(segment));
+        return WEBGAL_STATUS_OK;
+    } catch (...) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+}
+
+int webgal_probe_video_duration(const char* path, uint64_t* duration_us, char* error_buffer,
+                                size_t error_buffer_len) {
+    if (error_buffer != nullptr && error_buffer_len > 0) {
+        error_buffer[0] = '\0';
+    }
+    if (!valid_string(path) || duration_us == nullptr) {
+        write_error(error_buffer, error_buffer_len, "缺少视频路径或时长输出");
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+    try {
+        std::uint64_t duration = 0;
+        std::string error;
+        if (!webgal::media::probe_video_duration(from_utf8(path), duration, error)) {
+            write_error(error_buffer, error_buffer_len, error.empty() ? "无法读取视频时长" : error);
+            return WEBGAL_STATUS_RENDER_FAILED;
+        }
+        *duration_us = duration;
+        return WEBGAL_STATUS_OK;
+    } catch (const std::exception& exception) {
+        write_error(error_buffer, error_buffer_len,
+                    std::string("探测视频时长异常: ") + exception.what());
+        return WEBGAL_STATUS_RENDER_FAILED;
+    } catch (...) {
+        write_error(error_buffer, error_buffer_len, "探测视频时长时抛出未知异常");
+        return WEBGAL_STATUS_RENDER_FAILED;
+    }
+}
+
 int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, int has_end,
                           const char* path, int kind, float volume, int loop, uint32_t fade_in_ms,
                           uint32_t fade_out_ms) {
@@ -580,6 +637,9 @@ int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, 
             break;
         case WEBGAL_AUDIO_EFFECT:
             event.kind = webgal::job::AudioKind::Effect;
+            break;
+        case WEBGAL_AUDIO_VIDEO:
+            event.kind = webgal::job::AudioKind::Video;
             break;
         default:
             event.kind = webgal::job::AudioKind::Bgm;

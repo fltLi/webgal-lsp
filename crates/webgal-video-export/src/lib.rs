@@ -2,8 +2,9 @@
 
 //! WebGAL 项目视频导出。
 //!
-//! 该 crate 负责读取 WebGAL 项目、把线性/静态分支编译成时间线 (`plan::Plan`)。
-//! 实际的 Vulkan 渲染与编码由静态链接的 C++ 渲染器完成, 见 `webgal-video-render-sys`。
+//! 该 crate 负责读取 WebGAL 项目、把线性/静态分支编译成时间线 (`plan::Plan`)，并通过
+//! `webgal-video-render-sys` 完成计划映射、视频时长探测与渲染入口。实际的 Vulkan
+//! 渲染与编码由静态链接的 C++ 渲染器完成。
 
 pub use config::*;
 pub use error::*;
@@ -13,6 +14,9 @@ pub mod config;
 pub mod error;
 pub mod plan;
 pub mod project;
+/// 计划到 C++ 渲染器的转换；只在 Windows 提供。
+#[cfg(windows)]
+pub mod render;
 pub mod script;
 
 mod util;
