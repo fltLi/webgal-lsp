@@ -181,6 +181,8 @@ class Model {
     std::vector<Drawable> drawables_;
     /// Core 原始 drawable 下标 → `drawables_` 中的位置。
     std::vector<int> drawable_lookup_;
+    /// 上一帧的 renderOrder 序列；顺序未变时跳过 stable_sort。
+    std::vector<int> last_render_orders_;
     std::vector<std::filesystem::path> textures_;
     std::map<std::string, Motion> motions_;
     std::map<std::string, Expression> expressions_;

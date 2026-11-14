@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -44,7 +45,26 @@ namespace {
 constexpr VkFormat kFormat = VK_FORMAT_B8G8R8A8_SRGB;
 constexpr std::size_t kMaxQuads = 32768;
 constexpr std::size_t kMaxMeshIndices = 262144;
+/// Live2D mask 的离屏分辨率；mask 只用于 alpha 裁切，128 足够且填充量只有 256 的 1/4。
+constexpr int kMaskSize = 128;
 constexpr int kAtlasSize = 2048;
+
+/// `WEBGAL_RENDER_PROFILE=1` 时的单帧耗时统计；平时不付任何计时代价。
+struct RendererProfile {
+    std::uint64_t build_us = 0;
+    std::uint64_t live2d_us = 0;
+    std::uint64_t text_us = 0;
+    std::uint64_t upload_us = 0;
+    std::uint64_t video_us = 0;
+    std::uint64_t video_frames = 0;
+    std::uint64_t submit_us = 0;
+    std::uint64_t readback_us = 0;
+    std::uint64_t items = 0;
+    std::uint64_t mesh_draws = 0;
+    std::uint64_t mask_surfaces = 0;
+    std::uint64_t frames = 0;
+};
+RendererProfile g_profile;
 
 /// 两个时间戳之间的非负微秒差; 时间戳可能来自较早/较晚的姿态事件。
 std::uint64_t elapsed_us(std::uint64_t now, std::uint64_t start) {
@@ -67,7 +87,10 @@ struct Vertex {
 
 struct DrawItem {
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
-    std::array<Vertex, 6> vertices{};
+    /// 一个批次可以包含多个 quad; 文字按样式合并后 items 从数千降到几个。
+    std::vector<Vertex> vertices;
+    /// 上传到顶点缓冲后的起始偏移（字节），避免再假设固定 6 个顶点。
+    VkDeviceSize vertex_offset = 0;
     job::Transform transform;
     float alpha = 1.0F;
     float radius = 0.0F;
@@ -175,8 +198,8 @@ struct MeshDraw {
     const int* masks = nullptr;
     std::string asset;
     std::string figure_id;
-    /// 同一层的 drawable 共享这个 key; 渲染时按它分组做离屏合成。
-    std::string layer_key;
+    /// 同一层的 drawable 共享这个编号; 渲染时按它分组做离屏合成。
+    std::size_t layer = 0;
     /// 整个模型/立绘的 alpha (drawable 自己还有 opacity), 离屏合成时用。
     float model_alpha = 1.0F;
     job::Transform transform;
@@ -781,10 +804,14 @@ class Renderer {
 
     void build_quad(const GpuImage& image, const job::Transform& transform, bool cover,
                     const std::string& id, std::uint32_t stage_w, std::uint32_t stage_h,
-                    std::array<Vertex, 6>& vertices);
-    void build_video_quad(const GpuImage& image, bool film, std::array<Vertex, 6>& vertices);
+                    std::vector<Vertex>& vertices);
+    void build_video_quad(const GpuImage& image, bool film, std::vector<Vertex>& vertices);
     void build_rect(float x, float y, float width, float height, float u0, float v0, float u1,
-                    float v1, std::array<Vertex, 6>& vertices);
+                    float v1, std::vector<Vertex>& vertices);
+    void fill_rect(Vertex* vertices, float x, float y, float width, float height, float u0,
+                   float v0, float u1, float v1);
+    void append_rect(std::vector<Vertex>& vertices, float x, float y, float width, float height,
+                     float u0, float v0, float u1, float v1);
     void append_text(std::vector<DrawItem>& items, const std::string& text, float center_x,
                      float baseline, int size, float alpha, std::size_t& revealed,
                      std::size_t reveal_count, const std::array<float, 4>& color, bool outline,
@@ -801,7 +828,7 @@ class Renderer {
     /// 立绘层合成: Pixi BevelFilter 的 light 通道 + AdvancedBloomFilter 的柔光。
     void push_constants_layer(const job::Transform& transform, float alpha,
                               bool allow_bloom = true);
-    void draw_quad(VkDeviceSize offset, VkDescriptorSet descriptor);
+    void draw_quad(VkDeviceSize offset, std::uint32_t vertex_count, VkDescriptorSet descriptor);
 
     void destroy();
 
@@ -837,6 +864,13 @@ class Renderer {
 
     VkBuffer readback_ = VK_NULL_HANDLE;
     VkDeviceMemory readback_memory_ = VK_NULL_HANDLE;
+    /// 视频帧上传复用同一块 staging，并把 copy 并进主命令缓冲，省掉每帧一次 submit/wait。
+    VkBuffer video_staging_ = VK_NULL_HANDLE;
+    VkDeviceMemory video_staging_memory_ = VK_NULL_HANDLE;
+    VkDeviceSize video_staging_size_ = 0;
+    bool video_upload_pending_ = false;
+    std::uint32_t video_upload_width_ = 0;
+    std::uint32_t video_upload_height_ = 0;
     VkBuffer vertex_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertex_memory_ = VK_NULL_HANDLE;
     VkBuffer mesh_index_buffer_ = VK_NULL_HANDLE;
@@ -882,6 +916,8 @@ class Renderer {
     std::vector<Vertex> mesh_vertices_;
     std::vector<std::uint32_t> mesh_indices_;
     std::vector<MeshDraw> mesh_draws_;
+    /// 每帧给每个 FigureKey 分配一个稳定的层号，替代每 drawable 拼字符串。
+    std::size_t mesh_layer_counter_ = 0;
 
     TextAtlas text_;
     GpuImage solid_;
@@ -2138,49 +2174,40 @@ bool Renderer::update_video_pixels(std::uint32_t width, std::uint32_t height,
     if (video_image_.image == VK_NULL_HANDLE || video_image_.width != width ||
         video_image_.height != height) {
         destroy_image(video_image_);
+        video_upload_pending_ = false;
         return upload_pixels(width, height, pixels, video_image_, error);
     }
 
-    VkBuffer staging = VK_NULL_HANDLE;
-    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
-    const auto bytes = static_cast<VkDeviceSize>(pixels.size());
-    if (!create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                       staging, staging_memory, error)) {
-        return false;
+    const auto bytes = static_cast<VkDeviceSize>(width) * height * 4;
+    if (video_staging_ == VK_NULL_HANDLE || video_staging_size_ < bytes) {
+        if (video_staging_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, video_staging_, nullptr);
+            video_staging_ = VK_NULL_HANDLE;
+        }
+        if (video_staging_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, video_staging_memory_, nullptr);
+            video_staging_memory_ = VK_NULL_HANDLE;
+        }
+        if (!create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           video_staging_, video_staging_memory_, error)) {
+            return false;
+        }
+        video_staging_size_ = bytes;
     }
-    void* mapped = nullptr;
-    if (!ok(vkMapMemory(device_, staging_memory, 0, bytes, 0, &mapped), "映射视频 staging",
-            error)) {
-        vkDestroyBuffer(device_, staging, nullptr);
-        vkFreeMemory(device_, staging_memory, nullptr);
-        return false;
-    }
-    std::memcpy(mapped, pixels.data(), pixels.size());
-    vkUnmapMemory(device_, staging_memory);
 
-    if (!begin_commands(error)) {
-        vkDestroyBuffer(device_, staging, nullptr);
-        vkFreeMemory(device_, staging_memory, nullptr);
+    void* mapped = nullptr;
+    if (!ok(vkMapMemory(device_, video_staging_memory_, 0, bytes, 0, &mapped), "映射视频 staging",
+            error)) {
         return false;
     }
-    transition(video_image_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-               VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-               VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VkBufferImageCopy copy{};
-    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(command_, staging, video_image_.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    transition(video_image_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-               VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-    const bool submitted = submit_and_wait(error);
-    vkDestroyBuffer(device_, staging, nullptr);
-    vkFreeMemory(device_, staging_memory, nullptr);
-    return submitted;
+    std::memcpy(mapped, pixels.data(), static_cast<std::size_t>(bytes));
+    vkUnmapMemory(device_, video_staging_memory_);
+    video_upload_width_ = width;
+    video_upload_height_ = height;
+    video_upload_pending_ = true;
+    return true;
 }
 
 bool Renderer::upload_image(const std::filesystem::path& path, GpuImage& gpu, std::string& error) {
@@ -2335,7 +2362,7 @@ MaskSurface* Renderer::ensure_mask_surface(const std::string& asset, const std::
     image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image.imageType = VK_IMAGE_TYPE_2D;
     image.format = VK_FORMAT_R8_UNORM;
-    image.extent = {256, 256, 1};
+    image.extent = {kMaskSize, kMaskSize, 1};
     image.mipLevels = 1;
     image.arrayLayers = 1;
     image.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2411,6 +2438,7 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
     if (!ensure_live2d_model(plan, *key.live2d, model, error)) {
         return false;
     }
+    const std::size_t layer = mesh_layer_counter_++;
     float mouth = 0.0F;
     if (active_text != nullptr && active_text->figure.has_value() &&
         *active_text->figure == figure_id) {
@@ -2549,7 +2577,7 @@ bool Renderer::build_live2d_mesh(const job::Plan& plan, const job::FigureKey& ke
         // 模型整体 alpha 不在这里乘: 半透明时要先把模型画到主目标, 再用快照盖回
         // (1-alpha), 这样内部零件不会互相透出来。见 draw_pixels 的离屏合成。
         draw.model_alpha = key.alpha;
-        draw.layer_key = *key.live2d + "#" + figure_id + "#" + std::to_string(key.t_us);
+        draw.layer = layer;
         draw.alpha = drawable.opacity * drawable.part_opacity * drawable.multiply_alpha;
 
         const auto screen_uv = [&](const live2d::Drawable& source, const csmVector2& position) {
@@ -2941,7 +2969,7 @@ std::vector<job::FigureKey> Renderer::figure_layers(const job::FigureTrack& trac
 
 void Renderer::build_quad(const GpuImage& image, const job::Transform& transform, bool cover,
                           const std::string& id, std::uint32_t stage_w, std::uint32_t stage_h,
-                          std::array<Vertex, 6>& vertices) {
+                          std::vector<Vertex>& vertices) {
     const float width = static_cast<float>(stage_w);
     const float height = static_cast<float>(stage_h);
     const float image_w = static_cast<float>(image.width);
@@ -3009,7 +3037,7 @@ void Renderer::build_quad(const GpuImage& image, const job::Transform& transform
     };
 }
 
-void Renderer::build_video_quad(const GpuImage& image, bool film, std::array<Vertex, 6>& vertices) {
+void Renderer::build_video_quad(const GpuImage& image, bool film, std::vector<Vertex>& vertices) {
     const float width = static_cast<float>(stage_w_);
     const float height = static_cast<float>(stage_h_);
     const float top = film ? height * 0.12F : 0.0F;
@@ -3024,7 +3052,20 @@ void Renderer::build_video_quad(const GpuImage& image, bool film, std::array<Ver
 }
 
 void Renderer::build_rect(float x, float y, float width, float height, float u0, float v0, float u1,
-                          float v1, std::array<Vertex, 6>& vertices) {
+                          float v1, std::vector<Vertex>& vertices) {
+    vertices.resize(6);
+    fill_rect(vertices.data(), x, y, width, height, u0, v0, u1, v1);
+}
+
+void Renderer::append_rect(std::vector<Vertex>& vertices, float x, float y, float width,
+                           float height, float u0, float v0, float u1, float v1) {
+    const std::size_t base = vertices.size();
+    vertices.resize(base + 6);
+    fill_rect(vertices.data() + base, x, y, width, height, u0, v0, u1, v1);
+}
+
+void Renderer::fill_rect(Vertex* vertices, float x, float y, float width, float height, float u0,
+                         float v0, float u1, float v1) {
     const float left = x / static_cast<float>(stage_w_) * 2.0F - 1.0F;
     const float right = (x + width) / static_cast<float>(stage_w_) * 2.0F - 1.0F;
     const float top = y / static_cast<float>(stage_h_) * 2.0F - 1.0F;
@@ -3035,9 +3076,12 @@ void Renderer::build_rect(float x, float y, float width, float height, float u0,
         Vertex{right, bottom, u1, v1},
         Vertex{left, bottom, u0, v1},
     };
-    vertices = {
-        corners[0], corners[1], corners[2], corners[0], corners[2], corners[3],
-    };
+    vertices[0] = corners[0];
+    vertices[1] = corners[1];
+    vertices[2] = corners[2];
+    vertices[3] = corners[0];
+    vertices[4] = corners[2];
+    vertices[5] = corners[3];
 }
 
 void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text, float center_x,
@@ -3063,25 +3107,44 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
     const float bold =
         ui_style_.bold && !font_is_bold_ ? std::max(0.2F, static_cast<float>(size) * 0.008F) : 0.0F;
 
-    const auto add_glyph = [&](const Glyph& glyph, float glyph_x, float glyph_y,
-                               const std::array<float, 4>& tint, float glyph_alpha) {
+    struct TextBatch {
         DrawItem item;
-        item.descriptor = text_.image.descriptor;
-        item.alpha = glyph_alpha;
-        item.transform.color_r = tint[0];
-        item.transform.color_g = tint[1];
-        item.transform.color_b = tint[2];
-        build_rect(glyph_x, glyph_y, static_cast<float>(glyph.width),
-                   static_cast<float>(glyph.height), glyph.u0, glyph.v0, glyph.u1, glyph.v1,
-                   item.vertices);
+        int order = 0;
+    };
+    std::vector<TextBatch> batches;
+    const auto batch_for = [&](const std::array<float, 4>& tint, float glyph_alpha,
+                               int order) -> DrawItem& {
+        for (auto& batch : batches) {
+            if (batch.order == order && batch.item.alpha == glyph_alpha &&
+                batch.item.transform.color_r == tint[0] &&
+                batch.item.transform.color_g == tint[1] &&
+                batch.item.transform.color_b == tint[2]) {
+                return batch.item;
+            }
+        }
+        TextBatch batch;
+        batch.order = order;
+        batch.item.descriptor = text_.image.descriptor;
+        batch.item.alpha = glyph_alpha;
+        batch.item.transform.color_r = tint[0];
+        batch.item.transform.color_g = tint[1];
+        batch.item.transform.color_b = tint[2];
+        batches.push_back(std::move(batch));
+        return batches.back().item;
+    };
+    const auto add_glyph = [&](const Glyph& glyph, float glyph_x, float glyph_y,
+                               const std::array<float, 4>& tint, float glyph_alpha, int order) {
+        DrawItem& batch = batch_for(tint, glyph_alpha, order);
+        const std::size_t base = batch.vertices.size();
+        append_rect(batch.vertices, glyph_x, glyph_y, static_cast<float>(glyph.width),
+                    static_cast<float>(glyph.height), glyph.u0, glyph.v0, glyph.u1, glyph.v1);
         if (slant != 0.0F) {
             // 伪斜体: 以基线为轴做水平剪切, 电影模式字幕用。
             const float baseline_ndc = baseline / static_cast<float>(stage_h_) * 2.0F - 1.0F;
-            for (auto& vertex : item.vertices) {
-                vertex.x += slant * (baseline_ndc - vertex.y);
+            for (std::size_t index = base; index < batch.vertices.size(); ++index) {
+                batch.vertices[index].x += slant * (baseline_ndc - batch.vertices[index].y);
             }
         }
-        items.push_back(item);
     };
 
     for (const int codepoint : codepoints) {
@@ -3104,7 +3167,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                                2.0F, 24.0F);
                 const std::array<float, 4> shadow{0.0F, 0.0F, 0.0F, 1.0F};
                 const float strength = ui_style_.text_shadow_color[3];
-                add_glyph(glyph, left, top + dy, shadow, alpha * 0.62F * strength);
+                add_glyph(glyph, left, top + dy, shadow, alpha * 0.62F * strength, 0);
                 for (int ring = 0; ring < 2; ++ring) {
                     const float radius = ring == 0 ? blur * 0.45F : blur;
                     const float ring_alpha = ring == 0 ? 0.16F : 0.07F;
@@ -3113,7 +3176,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                             static_cast<float>(direction) * 2.0F * 3.14159265358979323846F / 8.0F;
                         add_glyph(glyph, left + std::cos(angle) * radius,
                                   top + dy + std::sin(angle) * radius, shadow,
-                                  alpha * ring_alpha * strength);
+                                  alpha * ring_alpha * strength, 0);
                     }
                 }
             }
@@ -3123,7 +3186,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                     const float angle =
                         static_cast<float>(direction) * 3.14159265358979323846F / 4.0F;
                     add_glyph(glyph, left + std::cos(angle) * half, top + std::sin(angle) * half,
-                              color, alpha);
+                              color, alpha, 1);
                 }
             }
             if (stroke > 0.0F) {
@@ -3142,15 +3205,23 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                                                 3.14159265358979323846F /
                                                 static_cast<float>(kSteps);
                             add_glyph(glyph, left + std::cos(angle) * distance,
-                                      top + std::sin(angle) * distance, stroke_color, alpha);
+                                      top + std::sin(angle) * distance, stroke_color, alpha, 2);
                         }
                     }
                 }
             }
-            add_glyph(glyph, left, top, color, alpha);
+            add_glyph(glyph, left, top, color, alpha, 3);
         }
         x += glyph.advance + spacing;
         ++revealed;
+    }
+    std::stable_sort(
+        batches.begin(), batches.end(),
+        [](const TextBatch& left, const TextBatch& right) { return left.order < right.order; });
+    for (auto& batch : batches) {
+        if (!batch.item.vertices.empty()) {
+            items.push_back(std::move(batch.item));
+        }
     }
 }
 
@@ -3314,15 +3385,18 @@ void Renderer::push_constants_layer(const job::Transform& transform, float alpha
                        sizeof(constants), &constants);
 }
 
-void Renderer::draw_quad(VkDeviceSize offset, VkDescriptorSet descriptor) {
+void Renderer::draw_quad(VkDeviceSize offset, std::uint32_t vertex_count,
+                         VkDescriptorSet descriptor) {
     vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
                             &descriptor, 0, nullptr);
     vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &offset);
-    vkCmdDraw(command_, 6, 1, 0, 0);
+    vkCmdDraw(command_, vertex_count, 1, 0, 0);
 }
 
 bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                            std::vector<std::uint8_t>& pixels, std::string& error) {
+    const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
+    const auto profile_started = std::chrono::steady_clock::now();
     std::vector<DrawItem>& items = items_;
     std::vector<Vertex>& mesh_vertices = mesh_vertices_;
     std::vector<std::uint32_t>& mesh_indices = mesh_indices_;
@@ -3331,10 +3405,12 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     mesh_vertices.clear();
     mesh_indices.clear();
     mesh_draws.clear();
+    mesh_layer_counter_ = 0;
     items.reserve(plan.background.size() + plan.figures.size() * 2 + 64);
 
     const bool film = film_enabled_at(plan, t_us);
     const job::VideoSegment* active_video = video_at(plan, t_us);
+    const auto video_started = std::chrono::steady_clock::now();
     const media::VideoFrame* video_frame = nullptr;
     if (active_video != nullptr) {
         auto* decoder = video_decoder(plan, active_video->path, error);
@@ -3350,6 +3426,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             return false;
         }
     }
+    const auto video_finished = std::chrono::steady_clock::now();
 
     for (const auto& layer : background_layers(plan, t_us)) {
         if (!layer.asset) {
@@ -3366,7 +3443,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         item.is_background = true;
         build_quad(*image, item.transform, true, "bg-main", plan.stage_w, plan.stage_h,
                    item.vertices);
-        items.push_back(item);
+        items.push_back(std::move(item));
     }
 
     const job::TextSegment* active_text = nullptr;
@@ -3379,6 +3456,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         }
     }
 
+    const auto live2d_started = std::chrono::steady_clock::now();
     for (const auto* track : sorted_tracks_) {
         const auto pose_end = std::upper_bound(
             track->poses.begin(), track->poses.end(), t_us,
@@ -3409,10 +3487,11 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             item.alpha = layer.alpha;
             build_quad(*image, item.transform, false, track->id, plan.stage_w, plan.stage_h,
                        item.vertices);
-            items.push_back(item);
+            items.push_back(std::move(item));
         }
     }
     const std::size_t scene_item_count = items.size();
+    const auto live2d_finished = std::chrono::steady_clock::now();
 
     const auto add_rect = [&](float x, float y, float width, float height, float red, float green,
                               float blue, float alpha, float radius = 0.0F) {
@@ -3426,9 +3505,10 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         item.transform.color_g = green;
         item.transform.color_b = blue;
         build_rect(x, y, width, height, 0.0F, 0.0F, 1.0F, 1.0F, item.vertices);
-        items.push_back(item);
+        items.push_back(std::move(item));
     };
 
+    const auto text_started = std::chrono::steady_clock::now();
     if (active_text != nullptr) {
         const std::uint64_t elapsed =
             t_us >= active_text->start_us ? t_us - active_text->start_us : 0;
@@ -3625,12 +3705,13 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     }
 
     const std::size_t ui_end = items.size();
+    const auto text_finished = std::chrono::steady_clock::now();
 
     // Live2D 半透明层的离屏合成: 同层的 drawable 连续排列。alpha < 1 时先完整画出模型,
     // 再用"模型出现前的整帧快照"按 (1-alpha) 盖回去 —— 等价于整模型乘 alpha,
     // 内部零件不会互相透出。代价是过渡期间每层多一次整帧拷贝。
     struct MeshGroup {
-        std::string key;
+        std::size_t key = 0;
         float alpha = 1.0F;
         std::size_t first = 0;
         std::size_t last = 0;
@@ -3642,9 +3723,9 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     mesh_groups.reserve(mesh_draws.size());
     for (std::size_t index = 0; index < mesh_draws.size(); ++index) {
         const auto& draw = mesh_draws[index];
-        if (mesh_groups.empty() || mesh_groups.back().key != draw.layer_key) {
+        if (mesh_groups.empty() || mesh_groups.back().key != draw.layer) {
             MeshGroup group;
-            group.key = draw.layer_key;
+            group.key = draw.layer;
             group.alpha = draw.model_alpha;
             group.first = index;
             group.last = index + 1;
@@ -3667,7 +3748,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F,
                        0.0F, 1.0F, 1.0F, quad.vertices);
             group.quad_index = items.size();
-            items.push_back(quad);
+            items.push_back(std::move(quad));
             continue;
         }
         if (group.alpha >= 0.999F) {
@@ -3680,7 +3761,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F,
                    0.0F, 1.0F, 1.0F, quad.vertices);
         group.quad_index = items.size();
-        items.push_back(quad);
+        items.push_back(std::move(quad));
     }
 
     // 整舞台 alpha：在场景之后、UI 之前盖一层黑场，文本/选项不受影响。
@@ -3693,7 +3774,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     stage_overlay.transform.color_b = 0.0F;
     build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
                1.0F, 1.0F, stage_overlay.vertices);
-    items.push_back(stage_overlay);
+    items.push_back(std::move(stage_overlay));
 
     // 图片立绘/背景的倒角合成四边形; 不在任何绘制区间里, 只在倒角路径单独引用。
     const std::size_t bevel_quad_index = items.size();
@@ -3702,7 +3783,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     bevel_quad.transform = job::Transform{};
     build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
                1.0F, 1.0F, bevel_quad.vertices);
-    items.push_back(bevel_quad);
+    items.push_back(std::move(bevel_quad));
 
     // 视频覆盖背景、立绘与 UI：先铺黑底，再按 contain 居中绘制当前视频帧。
     // 电影模式下黑底与视频只占中间 76% 高度，上下露出舞台。
@@ -3719,38 +3800,46 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         black.transform.color_b = 0.0F;
         build_rect(0.0F, video_top, static_cast<float>(stage_w_), video_height, 0.0F, 0.0F, 1.0F,
                    1.0F, black.vertices);
-        items.push_back(black);
+        items.push_back(std::move(black));
 
         DrawItem video;
         video.descriptor = video_image_.descriptor;
         video.alpha = 1.0F;
         build_video_quad(video_image_, film, video.vertices);
-        items.push_back(video);
+        items.push_back(std::move(video));
     }
 
-    if (items.size() > kMaxQuads) {
-        error = "单帧四边形数量超过上限";
+    std::size_t total_vertices = 0;
+    for (const auto& item : items) {
+        total_vertices += item.vertices.size();
+    }
+    if (total_vertices > kMaxQuads * 6) {
+        error = "单帧顶点数量超过上限";
         return false;
     }
 
+    const auto upload_started = std::chrono::steady_clock::now();
     if (!items.empty()) {
         void* mapped_vertices = nullptr;
         const VkDeviceSize vertex_bytes =
-            static_cast<VkDeviceSize>(items.size()) * 6 * sizeof(Vertex);
+            static_cast<VkDeviceSize>(total_vertices) * sizeof(Vertex);
         if (!ok(vkMapMemory(device_, vertex_memory_, 0, vertex_bytes, 0, &mapped_vertices),
                 "映射顶点缓冲", error)) {
             return false;
         }
-        auto* destination = static_cast<Vertex*>(mapped_vertices);
-        for (const auto& item : items) {
-            std::memcpy(destination, item.vertices.data(), sizeof(Vertex) * 6);
-            destination += 6;
+        auto* destination = static_cast<std::uint8_t*>(mapped_vertices);
+        VkDeviceSize offset = 0;
+        for (auto& item : items) {
+            const auto bytes = static_cast<VkDeviceSize>(item.vertices.size()) * sizeof(Vertex);
+            item.vertex_offset = offset;
+            std::memcpy(destination + offset, item.vertices.data(), bytes);
+            offset += bytes;
         }
         vkUnmapMemory(device_, vertex_memory_);
     }
 
     if (!mesh_vertices.empty()) {
-        const std::size_t base_vertex = items.size() * 6;
+        const std::size_t base_vertex = total_vertices;
         if (base_vertex + mesh_vertices.size() > kMaxQuads * 6) {
             error = "Live2D 顶点数超过缓冲上限";
             return false;
@@ -3786,6 +3875,8 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         }
     }
 
+    const auto upload_finished = std::chrono::steady_clock::now();
+    const auto build_done = std::chrono::steady_clock::now();
     if (!begin_commands(error)) {
         return false;
     }
@@ -3799,6 +3890,23 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
     stencil_layout_ = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    if (video_upload_pending_) {
+        transition(video_image_.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                   VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                   VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy video_copy{};
+        video_copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        video_copy.imageExtent = {video_upload_width_, video_upload_height_, 1};
+        vkCmdCopyBufferToImage(command_, video_staging_, video_image_.image,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &video_copy);
+        transition(video_image_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        video_upload_pending_ = false;
+    }
 
     for (auto& [key, surface] : mask_surfaces_) {
         (void)key;
@@ -3822,13 +3930,14 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         mask_color.clearValue.color.float32[3] = 1.0F;
         VkRenderingInfo mask_rendering{};
         mask_rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        mask_rendering.renderArea = {{0, 0}, {256, 256}};
+        mask_rendering.renderArea = {{0, 0}, {kMaskSize, kMaskSize}};
         mask_rendering.layerCount = 1;
         mask_rendering.colorAttachmentCount = 1;
         mask_rendering.pColorAttachments = &mask_color;
         vkCmdBeginRendering(command_, &mask_rendering);
-        VkViewport mask_viewport{0.0F, 0.0F, 256.0F, 256.0F, 0.0F, 1.0F};
-        VkRect2D mask_scissor{{0, 0}, {256, 256}};
+        VkViewport mask_viewport{
+            0.0F, 0.0F, static_cast<float>(kMaskSize), static_cast<float>(kMaskSize), 0.0F, 1.0F};
+        VkRect2D mask_scissor{{0, 0}, {kMaskSize, kMaskSize}};
         vkCmdSetViewport(command_, 0, 1, &mask_viewport);
         vkCmdSetScissor(command_, 0, 1, &mask_scissor);
         for (const int source_index : surface.sources) {
@@ -3988,12 +4097,17 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         draw_mesh_group(group, pipeline_layer_, 2.0F);
         end_layer_pass();
     };
+    const auto draw_item = [&](std::size_t index) {
+        draw_quad(items[index].vertex_offset,
+                  static_cast<std::uint32_t>(items[index].vertices.size()),
+                  items[index].descriptor);
+    };
     const auto render_item_layer = [&](std::size_t index) {
         begin_layer_pass();
         vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
         push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
                        items[index].radius, items[index].width, items[index].height, 2.0F);
-        draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), items[index].descriptor);
+        draw_item(index);
         end_layer_pass();
     };
     const auto snapshot_target = [&]() {
@@ -4035,14 +4149,13 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
             vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
             push_constants_layer(item.transform, item.alpha, !item.is_background);
-            draw_quad(static_cast<VkDeviceSize>(bevel_quad_index) * 6 * sizeof(Vertex),
-                      layer_descriptor_);
+            draw_item(bevel_quad_index);
             vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
             continue;
         }
         push_constants(item.transform, item.alpha, false, nullptr, nullptr, false, item.radius,
                        item.width, item.height);
-        draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), item.descriptor);
+        draw_item(index);
     }
 
     for (const auto& group : mesh_groups) {
@@ -4054,8 +4167,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             const DrawItem& quad = items[group.quad_index];
             vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
             push_constants_layer(group.transform, quad.alpha);
-            draw_quad(static_cast<VkDeviceSize>(group.quad_index) * 6 * sizeof(Vertex),
-                      quad.descriptor);
+            draw_item(group.quad_index);
             vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
             continue;
         }
@@ -4075,8 +4187,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
         const DrawItem& quad = items[group.quad_index];
         push_constants(quad.transform, quad.alpha, false, nullptr, nullptr, false);
-        draw_quad(static_cast<VkDeviceSize>(group.quad_index) * 6 * sizeof(Vertex),
-                  quad.descriptor);
+        draw_item(group.quad_index);
     }
 
     const float stage_alpha = std::clamp(stage_alpha_at(plan, t_us), 0.0F, 1.0F);
@@ -4086,8 +4197,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         }
         const DrawItem& overlay = items[stage_overlay_index];
         push_constants(overlay.transform, 1.0F - stage_alpha, false, nullptr, nullptr, false);
-        draw_quad(static_cast<VkDeviceSize>(stage_overlay_index) * 6 * sizeof(Vertex),
-                  overlay.descriptor);
+        draw_item(stage_overlay_index);
     }
 
     if (!pass_open) {
@@ -4096,12 +4206,12 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     for (std::size_t index = scene_item_count; index < ui_end; ++index) {
         push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
                        items[index].radius, items[index].width, items[index].height);
-        draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), items[index].descriptor);
+        draw_item(index);
     }
     for (std::size_t index = video_quad_index; index < items.size(); ++index) {
         push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
                        items[index].radius, items[index].width, items[index].height);
-        draw_quad(static_cast<VkDeviceSize>(index) * 6 * sizeof(Vertex), items[index].descriptor);
+        draw_item(index);
     }
     end_pass();
 
@@ -4115,7 +4225,8 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     begin_layer_pass();
     vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     push_constants(job::Transform{}, 1.0F, false, nullptr, nullptr, false, 0.0F, 0.0F, 0.0F, 3.0F);
-    draw_quad(static_cast<VkDeviceSize>(bevel_quad_index) * 6 * sizeof(Vertex),
+    draw_quad(items[bevel_quad_index].vertex_offset,
+              static_cast<std::uint32_t>(items[bevel_quad_index].vertices.size()),
               snapshot_descriptor_);
     end_layer_pass();
 
@@ -4129,6 +4240,7 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     if (!submit_and_wait(error)) {
         return false;
     }
+    const auto submit_done = std::chrono::steady_clock::now();
 
     void* mapped = nullptr;
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
@@ -4138,6 +4250,37 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
     pixels.resize(static_cast<std::size_t>(bytes));
     std::memcpy(pixels.data(), mapped, pixels.size());
     vkUnmapMemory(device_, readback_memory_);
+    if (profile) {
+        const auto readback_done = std::chrono::steady_clock::now();
+        g_profile.build_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(build_done - profile_started)
+                .count());
+        g_profile.live2d_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(live2d_finished - live2d_started)
+                .count());
+        g_profile.text_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(text_finished - text_started)
+                .count());
+        g_profile.upload_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(upload_finished - upload_started)
+                .count());
+        g_profile.video_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(video_finished - video_started)
+                .count());
+        if (active_video != nullptr) {
+            ++g_profile.video_frames;
+        }
+        g_profile.submit_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(submit_done - build_done)
+                .count());
+        g_profile.readback_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(readback_done - submit_done)
+                .count());
+        g_profile.items += items.size();
+        g_profile.mesh_draws += mesh_draws.size();
+        g_profile.mask_surfaces += mask_surfaces_.size();
+        ++g_profile.frames;
+    }
     return true;
 }
 
@@ -4248,6 +4391,12 @@ void Renderer::destroy() {
         }
         if (readback_memory_ != VK_NULL_HANDLE) {
             vkFreeMemory(device_, readback_memory_, nullptr);
+        }
+        if (video_staging_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, video_staging_, nullptr);
+        }
+        if (video_staging_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, video_staging_memory_, nullptr);
         }
         if (target_view_ != VK_NULL_HANDLE) {
             vkDestroyImageView(device_, target_view_, nullptr);
@@ -4377,6 +4526,9 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
         return false;
     }
 
+    const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
+    const auto clock_now = [] { return std::chrono::steady_clock::now(); };
+    const auto setup_started = clock_now();
     Renderer renderer;
     if (!renderer.init(plan, error)) {
         return false;
@@ -4384,6 +4536,13 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
     if (!renderer.prepare(plan, context, error)) {
         return false;
     }
+    if (profile) {
+        const auto setup_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(clock_now() - setup_started)
+                .count();
+        log::info("profile: setup=" + std::to_string(setup_ms) + "ms");
+    }
+    g_profile = {};
 
     const double fps = static_cast<double>(fps_num) / static_cast<double>(fps_den);
     const std::uint64_t frame_count = frame_count_for(start_us, end_us, fps_num, fps_den);
@@ -4391,6 +4550,9 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
     const std::uint64_t preview_stride =
         std::max<std::uint64_t>(1, static_cast<std::uint64_t>(fps));
     std::vector<std::uint8_t> pixels;
+    std::uint64_t encode_us = 0;
+    std::uint64_t preview_us = 0;
+    const auto render_started = clock_now();
     for (std::uint64_t index = 0; index < frame_count; ++index) {
         const std::uint64_t t_us = frame_time(start_us, index, fps_num, fps_den);
         if (context.cancel_requested()) {
@@ -4400,15 +4562,57 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
         if (!renderer.draw_pixels(plan, t_us, pixels, error)) {
             return false;
         }
+        const auto encode_started = clock_now();
         if (!on_frame(index, frame_count, t_us, pixels, error)) {
             return false;
         }
+        const auto encode_finished = clock_now();
         if (context.preview && (index % preview_stride == 0 || index + 1 == frame_count)) {
             const auto png = media::encode_preview(pixels, plan.output_w, plan.output_h, 480);
             if (!png.empty()) {
                 context.report_preview(png.data(), png.size(), index + 1, frame_count);
             }
         }
+        if (profile) {
+            const auto preview_finished = clock_now();
+            encode_us +=
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               encode_finished - encode_started)
+                                               .count());
+            preview_us +=
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               preview_finished - encode_finished)
+                                               .count());
+        }
+    }
+    if (profile) {
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(clock_now() - render_started)
+                .count();
+        const double frames = static_cast<double>(std::max<std::uint64_t>(1, frame_count));
+        const double profiled = static_cast<double>(std::max<std::uint64_t>(1, g_profile.frames));
+        std::ostringstream message;
+        message << "profile: frames=" << frame_count << " loop=" << elapsed << "ms draw="
+                << (static_cast<double>(g_profile.build_us + g_profile.submit_us +
+                                        g_profile.readback_us) /
+                    1000.0 / profiled)
+                << "ms/frame [build="
+                << (static_cast<double>(g_profile.build_us) / 1000.0 / profiled)
+                << " live2d=" << (static_cast<double>(g_profile.live2d_us) / 1000.0 / profiled)
+                << " text=" << (static_cast<double>(g_profile.text_us) / 1000.0 / profiled)
+                << " upload=" << (static_cast<double>(g_profile.upload_us) / 1000.0 / profiled)
+                << " video=" << (static_cast<double>(g_profile.video_us) / 1000.0 / profiled)
+                << " video_frames=" << g_profile.video_frames
+                << " submit=" << (static_cast<double>(g_profile.submit_us) / 1000.0 / profiled)
+                << " readback=" << (static_cast<double>(g_profile.readback_us) / 1000.0 / profiled)
+                << "] encode=" << (static_cast<double>(encode_us) / 1000.0 / frames)
+                << "ms/frame preview=" << (static_cast<double>(preview_us) / 1000.0 / frames)
+                << "ms/frame items=" << (static_cast<double>(g_profile.items) / profiled)
+                << " mesh=" << (static_cast<double>(g_profile.mesh_draws) / profiled)
+                << " masks=" << (static_cast<double>(g_profile.mask_surfaces) / profiled) << " fps="
+                << (static_cast<double>(frame_count) * 1000.0 /
+                    static_cast<double>(std::max<std::int64_t>(1, elapsed)));
+        log::info(message.str());
     }
     return true;
 }

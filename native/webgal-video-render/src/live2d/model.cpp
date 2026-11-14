@@ -494,9 +494,26 @@ void Model::update_drawables(const CoreApi& api) {
 
     // 每帧 `csmUpdateModel` 之后 renderOrder 都可能重排 (arm layer 参数会切换
     // 手臂所在的绘制层), 所以绘制顺序必须以 Core 当前返回的值为准。
+    // 但绝大多数帧顺序不变, 此时跳过 sort 与 lookup 重建。
+    bool order_changed = last_render_orders_.size() != drawables_.size();
+    if (!order_changed) {
+        for (std::size_t index = 0; index < drawables_.size(); ++index) {
+            if (last_render_orders_[index] != drawables_[index].render_order) {
+                order_changed = true;
+                break;
+            }
+        }
+    }
+    if (!order_changed) {
+        return;
+    }
     std::stable_sort(drawables_.begin(), drawables_.end(), [](const auto& left, const auto& right) {
         return left.render_order < right.render_order;
     });
+    last_render_orders_.resize(drawables_.size());
+    for (std::size_t index = 0; index < drawables_.size(); ++index) {
+        last_render_orders_[index] = drawables_[index].render_order;
+    }
     drawable_lookup_.assign(static_cast<std::size_t>(count), -1);
     for (std::size_t index = 0; index < drawables_.size(); ++index) {
         drawable_lookup_[static_cast<std::size_t>(drawables_[index].original_index)] =
