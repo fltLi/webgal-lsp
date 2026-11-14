@@ -153,6 +153,7 @@ using EncoderFn = void (*)(void*, const char*);
         context.ffmpeg = from_utf8(options.ffmpeg_path);
     }
     context.bitrate_kbps = options.bitrate_kbps;
+    context.fxaa_mode = options.fxaa_mode;
     return context;
 }
 

@@ -905,6 +905,7 @@ class Renderer {
     VkPipeline pipeline_mul_ = VK_NULL_HANDLE;
     /// 直通 alpha 的预乘混合: 立绘层渲染与倒角合成共用。
     VkPipeline pipeline_layer_ = VK_NULL_HANDLE;
+    VkPipeline pipeline_fxaa_fast_ = VK_NULL_HANDLE;
     VkPipeline pipeline_stencil_ = VK_NULL_HANDLE;
     VkPipeline pipeline_mask_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
@@ -1961,15 +1962,30 @@ bool Renderer::create_pipeline(std::string& error) {
     info.pDynamicState = &dynamic;
     info.layout = pipeline_layout_;
 
-    VkGraphicsPipelineCreateInfo infos[6] = {info, info, info, info, info, info};
+    VkGraphicsPipelineCreateInfo infos[7] = {info, info, info, info, info, info, info};
     infos[1].pDepthStencilState = &stencil_depth;
     infos[2].pDepthStencilState = &mask_depth;
     infos[2].pColorBlendState = &mask_color;
     infos[3].pColorBlendState = &color_add;
     infos[4].pColorBlendState = &color_mul;
     infos[5].pColorBlendState = &color_premult;
-    VkPipeline created[6]{};
-    if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 6, infos, nullptr, created),
+
+    VkBool32 fast_fxaa = VK_TRUE;
+    VkSpecializationMapEntry fast_entry{};
+    fast_entry.constantID = 0;
+    fast_entry.offset = 0;
+    fast_entry.size = sizeof(fast_fxaa);
+    VkSpecializationInfo fast_spec{};
+    fast_spec.mapEntryCount = 1;
+    fast_spec.pMapEntries = &fast_entry;
+    fast_spec.dataSize = sizeof(fast_fxaa);
+    fast_spec.pData = &fast_fxaa;
+    VkPipelineShaderStageCreateInfo fast_stages[2] = {stages[0], stages[1]};
+    fast_stages[1].pSpecializationInfo = &fast_spec;
+    infos[6].pStages = fast_stages;
+
+    VkPipeline created[7]{};
+    if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 7, infos, nullptr, created),
             "创建 graphics pipelines", error)) {
         return false;
     }
@@ -1979,6 +1995,7 @@ bool Renderer::create_pipeline(std::string& error) {
     pipeline_add_ = created[3];
     pipeline_mul_ = created[4];
     pipeline_layer_ = created[5];
+    pipeline_fxaa_fast_ = created[6];
 
     VkPipelineRenderingCreateInfo mask_rendering{};
     mask_rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
@@ -3306,7 +3323,7 @@ void Renderer::push_constants(const job::Transform& transform, float alpha, bool
         constants.screen[1] = screen[1];
         constants.screen[2] = screen[2];
     }
-    if (disable_filters_ && transform.blur <= 0.0F && transform.bloom <= 0.0F) {
+    if (disable_filters_) {
         constants.adjust[0] = 1.0F;
         constants.adjust[1] = 1.0F;
         constants.adjust[2] = 1.0F;
@@ -3396,6 +3413,9 @@ void Renderer::draw_quad(VkDeviceSize offset, std::uint32_t vertex_count,
 bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                            std::vector<std::uint8_t>& pixels, std::string& error) {
     const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
+    const int fxaa_mode = context_ == nullptr ? 1 : context_->fxaa_mode;
+    const bool no_fxaa = fxaa_mode <= 0;
+    const bool fast_fxaa = fxaa_mode == 2;
     const auto profile_started = std::chrono::steady_clock::now();
     std::vector<DrawItem>& items = items_;
     std::vector<Vertex>& mesh_vertices = mesh_vertices_;
@@ -3731,8 +3751,9 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
             group.last = index + 1;
             group.transform = draw.transform;
             group.layer_effects =
-                (draw.transform.bevel > 0.001F && draw.transform.bevel_thickness > 0.001F) ||
-                draw.transform.bloom > 0.001F;
+                !disable_filters_ &&
+                ((draw.transform.bevel > 0.001F && draw.transform.bevel_thickness > 0.001F) ||
+                 draw.transform.bloom > 0.001F);
             mesh_groups.push_back(group);
         } else {
             mesh_groups.back().last = index + 1;
@@ -4143,7 +4164,8 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         const bool bevel_effect =
             item.transform.bevel > 0.001F && item.transform.bevel_thickness > 0.001F;
         const bool layer_effects =
-            bevel_effect || (!item.is_background && item.transform.bloom > 0.001F);
+            !disable_filters_ &&
+            (bevel_effect || (!item.is_background && item.transform.bloom > 0.001F));
         if (layer_effects) {
             render_item_layer(index);
             begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
@@ -4221,22 +4243,38 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
 
     // 最终 FXAA: 先把完成帧拷进快照, 再渲染到空出来的立绘层, 最后回读。
     // 这样文字/UI 的几何边、Live2D 轮廓和倒角/泛光边缘都会得到抗锯齿。
-    snapshot_target();
-    begin_layer_pass();
-    vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    push_constants(job::Transform{}, 1.0F, false, nullptr, nullptr, false, 0.0F, 0.0F, 0.0F, 3.0F);
-    draw_quad(items[bevel_quad_index].vertex_offset,
-              static_cast<std::uint32_t>(items[bevel_quad_index].vertices.size()),
-              snapshot_descriptor_);
-    end_layer_pass();
+    if (no_fxaa) {
+        transition(target_, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        vkCmdCopyImageToBuffer(command_, target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_,
+                               1, &copy);
+        transition(target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else {
+        snapshot_target();
+        begin_layer_pass();
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          fast_fxaa ? pipeline_fxaa_fast_ : pipeline_);
+        push_constants(job::Transform{}, 1.0F, false, nullptr, nullptr, false, 0.0F, 0.0F, 0.0F,
+                       3.0F);
+        draw_quad(items[bevel_quad_index].vertex_offset,
+                  static_cast<std::uint32_t>(items[bevel_quad_index].vertices.size()),
+                  snapshot_descriptor_);
+        end_layer_pass();
 
-    transition(layer_image_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-               VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-               VK_PIPELINE_STAGE_TRANSFER_BIT);
-    layer_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    vkCmdCopyImageToBuffer(command_, layer_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_,
-                           1, &copy);
+        transition(layer_image_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                   VK_PIPELINE_STAGE_TRANSFER_BIT);
+        layer_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        vkCmdCopyImageToBuffer(command_, layer_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               readback_, 1, &copy);
+    }
     if (!submit_and_wait(error)) {
         return false;
     }
@@ -4352,6 +4390,9 @@ void Renderer::destroy() {
         }
         if (pipeline_layer_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_layer_, nullptr);
+        }
+        if (pipeline_fxaa_fast_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, pipeline_fxaa_fast_, nullptr);
         }
         if (pipeline_stencil_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_stencil_, nullptr);

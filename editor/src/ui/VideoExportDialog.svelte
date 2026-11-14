@@ -63,6 +63,12 @@
     { value: 'ffmpeg', label: '外部 ffmpeg' },
   ];
 
+  const FXAA_OPTIONS = [
+    { value: 'standard', label: 'FXAA 标准' },
+    { value: 'fast', label: 'FXAA 快速' },
+    { value: 'off', label: '关闭' },
+  ];
+
   /** 码率只给三档预设, 标签里用括号写明实际值 —— 让用户填一个数字没有意义。 */
   const BITRATE_OPTIONS = [
     { value: '4000', label: '低（4 Mbps）' },
@@ -144,6 +150,7 @@
   const exportVideoClip = $derived(contentMode !== 'audio');
   const includeAudio = $derived(contentMode !== 'video');
   let enableFilters = $state(stored.enableFilters);
+  let fxaa = $state<'off' | 'standard' | 'fast'>('standard');
   let includeStage = $state(stored.includeStage);
   let includeUi = $state(stored.includeUi);
 
@@ -498,6 +505,7 @@
         uiOnly: !includeStage,
         stageOnly: !includeUi,
         disableFilters: !enableFilters,
+        fxaa,
         selected,
       });
       resultPath = result.output;
@@ -687,6 +695,15 @@
               options={ENCODER_OPTIONS}
               title="使用哪种编码后端"
               onchange={(next) => (encoder = next)}
+            />
+          </div>
+          <div class="settings-field">
+            <span class="settings-label">抗锯齿</span>
+            <Select
+              value={fxaa}
+              options={FXAA_OPTIONS}
+              title="关闭或选快速可提升导出速度"
+              onchange={(next) => (fxaa = next as 'off' | 'standard' | 'fast')}
             />
           </div>
         </div>

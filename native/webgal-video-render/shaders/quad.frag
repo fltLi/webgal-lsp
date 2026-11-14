@@ -2,6 +2,8 @@
 
 #version 450
 
+layout(constant_id = 0) const bool kFastFxaa = false;
+
 layout(set = 0, binding = 0) uniform sampler2D in_texture;
 layout(set = 0, binding = 1) uniform sampler2D in_mask;
 
@@ -68,6 +70,9 @@ vec3 fxaa(sampler2D tex, vec2 uv) {
 
     vec3 rgb_a = 0.5 * (texture(tex, uv + direction * (1.0 / 3.0 - 0.5)).rgb +
                         texture(tex, uv + direction * (2.0 / 3.0 - 0.5)).rgb);
+    if (kFastFxaa) {
+        return rgb_a;
+    }
     vec3 rgb_b = rgb_a * 0.5 +
                  0.25 * (texture(tex, uv - direction * 0.5).rgb +
                          texture(tex, uv + direction * 0.5).rgb);

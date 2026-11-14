@@ -16,7 +16,7 @@ use webgal_video_export::project::Project;
 
 #[cfg(all(feature = "video-export", target_os = "windows"))]
 use webgal_video_export::render::{
-    from_plan, render, Callbacks, Encoder, Preview, Progress, RenderOptions,
+    from_plan, render, Callbacks, Encoder, FxaaMode, Preview, Progress, RenderOptions,
 };
 
 use tauri::{AppHandle, Emitter, State};
@@ -348,6 +348,8 @@ pub struct VideoExportOptions {
     pub auto_speed: Option<u8>,
     pub figure_side: Option<String>,
     pub disable_filters: Option<bool>,
+    /// 抗锯齿模式: `off` / `standard` / `fast`。
+    pub fxaa: Option<String>,
     pub audio_only: Option<bool>,
 }
 
@@ -382,6 +384,7 @@ pub async fn export_video(
     let mut encoder = EncoderChoice::Auto;
     let mut bitrate_kbps = 0;
     let mut audio_only = false;
+    let mut fxaa = FxaaMode::Standard;
 
     if let Some(config) = options {
         if let Some(height) = config.resolution {
@@ -421,6 +424,11 @@ pub async fn export_video(
             export_options.config.layers.ui = false;
         }
         audio_only = config.audio_only.unwrap_or(false);
+        fxaa = match config.fxaa.as_deref() {
+            Some("off") => FxaaMode::Off,
+            Some("fast") => FxaaMode::Fast,
+            _ => FxaaMode::Standard,
+        };
         if let Some(mode) = config.figure_side.as_deref() {
             export_options.config.figure_side = match mode {
                 "legacy" => webgal_video_export::config::FigureSideMode::Legacy,
@@ -464,6 +472,7 @@ pub async fn export_video(
         encoder,
         bitrate_kbps,
         audio_only,
+        fxaa,
         log_path,
         encoder_name: Arc::new(Mutex::new(None)),
         app: Some(app),
@@ -529,6 +538,7 @@ struct RenderJob {
     encoder: EncoderChoice,
     bitrate_kbps: u32,
     audio_only: bool,
+    fxaa: FxaaMode,
     log_path: Option<PathBuf>,
     /// 渲染器回调报告的实际编码后端。
     encoder_name: Arc<Mutex<Option<String>>>,
@@ -564,6 +574,7 @@ fn export_plan(plan: &webgal_video_export::plan::Plan, job: &RenderJob) -> Resul
     };
     options.audio_only = job.audio_only;
     options.bitrate_kbps = job.bitrate_kbps;
+    options.fxaa = job.fxaa;
     options.live2d_core = live2d_core_file().filter(|path| path.is_file());
     options.log = job.log_path.clone();
 

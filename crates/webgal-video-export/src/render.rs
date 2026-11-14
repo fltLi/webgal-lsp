@@ -14,7 +14,7 @@ use webgal_video_render_sys::{
 use crate::plan::{AudioKind as PlanAudioKind, Plan, TextChar, Transform as PlanTransform};
 
 pub use webgal_video_render_sys::{
-    Callbacks, Encoder, Error as RenderError, Preview, Progress, RenderOptions, Status,
+    Callbacks, Encoder, Error as RenderError, FxaaMode, Preview, Progress, RenderOptions, Status,
     probe_video_duration, render,
 };
 

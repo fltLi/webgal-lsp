@@ -170,6 +170,28 @@ impl Encoder {
     }
 }
 
+/// 最终帧的抗锯齿模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FxaaMode {
+    /// 关闭，直接回读 target。
+    Off,
+    /// FXAA 标准：9 次纹理采样。
+    #[default]
+    Standard,
+    /// FXAA 快速：5 次纹理采样，边缘略软。
+    Fast,
+}
+
+impl FxaaMode {
+    fn code(self) -> c_int {
+        match self {
+            Self::Off => 0,
+            Self::Standard => 1,
+            Self::Fast => 2,
+        }
+    }
+}
+
 /// `webgal_render_run` 的返回码。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -246,6 +268,8 @@ pub struct RenderOptions {
     pub audio_only: bool,
     /// 视频码率 (kbps); `0` 表示使用渲染器默认值。
     pub bitrate_kbps: u32,
+    /// 最终帧抗锯齿。
+    pub fxaa: FxaaMode,
 }
 
 impl RenderOptions {
@@ -259,6 +283,7 @@ impl RenderOptions {
             encoder: Encoder::Auto,
             audio_only: false,
             bitrate_kbps: 0,
+            fxaa: FxaaMode::Standard,
         }
     }
 }
@@ -318,6 +343,7 @@ struct WebgalRenderOptions {
     encoder: c_int,
     audio_only: c_int,
     bitrate_kbps: u32,
+    fxaa_mode: c_int,
 }
 
 unsafe extern "C" {
@@ -908,6 +934,7 @@ pub fn render(
         encoder: options.encoder.code(),
         audio_only: flag(options.audio_only),
         bitrate_kbps: options.bitrate_kbps,
+        fxaa_mode: options.fxaa.code(),
     };
 
     let mut error_buffer = [0 as c_char; 1024];

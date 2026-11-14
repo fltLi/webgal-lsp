@@ -28,6 +28,8 @@ struct Context {
     std::filesystem::path ffmpeg;
     /// 视频码率 (kbps); 0 表示用默认值。
     std::uint32_t bitrate_kbps = 0;
+    /// 抗锯齿模式: 0 关闭, 1 FXAA 标准, 2 FXAA 快速。
+    int fxaa_mode = 1;
 
     /// 上报进度 (回调为空时忽略)。
     void report(const char* phase, std::uint64_t current, std::uint64_t total, double fps) const {

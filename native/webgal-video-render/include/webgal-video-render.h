@@ -125,6 +125,8 @@ typedef struct WebgalRenderOptions {
     int audio_only;
     /* 视频码率 (kbps); 0 表示使用默认值。 */
     uint32_t bitrate_kbps;
+    /* 抗锯齿模式: 0 关闭, 1 FXAA 标准, 2 FXAA 快速。 */
+    int fxaa_mode;
 } WebgalRenderOptions;
 
 /* 填充一份默认 Transform。 */
