@@ -737,6 +737,10 @@ class Renderer {
                              const std::vector<std::uint8_t>& pixels, std::string& error);
 
     std::uint32_t find_memory_type(std::uint32_t type_bits, VkMemoryPropertyFlags properties) const;
+    /// 是否存在满足属性组合的显存类型 (不限制 type_bits)。
+    bool has_memory_type(VkMemoryPropertyFlags properties) const;
+    /// 是否存在同时满足 type_bits 与属性的显存类型。
+    bool has_memory_type(std::uint32_t type_bits, VkMemoryPropertyFlags properties) const;
 
     bool create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
                        VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory,
@@ -1300,6 +1304,29 @@ std::uint32_t Renderer::find_memory_type(std::uint32_t type_bits,
     return 0;
 }
 
+bool Renderer::has_memory_type(VkMemoryPropertyFlags properties) const {
+    VkPhysicalDeviceMemoryProperties memory{};
+    vkGetPhysicalDeviceMemoryProperties(physical_, &memory);
+    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
+        if ((memory.memoryTypes[index].propertyFlags & properties) == properties) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Renderer::has_memory_type(std::uint32_t type_bits, VkMemoryPropertyFlags properties) const {
+    VkPhysicalDeviceMemoryProperties memory{};
+    vkGetPhysicalDeviceMemoryProperties(physical_, &memory);
+    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
+        if ((type_bits & (1U << index)) != 0 &&
+            (memory.memoryTypes[index].propertyFlags & properties) == properties) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Renderer::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
                              VkMemoryPropertyFlags properties, VkBuffer& buffer,
                              VkDeviceMemory& memory, std::string& error) {
@@ -1313,14 +1340,29 @@ bool Renderer::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
     }
     VkMemoryRequirements requirements{};
     vkGetBufferMemoryRequirements(device_, buffer, &requirements);
+    if (!has_memory_type(requirements.memoryTypeBits, properties)) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        error = "找不到匹配的 buffer 显存类型";
+        return false;
+    }
     VkMemoryAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.allocationSize = requirements.size;
     alloc.memoryTypeIndex = find_memory_type(requirements.memoryTypeBits, properties);
     if (!ok(vkAllocateMemory(device_, &alloc, nullptr, &memory), "分配 buffer 内存", error)) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         return false;
     }
-    return ok(vkBindBufferMemory(device_, buffer, memory, 0), "绑定 buffer", error);
+    if (!ok(vkBindBufferMemory(device_, buffer, memory, 0), "绑定 buffer", error)) {
+        vkFreeMemory(device_, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
 }
 
 bool Renderer::create_target(std::string& error) {
@@ -1450,10 +1492,28 @@ bool Renderer::create_target(std::string& error) {
     mask_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
     const VkDeviceSize readback_size = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
-    if (!create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+    /*
+     * 回读缓冲必须是 CPU 可缓存内存。
+     *
+     * 只要求 HOST_VISIBLE|HOST_COHERENT 时, 驱动通常返回写合并 (uncached) 内存;
+     * 在那块内存上逐帧 memcpy 1080p 只有 ~200MB/s, 单帧要 20-45ms, 比 GPU 渲染本身
+     * 还慢。加上 HOST_CACHED 后同样的 memcpy 降到 0.1-0.3ms。优先选 cached+coherent
+     * (无需手动 invalidate); 没有时退回原来的组合。
+     */
+    const VkMemoryPropertyFlags host_visible =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkMemoryPropertyFlags readback_properties =
+        has_memory_type(host_visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+            ? (host_visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+            : host_visible;
+    if (!create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, readback_properties,
                        readback_, readback_memory_, error)) {
-        return false;
+        // 某些驱动的 buffer 允许的 type_bits 不包含 cached 类型; 退回兼容组合。
+        if (readback_properties == host_visible ||
+            !create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, host_visible, readback_,
+                           readback_memory_, error)) {
+            return false;
+        }
     }
     if (!create_buffer(static_cast<VkDeviceSize>(sizeof(Vertex) * 6 * kMaxQuads),
                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,

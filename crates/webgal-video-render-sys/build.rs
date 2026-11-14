@@ -38,10 +38,7 @@ fn main() {
         "native/webgal-video-render/shaders",
         "native/webgal-video-render/cmake",
     ] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            workspace_root.join(relative).display()
-        );
+        print_rerun_if_changed(&workspace_root.join(relative));
     }
     println!("cargo:rerun-if-env-changed=VULKAN_SDK");
     println!("cargo:rerun-if-env-changed=VCPKG_ROOT");
@@ -86,6 +83,22 @@ fn main() {
 
 fn env_or_panic(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("缺少构建环境变量 {name}"))
+}
+
+/// 逐个文件声明 `rerun-if-changed`。
+///
+/// 只对目录声明时 Cargo 看的是目录本身的 mtime；修改目录里的文件不会触发重编译，
+/// C++ 改动会被静默跳过（表现为改了 `audio.cpp` 却仍链接旧库）。
+fn print_rerun_if_changed(path: &Path) {
+    if path.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                print_rerun_if_changed(&entry.path());
+            }
+        }
+    } else if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 fn configure(workspace_root: &Path, build_dir: &Path, config: &str) {
