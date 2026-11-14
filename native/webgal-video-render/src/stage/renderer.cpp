@@ -734,6 +734,8 @@ class Renderer {
 
     bool init(const job::Plan& plan, std::string& error);
     bool prepare(const job::Plan& plan, const run::Context& context, std::string& error);
+    bool submit_frame(const job::Plan& plan, std::uint64_t t_us, std::string& error);
+    bool read_frame(std::vector<std::uint8_t>& pixels, std::string& error);
     bool draw_pixels(const job::Plan& plan, std::uint64_t t_us, std::vector<std::uint8_t>& pixels,
                      std::string& error);
     bool draw(const job::Plan& plan, std::uint64_t t_us, const std::filesystem::path& output,
@@ -769,6 +771,7 @@ class Renderer {
                        VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory,
                        std::string& error);
     bool begin_commands(std::string& error);
+    bool submit_only(std::string& error);
     bool submit_and_wait(std::string& error);
     void transition(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout,
                     VkAccessFlags src_access, VkAccessFlags dst_access,
@@ -864,6 +867,12 @@ class Renderer {
 
     VkBuffer readback_ = VK_NULL_HANDLE;
     VkDeviceMemory readback_memory_ = VK_NULL_HANDLE;
+    VkBuffer readback_alt_ = VK_NULL_HANDLE;
+    VkDeviceMemory readback_memory_alt_ = VK_NULL_HANDLE;
+    /// 已提交但尚未读取的帧槽; 双槽交替, 让 CPU 读上一帧时 GPU 能画下一帧。
+    bool frame_pending_ = false;
+    std::size_t pending_readback_ = 0;
+    std::size_t next_readback_ = 0;
     /// 视频帧上传复用同一块 staging，并把 copy 并进主命令缓冲，省掉每帧一次 submit/wait。
     VkBuffer video_staging_ = VK_NULL_HANDLE;
     VkDeviceMemory video_staging_memory_ = VK_NULL_HANDLE;
@@ -1543,14 +1552,22 @@ bool Renderer::create_target(std::string& error) {
         has_memory_type(host_visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
             ? (host_visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
             : host_visible;
-    if (!create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, readback_properties,
-                       readback_, readback_memory_, error)) {
-        // 某些驱动的 buffer 允许的 type_bits 不包含 cached 类型; 退回兼容组合。
-        if (readback_properties == host_visible ||
-            !create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, host_visible, readback_,
-                           readback_memory_, error)) {
-            return false;
+    const auto create_readback = [&](VkBuffer& buffer, VkDeviceMemory& memory) {
+        if (!create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, readback_properties,
+                           buffer, memory, error)) {
+            // 某些驱动的 buffer 允许的 type_bits 不包含 cached 类型; 退回兼容组合。
+            if (readback_properties == host_visible ||
+                !create_buffer(readback_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, host_visible,
+                               buffer, memory, error)) {
+                return false;
+            }
         }
+        return true;
+    };
+    // 双回读槽: 当前帧写一个槽时, CPU 可以读取上一帧的另一个槽。
+    if (!create_readback(readback_, readback_memory_) ||
+        !create_readback(readback_alt_, readback_memory_alt_)) {
+        return false;
     }
     if (!create_buffer(static_cast<VkDeviceSize>(sizeof(Vertex) * 6 * kMaxQuads),
                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -2033,7 +2050,7 @@ bool Renderer::begin_commands(std::string& error) {
     return ok(vkBeginCommandBuffer(command_, &begin), "开始命令缓冲", error);
 }
 
-bool Renderer::submit_and_wait(std::string& error) {
+bool Renderer::submit_only(std::string& error) {
     if (!ok(vkEndCommandBuffer(command_), "结束命令缓冲", error)) {
         return false;
     }
@@ -2041,7 +2058,11 @@ bool Renderer::submit_and_wait(std::string& error) {
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &command_;
-    if (!ok(vkQueueSubmit(queue_, 1, &submit, fence_), "提交命令", error)) {
+    return ok(vkQueueSubmit(queue_, 1, &submit, fence_), "提交命令", error);
+}
+
+bool Renderer::submit_and_wait(std::string& error) {
+    if (!submit_only(error)) {
         return false;
     }
     if (!ok(vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX), "等待 fence", error)) {
@@ -3410,12 +3431,14 @@ void Renderer::draw_quad(VkDeviceSize offset, std::uint32_t vertex_count,
     vkCmdDraw(command_, vertex_count, 1, 0, 0);
 }
 
-bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
-                           std::vector<std::uint8_t>& pixels, std::string& error) {
+bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::string& error) {
     const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
     const int fxaa_mode = context_ == nullptr ? 1 : context_->fxaa_mode;
     const bool no_fxaa = fxaa_mode <= 0;
     const bool fast_fxaa = fxaa_mode == 2;
+    const VkBuffer readback = next_readback_ == 0 ? readback_ : readback_alt_;
+    pending_readback_ = next_readback_;
+    next_readback_ = 1 - next_readback_;
     const auto profile_started = std::chrono::steady_clock::now();
     std::vector<DrawItem>& items = items_;
     std::vector<Vertex>& mesh_vertices = mesh_vertices_;
@@ -4248,8 +4271,8 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
         target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        vkCmdCopyImageToBuffer(command_, target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_,
-                               1, &copy);
+        vkCmdCopyImageToBuffer(command_, target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1,
+                               &copy);
         transition(target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -4273,23 +4296,15 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
                    VK_PIPELINE_STAGE_TRANSFER_BIT);
         layer_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         vkCmdCopyImageToBuffer(command_, layer_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               readback_, 1, &copy);
+                               readback, 1, &copy);
     }
-    if (!submit_and_wait(error)) {
+    if (!submit_only(error)) {
         return false;
     }
     const auto submit_done = std::chrono::steady_clock::now();
+    frame_pending_ = true;
 
-    void* mapped = nullptr;
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
-    if (!ok(vkMapMemory(device_, readback_memory_, 0, bytes, 0, &mapped), "映射回读缓冲", error)) {
-        return false;
-    }
-    pixels.resize(static_cast<std::size_t>(bytes));
-    std::memcpy(pixels.data(), mapped, pixels.size());
-    vkUnmapMemory(device_, readback_memory_);
     if (profile) {
-        const auto readback_done = std::chrono::steady_clock::now();
         g_profile.build_us += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(build_done - profile_started)
                 .count());
@@ -4311,15 +4326,57 @@ bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
         g_profile.submit_us += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(submit_done - build_done)
                 .count());
-        g_profile.readback_us += static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(readback_done - submit_done)
-                .count());
         g_profile.items += items.size();
         g_profile.mesh_draws += mesh_draws.size();
         g_profile.mask_surfaces += mask_surfaces_.size();
+    }
+    return true;
+}
+
+bool Renderer::read_frame(std::vector<std::uint8_t>& pixels, std::string& error) {
+    if (!frame_pending_) {
+        error = "没有待读取的帧";
+        return false;
+    }
+    if (!ok(vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX), "等待 fence", error)) {
+        return false;
+    }
+    if (!ok(vkResetFences(device_, 1, &fence_), "重置 fence", error)) {
+        return false;
+    }
+    const auto readback_started = std::chrono::steady_clock::now();
+    const VkDeviceMemory memory = pending_readback_ == 0 ? readback_memory_ : readback_memory_alt_;
+    void* mapped = nullptr;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
+    if (!ok(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "映射回读缓冲", error)) {
+        return false;
+    }
+    pixels.resize(static_cast<std::size_t>(bytes));
+    std::memcpy(pixels.data(), mapped, pixels.size());
+    vkUnmapMemory(device_, memory);
+    frame_pending_ = false;
+    if (std::getenv("WEBGAL_RENDER_PROFILE") != nullptr) {
+        g_profile.readback_us +=
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - readback_started)
+                                           .count());
         ++g_profile.frames;
     }
     return true;
+}
+
+bool Renderer::draw_pixels(const job::Plan& plan, std::uint64_t t_us,
+                           std::vector<std::uint8_t>& pixels, std::string& error) {
+    if (frame_pending_) {
+        std::vector<std::uint8_t> discarded;
+        if (!read_frame(discarded, error)) {
+            return false;
+        }
+    }
+    if (!submit_frame(plan, t_us, error)) {
+        return false;
+    }
+    return read_frame(pixels, error);
 }
 
 bool Renderer::draw(const job::Plan& plan, std::uint64_t t_us, const std::filesystem::path& output,
@@ -4432,6 +4489,12 @@ void Renderer::destroy() {
         }
         if (readback_memory_ != VK_NULL_HANDLE) {
             vkFreeMemory(device_, readback_memory_, nullptr);
+        }
+        if (readback_alt_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, readback_alt_, nullptr);
+        }
+        if (readback_memory_alt_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, readback_memory_alt_, nullptr);
         }
         if (video_staging_ != VK_NULL_HANDLE) {
             vkDestroyBuffer(device_, video_staging_, nullptr);
@@ -4593,16 +4656,7 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
     std::vector<std::uint8_t> pixels;
     std::uint64_t encode_us = 0;
     std::uint64_t preview_us = 0;
-    const auto render_started = clock_now();
-    for (std::uint64_t index = 0; index < frame_count; ++index) {
-        const std::uint64_t t_us = frame_time(start_us, index, fps_num, fps_den);
-        if (context.cancel_requested()) {
-            error = "已取消";
-            return false;
-        }
-        if (!renderer.draw_pixels(plan, t_us, pixels, error)) {
-            return false;
-        }
+    const auto deliver = [&](std::uint64_t index, std::uint64_t t_us) {
         const auto encode_started = clock_now();
         if (!on_frame(index, frame_count, t_us, pixels, error)) {
             return false;
@@ -4624,6 +4678,40 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                                                preview_finished - encode_finished)
                                                .count());
+        }
+        return true;
+    };
+    const auto render_started = clock_now();
+    std::uint64_t pending_index = 0;
+    std::uint64_t pending_t_us = 0;
+    bool has_pending = false;
+    for (std::uint64_t index = 0; index < frame_count; ++index) {
+        const std::uint64_t t_us = frame_time(start_us, index, fps_num, fps_den);
+        if (context.cancel_requested()) {
+            error = "已取消";
+            return false;
+        }
+        // 先取上一帧（等待上一帧 GPU 完成），再提交当前帧；这样当前帧在 GPU
+        // 执行时，CPU 可以编码/预览上一帧。
+        if (has_pending && !renderer.read_frame(pixels, error)) {
+            return false;
+        }
+        if (!renderer.submit_frame(plan, t_us, error)) {
+            return false;
+        }
+        if (has_pending && !deliver(pending_index, pending_t_us)) {
+            return false;
+        }
+        pending_index = index;
+        pending_t_us = t_us;
+        has_pending = true;
+    }
+    if (has_pending) {
+        if (!renderer.read_frame(pixels, error)) {
+            return false;
+        }
+        if (!deliver(pending_index, pending_t_us)) {
+            return false;
         }
     }
     if (profile) {

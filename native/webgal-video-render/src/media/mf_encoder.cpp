@@ -3,6 +3,7 @@
 #include "media/mf_encoder.hpp"
 
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 
 #include <codecapi.h>
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <thread>
 
 namespace webgal::media {
 namespace {
@@ -202,41 +204,61 @@ bool MfEncoder::write_video(std::uint64_t frame_index, const std::vector<std::ui
         const auto height = static_cast<int>(impl_->height);
         std::uint8_t* y_plane = impl_->nv12.data();
         std::uint8_t* uv_plane = y_plane + pixels;
-        for (int y = 0; y + 1 < height; y += 2) {
-            const std::uint8_t* row0 = bgra.data() + static_cast<std::size_t>(y) * width * 4;
-            const std::uint8_t* row1 = row0 + static_cast<std::size_t>(width) * 4;
-            std::uint8_t* luma0 = y_plane + static_cast<std::size_t>(y) * width;
-            std::uint8_t* luma1 = luma0 + width;
-            for (int x = 0; x + 1 < width; x += 2) {
-                const int b00 = row0[x * 4 + 0];
-                const int g00 = row0[x * 4 + 1];
-                const int r00 = row0[x * 4 + 2];
-                const int b01 = row0[x * 4 + 4];
-                const int g01 = row0[x * 4 + 5];
-                const int r01 = row0[x * 4 + 6];
-                const int b10 = row1[x * 4 + 0];
-                const int g10 = row1[x * 4 + 1];
-                const int r10 = row1[x * 4 + 2];
-                const int b11 = row1[x * 4 + 4];
-                const int g11 = row1[x * 4 + 5];
-                const int r11 = row1[x * 4 + 6];
-                luma0[x] =
-                    static_cast<std::uint8_t>(((46 * r00 + 157 * g00 + 16 * b00 + 128) >> 8) + 16);
-                luma0[x + 1] =
-                    static_cast<std::uint8_t>(((46 * r01 + 157 * g01 + 16 * b01 + 128) >> 8) + 16);
-                luma1[x] =
-                    static_cast<std::uint8_t>(((46 * r10 + 157 * g10 + 16 * b10 + 128) >> 8) + 16);
-                luma1[x + 1] =
-                    static_cast<std::uint8_t>(((46 * r11 + 157 * g11 + 16 * b11 + 128) >> 8) + 16);
+        const auto convert_range = [&](int begin, int end) {
+            for (int y = begin; y + 1 < end; y += 2) {
+                const std::uint8_t* row0 = bgra.data() + static_cast<std::size_t>(y) * width * 4;
+                const std::uint8_t* row1 = row0 + static_cast<std::size_t>(width) * 4;
+                std::uint8_t* luma0 = y_plane + static_cast<std::size_t>(y) * width;
+                std::uint8_t* luma1 = luma0 + width;
+                for (int x = 0; x + 1 < width; x += 2) {
+                    const int b00 = row0[x * 4 + 0];
+                    const int g00 = row0[x * 4 + 1];
+                    const int r00 = row0[x * 4 + 2];
+                    const int b01 = row0[x * 4 + 4];
+                    const int g01 = row0[x * 4 + 5];
+                    const int r01 = row0[x * 4 + 6];
+                    const int b10 = row1[x * 4 + 0];
+                    const int g10 = row1[x * 4 + 1];
+                    const int r10 = row1[x * 4 + 2];
+                    const int b11 = row1[x * 4 + 4];
+                    const int g11 = row1[x * 4 + 5];
+                    const int r11 = row1[x * 4 + 6];
+                    luma0[x] = static_cast<std::uint8_t>(
+                        ((46 * r00 + 157 * g00 + 16 * b00 + 128) >> 8) + 16);
+                    luma0[x + 1] = static_cast<std::uint8_t>(
+                        ((46 * r01 + 157 * g01 + 16 * b01 + 128) >> 8) + 16);
+                    luma1[x] = static_cast<std::uint8_t>(
+                        ((46 * r10 + 157 * g10 + 16 * b10 + 128) >> 8) + 16);
+                    luma1[x + 1] = static_cast<std::uint8_t>(
+                        ((46 * r11 + 157 * g11 + 16 * b11 + 128) >> 8) + 16);
 
-                const int b = (b00 + b01 + b10 + b11) / 4;
-                const int g = (g00 + g01 + g10 + g11) / 4;
-                const int r = (r00 + r01 + r10 + r11) / 4;
-                const std::size_t offset = static_cast<std::size_t>(y / 2) * width + x;
-                uv_plane[offset] =
-                    static_cast<std::uint8_t>(((-26 * r - 87 * g + 113 * b + 128) >> 8) + 128);
-                uv_plane[offset + 1] =
-                    static_cast<std::uint8_t>(((113 * r - 102 * g - 11 * b + 128) >> 8) + 128);
+                    const int b = (b00 + b01 + b10 + b11) / 4;
+                    const int g = (g00 + g01 + g10 + g11) / 4;
+                    const int r = (r00 + r01 + r10 + r11) / 4;
+                    const std::size_t offset = static_cast<std::size_t>(y / 2) * width + x;
+                    uv_plane[offset] =
+                        static_cast<std::uint8_t>(((-26 * r - 87 * g + 113 * b + 128) >> 8) + 128);
+                    uv_plane[offset + 1] =
+                        static_cast<std::uint8_t>(((113 * r - 102 * g - 11 * b + 128) >> 8) + 128);
+                }
+            }
+        };
+        const int workers = std::clamp(height / 240, 1, 4);
+        if (workers <= 1) {
+            convert_range(0, height);
+        } else {
+            const int rows = ((height + workers - 1) / workers + 1) & ~1;
+            std::vector<std::thread> threads;
+            for (int begin = 0; begin < height; begin += rows) {
+                const int end = std::min(height, begin + rows);
+                if (begin == 0) {
+                    convert_range(begin, end);
+                } else {
+                    threads.emplace_back(convert_range, begin, end);
+                }
+            }
+            for (auto& thread : threads) {
+                thread.join();
             }
         }
 
