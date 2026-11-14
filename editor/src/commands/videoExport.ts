@@ -11,7 +11,7 @@ export interface VideoExportResult {
 }
 
 export interface VideoExportStatus {
-  /** 当前构建是否链接了渲染器（Windows + video-export 特性）。 */
+  /** 当前构建是否链接了渲染器。 */
   supported: boolean;
   /** 是否已导入 Live2DCubismCore.dll。 */
   live2dCore: boolean;

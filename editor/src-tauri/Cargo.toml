@@ -15,8 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = ["video-export"]
-# 视频导出: 计划编译 + C++ 渲染器 (Windows)。关掉后相关命令返回“未启用”。
-video-export = ["dep:webgal-video-export"]
+video-export = ["dep:webgal-video-export"] # 视频导出 (仅 Windows)
 
 [dependencies]
 webgal-language-core.workspace = true

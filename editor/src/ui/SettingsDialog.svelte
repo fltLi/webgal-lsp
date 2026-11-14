@@ -213,7 +213,7 @@
               {#if videoStatus?.supported}
                 视频渲染器已随应用内置，可直接用于导出。
               {:else}
-                当前构建未启用视频渲染器（需要 Windows 且开启 video-export 特性）。
+                当前构建未启用视频渲染器。
               {/if}
             </p>
           </section>
@@ -234,7 +234,7 @@
                 <p class="settings-inline-error" role="alert">{live2dImportError}</p>
               {/if}
             {:else}
-              <p class="muted">启用视频渲染器后，可在此导入 Live2D 核心库。</p>
+              <p class="muted">视频渲染器不可用。</p>
             {/if}
           </section>
         {:else if appStore.settingsCategory === 'about'}

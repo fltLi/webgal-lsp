@@ -571,7 +571,7 @@
   {#if phase === 'idle'}
     <div class="video-body">
       {#if status && !status.supported}
-        <p class="muted">当前构建未启用视频导出（需要 Windows 且开启 video-export 特性）。</p>
+        <p class="muted">视频导出目前仅支持 Windows。</p>
       {/if}
       {#if notice}
         <p class="muted">{notice}</p>

@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | `crates/` 的 `webgal-language-core` / `language-service` / `language-server` / `simulate` / `sentence-macro` | 维护者主导（文件头基本没有 AI 标识） | 先给方案再动手；改动要小、要解释 |
 | `editor/`（前端 Svelte 5 + SvelteKit，后端 Tauri 2 / crate `webgal-ink`）、`crates/expression`、`webgal-snapshot` | AI 主导（文件头多数带标识） | 可自己拿主意，但要补测试、说清边界 |
-| 视频导出：`crates/webgal-video-export`、`crates/webgal-video-render-sys`、`native/webgal-video-render` | AI 主导（新模块，文件头均带标识） | 可重构；但 ABI 与计划结构要同步 Rust/C++ 两侧并跑两端测试 |
+| 视频导出：`crates/webgal-video-export`、`crates/webgal-video-render-sys`、`native/webgal-video-render` | AI 主导（新模块，文件头均带标识） | 可重构；但 ABI 与计划结构要同步 Rust/C++ 两侧并跑两端测试。视频导出**仅 Windows**，最近几个版本没有跨平台计划 |
 | `crates/count`、`path-tree`、`json-language-service` | 混合 | 看多数；拿不准就当维护者主导 |
 
 判据是**你要动的那一块**里多数文件带不带 AI 标识（粒度是模块，子模块可以自成一块）。实用形式：
@@ -206,7 +206,7 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   service/preview.rs        预览静态服务器 + /api/webgalsync WebSocket 网关（兼容两代引擎）
   service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
   service/video_export.rs    视频导出 Tauri command：计划 → C ABI → 后台导出/进度/取消
-  service/video_export_stub.rs  未启用 `video-export` 时的同签名占位实现
+  service/video_export_stub.rs  未启用 `video-export` 或非 Windows 构建时的同签名占位实现
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
 crates/webgal-video-export/ 视频导出: 读取项目、编译时间线、映射计划并探测/渲染视频

@@ -2,7 +2,7 @@
 
 //! 构建 `native/webgal-video-render` 并把它静态链接进当前 Rust 目标。
 //!
-//! C++ 侧只有 Windows 实现: 其他平台留空 crate, 由 Ink 的 `cfg(windows)` 依赖排除。
+//! C++ 侧只有 Windows 实现: 其他平台留空 crate。
 
 use std::{
     path::{Path, PathBuf},

@@ -5,6 +5,9 @@
 //! 该 crate 负责读取 WebGAL 项目、把线性/静态分支编译成时间线 (`plan::Plan`)，并通过
 //! `webgal-video-render-sys` 完成计划映射、视频时长探测与渲染入口。实际的 Vulkan
 //! 渲染与编码由静态链接的 C++ 渲染器完成。
+//!
+//! **平台边界**：只支持 Windows x64；最近几个版本没有跨平台计划。计划编译部分
+//! 保持普通 Rust，但媒体栈、探测与渲染入口都是 Windows 实现。
 
 pub use config::*;
 pub use error::*;
