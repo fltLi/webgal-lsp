@@ -14,8 +14,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "common/log.hpp"
 #include "media/audio.hpp"
@@ -84,7 +87,176 @@ std::filesystem::path temp_frame_dir() {
             "-frames");
 }
 
+std::filesystem::path temp_segment_dir() {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    return std::filesystem::temp_directory_path() /
+           ("webgal-video-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(stamp) +
+            "-segments");
+}
+
+std::uint64_t frame_count_for(std::uint64_t start_us, std::uint64_t end_us, std::uint32_t fps_num,
+                              std::uint32_t fps_den) {
+    if (end_us <= start_us || fps_num == 0 || fps_den == 0) {
+        return 0;
+    }
+    const std::uint64_t numerator = (end_us - start_us) * fps_num;
+    const std::uint64_t denominator = 1'000'000ULL * fps_den;
+    return (numerator + denominator - 1) / denominator;
+}
+
+/// 把若干段 MP4 用 ffmpeg 无损拼接，并在有音频时一起封装。
+bool concat_segments(const std::vector<std::filesystem::path>& segments,
+                     const std::filesystem::path& output, const std::filesystem::path& audio,
+                     bool has_audio, const run::Context& context, std::string& error) {
+    if (segments.empty()) {
+        error = "没有可拼接的视频段";
+        return false;
+    }
+    if (!output.parent_path().empty()) {
+        std::error_code code;
+        std::filesystem::create_directories(output.parent_path(), code);
+        if (code) {
+            error = "无法创建输出目录: " + to_utf8(output.parent_path());
+            return false;
+        }
+    }
+    const auto list = segments.front().parent_path() / "concat.txt";
+    std::ofstream stream(list, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        error = "无法写入拼接列表: " + to_utf8(list);
+        return false;
+    }
+    for (const auto& segment : segments) {
+        std::string line = to_utf8(segment);
+        std::replace(line.begin(), line.end(), '\\', '/');
+        stream << "file '" << line << "'\n";
+    }
+    stream.close();
+    if (!stream) {
+        error = "写入拼接列表失败";
+        return false;
+    }
+
+    const std::wstring ffmpeg_path = context.ffmpeg.empty() ? L"ffmpeg" : quote(context.ffmpeg);
+    std::wstring command = ffmpeg_path + L" -y -f concat -safe 0 -i " + quote(list);
+    if (has_audio) {
+        command += L" -i " + quote(audio) + L" -c:a aac -b:a 192k";
+    }
+    command += L" -c:v copy -shortest -movflags +faststart ";
+    if (!has_audio) {
+        command += L"-an ";
+    }
+    command += quote(output);
+    return run_process(command, context, error);
+}
+
 } // namespace
+
+bool export_native_segmented(const job::Plan& plan, const std::filesystem::path& output,
+                             const run::Context& context, std::uint32_t bitrate,
+                             std::uint64_t segment_frames, bool has_audio, std::string& error) {
+    const auto dir = temp_segment_dir();
+    std::error_code code;
+    std::filesystem::create_directories(dir, code);
+    if (code) {
+        error = "无法创建临时分段目录: " + to_utf8(dir);
+        return false;
+    }
+
+    std::vector<std::filesystem::path> segments;
+    std::unique_ptr<media::MfEncoder> encoder;
+    std::filesystem::path current_path;
+    std::uint64_t base = 0;
+    const auto start_segment = [&](std::uint64_t at) {
+        current_path = dir / ("segment_" + std::to_string(segments.size()) + ".mp4");
+        encoder = std::make_unique<media::MfEncoder>();
+        if (!encoder->init(current_path, plan.output_w, plan.output_h, plan.fps_num, plan.fps_den,
+                           bitrate, false, error)) {
+            return false;
+        }
+        base = at;
+        return true;
+    };
+    if (!start_segment(0)) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    context.report_encoder("Media Foundation（分段）");
+
+    const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
+    const auto clock_now = [] { return std::chrono::steady_clock::now(); };
+    const auto export_started = clock_now();
+    const auto render_started = clock_now();
+    const bool rendered = stage::render_sequence(
+        plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
+        [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
+            const std::vector<std::uint8_t>& pixels, std::string& frame_error) {
+            if (context.cancel_requested()) {
+                frame_error = "已取消";
+                return false;
+            }
+            if (index % 10 == 0 || index + 1 == total) {
+                context.report("render", index + 1, total,
+                               static_cast<double>(plan.fps_num) / plan.fps_den);
+            }
+            if (!encoder) {
+                if (!start_segment(index)) {
+                    frame_error = error;
+                    return false;
+                }
+            }
+            if (!encoder->write_video(index - base, pixels, frame_error)) {
+                return false;
+            }
+            if (index - base + 1 == segment_frames || index + 1 == total) {
+                if (!encoder->finish(frame_error)) {
+                    return false;
+                }
+                segments.push_back(current_path);
+                encoder.reset();
+                if (index + 1 < total && !start_segment(index + 1)) {
+                    frame_error = error;
+                    return false;
+                }
+            }
+            return true;
+        },
+        error);
+    if (!rendered) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    const auto render_finished = clock_now();
+
+    const auto audio_started = clock_now();
+    const auto audio_path = dir / "audio.wav";
+    if (has_audio && !media::render_audio(plan, audio_path, context, error)) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    const auto audio_finished = clock_now();
+
+    if (!concat_segments(segments, output, audio_path, has_audio, context, error)) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    const auto finished = clock_now();
+    std::filesystem::remove_all(dir, code);
+
+    if (profile) {
+        const auto milliseconds = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+        };
+        std::ostringstream message;
+        message << "profile: export total=" << milliseconds(export_started, finished)
+                << "ms render=" << milliseconds(render_started, render_finished)
+                << "ms audio=" << milliseconds(audio_started, audio_finished)
+                << "ms concat=" << milliseconds(audio_finished, finished)
+                << "ms segments=" << segments.size();
+        log::info(message.str());
+    }
+    return true;
+}
 
 bool export_native(const job::Plan& plan, const std::filesystem::path& output,
                    const run::Context& context, std::string& error) {
@@ -96,6 +268,22 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
     const bool has_audio = !plan.audio.empty();
     const std::uint32_t bitrate =
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
+
+    // MF sink writer 的队列会随帧数增长; 长片按约 1 GiB NV12 输入分段编码, 限制峰值内存。
+    const std::uint64_t frame_count =
+        frame_count_for(0, plan.duration_us, plan.fps_num, plan.fps_den);
+    const std::uint64_t frame_bytes =
+        static_cast<std::uint64_t>(plan.output_w) * plan.output_h * 3 / 2;
+    // 长片用更大的段，减少编码器初始化/Finalize/concat 次数；短片仍保持 1 GiB，
+    // 让 20-30s 的 1080p 也能分成至少两段限制峰值内存。
+    const std::uint64_t target_bytes =
+        frame_count > 1800 ? 2048ULL * 1024ULL * 1024ULL : 1024ULL * 1024ULL * 1024ULL;
+    const std::uint64_t segment_frames =
+        std::clamp<std::uint64_t>(target_bytes / std::max<std::uint64_t>(1, frame_bytes), 60, 600);
+    if (frame_count > segment_frames) {
+        return export_native_segmented(plan, output, context, bitrate, segment_frames, has_audio,
+                                       error);
+    }
 
     media::MfEncoder encoder;
     const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
