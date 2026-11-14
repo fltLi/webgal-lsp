@@ -8,16 +8,21 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <objbase.h>
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/log.hpp"
@@ -165,8 +170,22 @@ bool export_native_segmented(const job::Plan& plan, const std::filesystem::path&
 
     std::vector<std::filesystem::path> segments;
     std::unique_ptr<media::MfEncoder> encoder;
+    std::future<void> finalize_future;
+    bool finalize_ok = true;
+    std::string finalize_error;
     std::filesystem::path current_path;
     std::uint64_t base = 0;
+    const auto wait_for_finalize = [&](std::string& target) {
+        if (!finalize_future.valid()) {
+            return true;
+        }
+        finalize_future.get();
+        if (!finalize_ok) {
+            target = finalize_error;
+            return false;
+        }
+        return true;
+    };
     const auto start_segment = [&](std::uint64_t at) {
         current_path = dir / ("segment_" + std::to_string(segments.size()) + ".mp4");
         encoder = std::make_unique<media::MfEncoder>();
@@ -187,11 +206,43 @@ bool export_native_segmented(const job::Plan& plan, const std::filesystem::path&
     const auto clock_now = [] { return std::chrono::steady_clock::now(); };
     const auto export_started = clock_now();
     const auto render_started = clock_now();
+    // 长片段数多，Finalize 的串行时间才值得用后台线程换回来；短片保持同步，
+    // 避免两个硬件编码器会话互相抢资源。
+    const bool async_finalize =
+        frame_count_for(0, plan.duration_us, plan.fps_num, plan.fps_den) > 1800;
+
+    // 分段编码时音频只写临时 WAV，与 MF 编码器完全独立；提前到渲染线程旁边跑，
+    // 把约 0.5-0.8s 的混音时间藏进视频渲染。音频线程不调用用户回调，只保留内部
+    // 取消标志，避免 C ABI 的“回调都在调用线程执行”约定被打破。
+    const auto audio_path = dir / "audio.wav";
+    std::string audio_error;
+    bool audio_ok = true;
+    std::atomic<bool> audio_cancel{false};
+    auto audio_started = render_started;
+    auto audio_finished = render_started;
+    std::jthread audio_thread;
+    if (has_audio) {
+        run::Context audio_context = context;
+        audio_context.progress = {};
+        audio_context.preview = {};
+        audio_context.encoder = {};
+        audio_context.cancelled = [&audio_cancel] {
+            return audio_cancel.load(std::memory_order_relaxed);
+        };
+        audio_thread = std::jthread([&, audio_context] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            audio_started = clock_now();
+            audio_ok = media::render_audio(plan, audio_path, audio_context, audio_error);
+            audio_finished = clock_now();
+        });
+    }
+
     const bool rendered = stage::render_sequence(
         plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
         [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
             const std::vector<std::uint8_t>& pixels, std::string& frame_error) {
             if (context.cancel_requested()) {
+                audio_cancel.store(true, std::memory_order_relaxed);
                 frame_error = "已取消";
                 return false;
             }
@@ -209,11 +260,32 @@ bool export_native_segmented(const job::Plan& plan, const std::filesystem::path&
                 return false;
             }
             if (index - base + 1 == segment_frames || index + 1 == total) {
-                if (!encoder->finish(frame_error)) {
+                // 上一段的 Finalize 在后台跑，下一段立刻开始编码；只保留一个
+                // 未完成的 Finalize，避免多段编码器同时占用硬件编码器与内存。
+                if (!wait_for_finalize(frame_error)) {
                     return false;
                 }
-                segments.push_back(current_path);
-                encoder.reset();
+                if (async_finalize) {
+                    auto finished = std::move(encoder);
+                    segments.push_back(current_path);
+                    finalize_ok = true;
+                    finalize_error.clear();
+                    finalize_future =
+                        std::async(std::launch::async, [encoder = std::move(finished), &finalize_ok,
+                                                        &finalize_error]() mutable {
+                            const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                            finalize_ok = encoder->finish(finalize_error);
+                            if (SUCCEEDED(com)) {
+                                CoUninitialize();
+                            }
+                        });
+                } else {
+                    if (!encoder->finish(frame_error)) {
+                        return false;
+                    }
+                    segments.push_back(current_path);
+                    encoder.reset();
+                }
                 if (index + 1 < total && !start_segment(index + 1)) {
                     frame_error = error;
                     return false;
@@ -223,18 +295,26 @@ bool export_native_segmented(const job::Plan& plan, const std::filesystem::path&
         },
         error);
     if (!rendered) {
+        audio_cancel.store(true, std::memory_order_relaxed);
+    }
+    if (audio_thread.joinable()) {
+        audio_thread.join();
+    }
+    if (!wait_for_finalize(error)) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    if (!rendered) {
+        std::filesystem::remove_all(dir, code);
+        return false;
+    }
+    if (has_audio && !audio_ok) {
+        error = audio_error;
         std::filesystem::remove_all(dir, code);
         return false;
     }
     const auto render_finished = clock_now();
-
-    const auto audio_started = clock_now();
-    const auto audio_path = dir / "audio.wav";
-    if (has_audio && !media::render_audio(plan, audio_path, context, error)) {
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    const auto audio_finished = clock_now();
+    const auto concat_started = clock_now();
 
     if (!concat_segments(segments, output, audio_path, has_audio, context, error)) {
         std::filesystem::remove_all(dir, code);
@@ -251,7 +331,7 @@ bool export_native_segmented(const job::Plan& plan, const std::filesystem::path&
         message << "profile: export total=" << milliseconds(export_started, finished)
                 << "ms render=" << milliseconds(render_started, render_finished)
                 << "ms audio=" << milliseconds(audio_started, audio_finished)
-                << "ms concat=" << milliseconds(audio_finished, finished)
+                << "ms concat=" << milliseconds(concat_started, finished)
                 << "ms segments=" << segments.size();
         log::info(message.str());
     }
