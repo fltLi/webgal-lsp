@@ -62,6 +62,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # Windows 上 Ink 默认开启 video-export, 会在 build.rs 里编译并静态链接 C++ 渲染器,
+      # 因此需要 vcpkg 依赖缓存 (Vulkan SDK 与 MSVC 在 windows-latest 镜像里已有)。
+      - name: Cache vcpkg packages
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-release-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-release-${{ runner.os }}-
+
+      - name: Verify native toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not $env:VULKAN_SDK -or -not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) {
+            throw "Vulkan SDK 未安装或 VULKAN_SDK 未设置"
+          }
+          if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+            throw "缺少 CMake"
+          }
+          if (-not $env:VCPKG_INSTALLATION_ROOT -and
+              -not (Get-Command vcpkg -ErrorAction SilentlyContinue)) {
+            throw "找不到 vcpkg（VCPKG_INSTALLATION_ROOT 或 PATH）"
+          }
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -184,7 +210,7 @@ jobs:
   # 发版时把所有平台的产物一次性挂到 Release 上; 手动触发只留 artifact
   publish:
     name: Publish release assets
-    needs: build
+    needs: [build]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 10

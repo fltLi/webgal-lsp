@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "webgal-native",
+  "version-string": "0.1.0",
+  "description": "WebGAL native workspace (CMake) manifest",
+  "dependencies": [
+    "catch2",
+    "stb",
+    "drlibs",
+    "nlohmann-json"
+  ]
+}

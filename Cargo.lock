@@ -2142,6 +2142,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-range"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21dec9db110f5f872ed9699c3ecf50cf16f423502706ba5c72462e28d3157573"
+
+[[package]]
 name = "http-range-header"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4910,6 +4916,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "http-range",
  "jni",
  "libc",
  "log",
@@ -6179,6 +6186,7 @@ dependencies = [
  "webgal-language-server",
  "webgal-language-service",
  "webgal-snapshot",
+ "webgal-video-export",
  "ws_stream_tungstenite",
  "zip",
 ]
@@ -6298,6 +6306,24 @@ dependencies = [
  "webgal-language-core",
  "zip",
 ]
+
+[[package]]
+name = "webgal-video-export"
+version = "0.1.0"
+dependencies = [
+ "expression",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "walkdir",
+ "webgal-language-core",
+ "webgal-video-render-sys",
+]
+
+[[package]]
+name = "webgal-video-render-sys"
+version = "0.1.0"
 
 [[package]]
 name = "webkit2gtk"

@@ -5,10 +5,10 @@
   "scripts": {
     "install:all": "cd editor && bun install && cd ../packages/webgal-novel-preprocess && bun install && cd ../webgal-vscode-extension && bun install",
     "build:wasm": "bun run --cwd packages/webgal-parse-playground build:wasm",
-    "format": "bun run --cwd editor format && bun run --cwd packages/webgal-parse-playground format && bun run --cwd packages/webgal-vscode-extension format && bun run --cwd packages/webgal-novel-preprocess format",
-    "format-check": "bun run --cwd editor format-check && bun run --cwd packages/webgal-parse-playground format-check && bun run --cwd packages/webgal-vscode-extension format-check && bun run --cwd packages/webgal-novel-preprocess format-check",
+    "format": "bun run --cwd editor format && bun run --cwd packages/webgal-parse-playground format && bun run --cwd packages/webgal-vscode-extension format && bun run --cwd packages/webgal-novel-preprocess format && python -m black scripts crates/webgal-language-service/scripts",
+    "format-check": "bun run --cwd editor format-check && bun run --cwd packages/webgal-parse-playground format-check && bun run --cwd packages/webgal-vscode-extension format-check && bun run --cwd packages/webgal-novel-preprocess format-check && python -m black --check --diff scripts crates/webgal-language-service/scripts",
     "lint": "bun run --cwd editor lint && bun run --cwd packages/webgal-parse-playground lint && bun run --cwd packages/webgal-vscode-extension lint && bun run --cwd packages/webgal-novel-preprocess lint",
-    "type-check": "bun run --cwd editor type-check && bun run --cwd packages/webgal-parse-playground type-check && bun run --cwd packages/webgal-vscode-extension type-check && bun run --cwd packages/webgal-novel-preprocess type-check",
+    "type-check": "bun run --cwd editor type-check && bun run --cwd packages/webgal-parse-playground type-check && bun run --cwd packages/webgal-vscode-extension type-check && bun run --cwd packages/webgal-novel-preprocess type-check && python -m pyright",
     "test": "bun run --cwd editor test && bun run --cwd packages/webgal-novel-preprocess test",
     "check": "bun run build:wasm && bun run format-check && bun run lint && bun run type-check && bun run test"
   }

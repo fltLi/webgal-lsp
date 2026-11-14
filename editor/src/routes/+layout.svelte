@@ -23,6 +23,7 @@
   import { openDevtools } from '../commands/devtools';
   import { startExternalDropWatcher } from '../dnd/external-drop.svelte';
   import { armWindowRevealFailsafe } from '../lib/boot';
+  import { installFullscreenCorrection } from '../lib/fullscreen';
   import { applyTheme, resolveTheme } from '../lib/theme';
   import { lspClient } from '../lsp/client';
   import { setMonacoTheme, setupMonaco } from '../lsp/monaco';
@@ -124,6 +125,9 @@
       requestClose();
     });
 
+    // 预览 iframe / 资源视频 / 成片播放器的浏览器全屏共用这一套窗口补正。
+    const stopFullscreenCorrection = installFullscreenCorrection();
+
     /*
      * F12 打开开发者工具 (**只有调试构建**)。
      *
@@ -189,6 +193,7 @@
       window.removeEventListener('unhandledrejection', onUnhandledRejection);
       stopExternalDrop?.();
       stopSessionTracking();
+      stopFullscreenCorrection();
       void unlisten.then((off) => off());
     };
   });

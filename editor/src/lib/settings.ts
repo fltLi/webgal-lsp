@@ -44,6 +44,27 @@ export interface EngineEntry {
   path: string;
 }
 
+/** 视频导出对话框上次使用的参数; 下次打开时恢复。 */
+export interface VideoExportPreferences {
+  resolution: string;
+  fps: string;
+  bitrate: string;
+  encoder: string;
+  /** 导出内容: 视频+音频 / 仅视频 / 仅音频。 */
+  content: 'video-audio' | 'video' | 'audio';
+  /** 用户设置的背景音乐音量（0–100），对应 WebGAL bgmVolume。 */
+  bgmVolume: string;
+  /** 用户设置的语音音量（0–100），对应 WebGAL vocalVolume。 */
+  vocalVolume: string;
+  fontScale: string;
+  autoSpeed: string;
+  textSpeed: string;
+  figureSide: string;
+  enableFilters: boolean;
+  includeStage: boolean;
+  includeUi: boolean;
+}
+
 export interface Settings {
   theme: ThemePreference;
   autoSave: boolean;
@@ -70,6 +91,8 @@ export interface Settings {
   diagnosticsView: DiagnosticsView;
   /** Git 差异选项卡内联或并排显示 */
   gitDiffView: GitDiffView;
+  /** 视频导出的上次参数。 */
+  videoExport: VideoExportPreferences;
 }
 
 /** v0.5.1 及以前的设置形状, 只用于读取老数据。 */
@@ -96,6 +119,23 @@ export const defaultSettings: Settings = {
   editorMinimap: false,
   diagnosticsView: 'dock',
   gitDiffView: 'sideBySide',
+  videoExport: {
+    resolution: '1080',
+    fps: '30',
+    bitrate: '8000',
+    encoder: 'auto',
+    content: 'video-audio',
+    bgmVolume: '25',
+    vocalVolume: '100',
+    // 导出正文默认偏大：720p 下按模板原尺寸会显得偏小。
+    fontScale: '1.15',
+    autoSpeed: '12',
+    textSpeed: '24',
+    figureSide: 'legacy',
+    enableFilters: true,
+    includeStage: true,
+    includeUi: true,
+  },
 };
 
 export function loadSettings(): Settings {
@@ -135,6 +175,53 @@ export function normalizeSettings(raw: Partial<Settings> & LegacySettings): Sett
     engines: engines.length === 0 && legacyPath ? [legacyEngineEntry(legacyPath)] : engines,
     recentProjects: normalizeRecentProjects(raw.recentProjects),
     templates: Array.isArray(raw.templates) ? raw.templates.filter(isTemplateEntry) : [],
+    videoExport: normalizeVideoExport(raw.videoExport),
+  };
+}
+
+/** 老数据或损坏数据回落到默认值; 只接受对话框真正提供的选项。 */
+function normalizeVideoExport(raw: unknown): VideoExportPreferences {
+  const defaults = defaultSettings.videoExport;
+  if (!raw || typeof raw !== 'object') return { ...defaults };
+  const value = raw as Partial<VideoExportPreferences>;
+  const text = (candidate: unknown, fallback: string, allowed: readonly string[]): string =>
+    typeof candidate === 'string' && allowed.includes(candidate) ? candidate : fallback;
+  const flag = (candidate: unknown, fallback: boolean): boolean =>
+    typeof candidate === 'boolean' ? candidate : fallback;
+  const content =
+    value.content === 'video' || value.content === 'audio' || value.content === 'video-audio'
+      ? value.content
+      : defaults.content;
+  return {
+    resolution: text(value.resolution, defaults.resolution, ['480', '720', '1080', '1440', '2160']),
+    fps:
+      typeof value.fps === 'string' && /^\d+$/.test(value.fps) && Number(value.fps) >= 1 && Number(value.fps) <= 120
+        ? value.fps
+        : defaults.fps,
+    bitrate: text(value.bitrate, defaults.bitrate, ['4000', '8000', '16000']),
+    encoder: text(value.encoder, defaults.encoder, ['auto', 'mf', 'ffmpeg']),
+    content,
+    bgmVolume:
+      typeof value.bgmVolume === 'string' && /^\d+$/.test(value.bgmVolume) && Number(value.bgmVolume) <= 100
+        ? value.bgmVolume
+        : defaults.bgmVolume,
+    vocalVolume:
+      typeof value.vocalVolume === 'string' && /^\d+$/.test(value.vocalVolume) && Number(value.vocalVolume) <= 100
+        ? value.vocalVolume
+        : defaults.vocalVolume,
+    fontScale: text(value.fontScale, defaults.fontScale, ['0.85', '1', '1.15']),
+    autoSpeed:
+      typeof value.autoSpeed === 'string' && /^\d+$/.test(value.autoSpeed) && Number(value.autoSpeed) <= 100
+        ? value.autoSpeed
+        : defaults.autoSpeed,
+    textSpeed:
+      typeof value.textSpeed === 'string' && /^\d+$/.test(value.textSpeed) && Number(value.textSpeed) <= 100
+        ? value.textSpeed
+        : defaults.textSpeed,
+    figureSide: text(value.figureSide, defaults.figureSide, ['auto', 'legacy', 'modern']),
+    enableFilters: flag(value.enableFilters, defaults.enableFilters),
+    includeStage: flag(value.includeStage, defaults.includeStage),
+    includeUi: flag(value.includeUi, defaults.includeUi),
   };
 }
 

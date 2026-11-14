@@ -55,7 +55,7 @@ export interface LspDiagnostic {
 
 export type LspStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
-export type SettingsCategory = 'editor' | 'engine' | 'template' | 'about';
+export type SettingsCategory = 'editor' | 'render' | 'engine' | 'template' | 'about';
 
 /** 一次"跳到某处"的请求 (诊断列表点击行发起)。 */
 export interface RevealRequest {

@@ -13,11 +13,16 @@ repository.workspace = true
 name = "webgal_ink_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["video-export"]
+video-export = ["dep:webgal-video-export"] # 视频导出 (仅 Windows)
+
 [dependencies]
 webgal-language-core.workspace = true
 webgal-language-server.workspace = true
 webgal-language-service.workspace = true
 webgal-snapshot.workspace = true
+webgal-video-export = { workspace = true, optional = true }
 
 thiserror.workspace = true
 
@@ -35,7 +40,7 @@ git2 = { version = "0.20", default-features = false, features = [
     "vendored-libgit2",
 ] }
 
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-dialog = "2"
@@ -64,6 +69,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "query",
     "rustls",
+    "stream",
     "rustls-native-certs",
 ] }
 

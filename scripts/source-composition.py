@@ -18,13 +18,14 @@
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 # --------------------------------------------------------------------------- #
 # 配置常量
@@ -40,6 +41,7 @@ EXCLUDE_DIRS = {
     "dist",
     "pkg",
     "__pycache__",
+    "build",
 }
 
 EXCLUDE_FILES = {
@@ -54,6 +56,9 @@ EXCLUDE_FILES = {
 # 只分析这些语言; 其它扩展名一律忽略.
 LANGUAGE_ORDER = (
     "Rust",
+    "C++",
+    "CMake",
+    "GLSL",
     "TypeScript",
     "Svelte",
     "CSS",
@@ -65,6 +70,12 @@ LANGUAGE_ORDER = (
 
 EXT_TO_LANGUAGE: Dict[str, str] = {
     ".rs": "Rust",
+    ".cpp": "C++",
+    ".hpp": "C++",
+    ".h": "C++",
+    ".cmake": "CMake",
+    ".vert": "GLSL",
+    ".frag": "GLSL",
     ".ts": "TypeScript",
     ".tsx": "TypeScript",
     ".mts": "TypeScript",
@@ -78,6 +89,11 @@ EXT_TO_LANGUAGE: Dict[str, str] = {
     ".cjs": "JavaScript",
     ".jsx": "JavaScript",
     ".html": "HTML",
+}
+
+# 按文件名 (而非扩展名) 识别的语言; CMakeLists.txt 的后缀是 .txt, 扩展名查表查不到.
+NAMED_FILES_TO_LANGUAGE: Dict[str, str] = {
+    "cmakelists.txt": "CMake",
 }
 
 COUNTED_EXTS = set(EXT_TO_LANGUAGE)
@@ -115,6 +131,7 @@ MODULE_GROUPS: List[Tuple[str, str]] = [
     ("packages/webgal-novel-preprocess", "packages/webgal-novel-preprocess"),
     ("packages/webgal-parse-playground", "packages/webgal-parse-playground"),
     ("packages/webgal-vscode-extension", "packages/webgal-vscode-extension"),
+    ("native/webgal-video-render", "native/webgal-video-render"),
 ]
 
 MODULE_OTHER = "其它"
@@ -126,6 +143,9 @@ COLOR_AI = "#3d5a98"
 # GitHub Linguist 语言配色 (github/linguist languages.yml).
 LANGUAGE_COLORS = {
     "Rust": "#dea584",
+    "C++": "#f34b7d",
+    "CMake": "#da3434",
+    "GLSL": "#5686a5",
     "TypeScript": "#3178c6",
     "Svelte": "#ff3e00",
     "CSS": "#663399",
@@ -322,6 +342,9 @@ def module_of(rel_path: str) -> str:
 
 
 def language_of(path: Path) -> Optional[str]:
+    named = NAMED_FILES_TO_LANGUAGE.get(path.name.lower())
+    if named is not None:
+        return named
     ext = path.suffix.lower()
     return EXT_TO_LANGUAGE.get(ext)
 
@@ -518,6 +541,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     --line: #d9d2c5;
     --card: #fff;
     --accent: #3d5a98;
+    --code-bg: #efeae2;
+    --pie-ph-a: #e7e1d6;
+    --pie-ph-b: #f3efe7;
+    --extra-swatch: #c5c0b6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171a21;
+      --ink: #e4e2dc;
+      --muted: #98a0ac;
+      --line: #2e3541;
+      --card: #1f2530;
+      --accent: #6b8ec9;
+      --code-bg: #283040;
+      --pie-ph-a: #262c37;
+      --pie-ph-b: #2e3541;
+      --extra-swatch: #4a525e;
+    }
+    body { color-scheme: dark; }
   }
   * { box-sizing: border-box; }
   body {
@@ -596,12 +638,45 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     height: 168px;
     border-radius: 50%;
     flex-shrink: 0;
-    background: repeating-conic-gradient(#e7e1d6 0 12deg, #f3efe7 0 24deg);
+    position: relative;
+    background: repeating-conic-gradient(
+      var(--pie-ph-a) 0 12deg,
+      var(--pie-ph-b) 0 24deg
+    );
   }
   .pie.sm {
     width: 108px;
     height: 108px;
   }
+  /* 环形化: 中间盖一块底色圆, 中心显示总量 */
+  .pie::after {
+    content: "";
+    position: absolute;
+    inset: 21%;
+    border-radius: 50%;
+    background: var(--card);
+  }
+  .pie .center {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+  }
+  .pie .center .num {
+    font-size: 14px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .pie .center .unit {
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .pie.sm .center .num { font-size: 12px; }
   .legend {
     list-style: none;
     margin: 0;
@@ -613,10 +688,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 4px 0;
+    margin: 3px -6px;
     font-size: 13px;
     line-height: 1.45;
+    border-radius: 6px;
+    padding: 1px 6px;
   }
+  .legend li:hover {
+    background: rgba(127, 127, 127, 0.14);
+  }
+  .legend li.muted:hover { background: none; }
   .legend .name {
     flex: 1;
     min-width: 0;
@@ -658,6 +739,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     gap: 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .module-card:hover {
+    border-color: var(--muted);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
   }
   .module-card h3 {
     margin: 0;
@@ -666,6 +752,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     line-height: 1.4;
     word-break: break-all;
   }
+  .module-card:hover h3 { color: var(--accent); }
   .module-card .row {
     display: flex;
     gap: 16px;
@@ -693,7 +780,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   code {
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-size: 12px;
-    background: #efeae2;
+    background: var(--code-bg);
     padding: 1px 5px;
     border-radius: 4px;
   }
@@ -709,8 +796,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <div class="toolbar">
     <div class="toggle" role="group" aria-label="统计口径">
-      <button type="button" id="mode-lines" class="active">按行数</button>
-      <button type="button" id="mode-files">按文件</button>
+      <button type="button" id="mode-lines" class="active" aria-pressed="true">按行数</button>
+      <button type="button" id="mode-files" aria-pressed="false">按文件</button>
     </div>
     <div class="stats" id="stats-label"></div>
   </div>
@@ -719,7 +806,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <h2>语言分布</h2>
     <p class="section-hint">总览</p>
     <div class="overview">
-      <div class="pie" id="pie-lang-overview" aria-label="语言分布总览"></div>
+      <div class="pie" id="pie-lang-overview" aria-label="语言分布总览"><span class="center"><span class="num"></span><span class="unit"></span></span></div>
       <ul class="legend" id="legend-lang-overview"></ul>
     </div>
     <p class="subhead">按模块</p>
@@ -730,16 +817,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <h2>人工 / AI 画像</h2>
     <p class="section-hint">总览 · 按行归属；文件级见各卡片脚注</p>
     <div class="overview">
-      <div class="pie" id="pie-src-overview" aria-label="人工与 AI 总览"></div>
+      <div class="pie" id="pie-src-overview" aria-label="人工与 AI 总览"><span class="center"><span class="num"></span><span class="unit"></span></span></div>
       <ul class="legend" id="legend-src-overview"></ul>
     </div>
     <p class="subhead">按模块</p>
     <div class="module-grid" id="grid-src"></div>
   </section>
 
-  <footer class="page-footer">
+    <footer class="page-footer">
     统计口径：排除 node_modules / target / dist / pkg / .svelte-kit / .git / 锁文件；
-    仅统计 Rust / TypeScript / Svelte / CSS / Python / Markdown / JavaScript / HTML；
+    仅统计 Rust / C++ (hpp·cpp·h) / CMake / GLSL / TypeScript / Svelte / CSS / Python / Markdown / JavaScript / HTML；
     行数为非空行。AI 标识支持文件级与模块级（<code>mod</code> 块）；「混合」在按行数时计入 AI 侧。
     由 <code>scripts/source-composition.py</code> 生成。
   </footer>
@@ -786,19 +873,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return "conic-gradient(" + stops.join(", ") + ")";
   }
 
-  function setPie(el, entries) {
+  function setPie(el, entries, total) {
     if (!el) return;
-    var bg = conic(entries);
-    if (!bg) {
-      el.style.background = "";
-      return;
+    el.style.background = conic(entries) || "";
+    var center = el.querySelector(".center");
+    if (center) {
+      center.querySelector(".num").textContent = fmt(total || 0);
+      center.querySelector(".unit").textContent = unit();
     }
-    el.style.background = bg;
   }
 
   /** 统一图例: 色块 + 名称 + 「pct · 数量单位」 */
   function legendHtml(names, colors, bucket, total, maxItems) {
     var max = maxItems || names.length;
+    // 只剩一项时直接展开成正常条目, 折叠成「其它 1 项」没有意义.
+    if (names.length === max + 1) max = names.length;
     var shown = names.slice(0, max);
     var hidden = 0;
     var hiddenVal = 0;
@@ -824,7 +913,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
     if (hidden > 0) {
       items.push(
-        '<li><span class="swatch" style="background:#c5c0b6"></span>' +
+        '<li><span class="swatch" style="background:var(--extra-swatch)"></span>' +
           '<span class="name">其它 ' + hidden + " 项</span>" +
           '<span class="val">' + fmtPct(pct(hiddenVal, total)) + " · " + fmt(hiddenVal) + " " + unit() + "</span>" +
         "</li>"
@@ -873,7 +962,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       '<article class="module-card">' +
         "<h3>" + moduleName + "</h3>" +
         '<div class="row">' +
-          '<div class="pie sm" id="' + pieId + '"></div>' +
+          '<div class="pie sm" id="' + pieId + '"><span class="center"><span class="num"></span><span class="unit"></span></span></div>' +
           '<ul class="legend">' + legendHtml(legendNames, colors, bucket, total, 5) + "</ul>" +
         "</div>" +
         '<div class="footer">' +
@@ -889,7 +978,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     var names = activeNames(DATA.languageOrder, overview);
     var entries = entriesFor(names, DATA.languageColors, overview);
     var total = sumEntries(entries);
-    setPie(document.getElementById("pie-lang-overview"), entries);
+    setPie(document.getElementById("pie-lang-overview"), entries, total);
     document.getElementById("legend-lang-overview").innerHTML =
       legendHtml(names, DATA.languageColors, overview, total, names.length);
 
@@ -917,7 +1006,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     DATA.modules.forEach(function (mod, idx) {
       var mNames = activeNames(DATA.languageOrder, mod.languages);
-      setPie(document.getElementById("pie-lang-" + idx), entriesFor(mNames, DATA.languageColors, mod.languages));
+      var mEntries = entriesFor(mNames, DATA.languageColors, mod.languages);
+      setPie(
+        document.getElementById("pie-lang-" + idx),
+        mEntries,
+        sumEntries(mEntries)
+      );
     });
   }
 
@@ -926,7 +1020,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     var names = activeNames(DATA.sourceOrder, overview);
     var entries = entriesFor(names, DATA.sourceColors, overview);
     var total = sumEntries(entries);
-    setPie(document.getElementById("pie-src-overview"), entries);
+    setPie(document.getElementById("pie-src-overview"), entries, total);
     document.getElementById("legend-src-overview").innerHTML =
       legendHtml(names, DATA.sourceColors, overview, total, names.length);
 
@@ -949,7 +1043,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     DATA.modules.forEach(function (mod, idx) {
       var mNames = activeNames(DATA.sourceOrder, mod.sources);
-      setPie(document.getElementById("pie-src-" + idx), entriesFor(mNames, DATA.sourceColors, mod.sources));
+      var mEntries = entriesFor(mNames, DATA.sourceColors, mod.sources);
+      setPie(
+        document.getElementById("pie-src-" + idx),
+        mEntries,
+        sumEntries(mEntries)
+      );
     });
   }
 
@@ -966,6 +1065,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     mode = next;
     document.getElementById("mode-lines").classList.toggle("active", mode === "lines");
     document.getElementById("mode-files").classList.toggle("active", mode === "files");
+    document.getElementById("mode-lines").setAttribute("aria-pressed", String(mode === "lines"));
+    document.getElementById("mode-files").setAttribute("aria-pressed", String(mode === "files"));
     render();
   }
 
@@ -990,6 +1091,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def main() -> None:
+    # Windows 控制台默认 GBK, 进度里的 emoji 与中文路径打不出来会直接 UnicodeEncodeError.
+    # sys.stdout 的标注是 TextIOWrapper[Unknown], 严格模式下直接访问成员会被判为未知类型.
+    stdout = cast("io.TextIOWrapper", sys.stdout)
+    if (stdout.encoding or "").lower() != "utf-8":
+        stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="统计本仓库源码构成 (语言 / 人工-AI / 模块饼图), 生成 HTML 画像."
     )
