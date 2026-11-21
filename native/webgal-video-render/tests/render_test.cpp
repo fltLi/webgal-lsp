@@ -1220,3 +1220,191 @@ TEST_CASE("pixelate intro covers the stage and the textbox") {
     REQUIRE(visible.status == RenderStatus::Ok);
     require_channel_range(visible.frame, width / 2, height / 2, 180, 220);
 }
+
+TEST_CASE("intro paints the background color and covers the stage with the background image") {
+    constexpr std::uint32_t width = 320;
+    constexpr std::uint32_t height = 180;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    // 舞台是 16:9, 背景图是正方形: CSS 的 `cover` 会把它放大到盖住整幅画面 (溢出部分裁掉),
+    // 所以连四角都必须是图里的绿色; 换成 `contain` 就会在两侧露出背景色 (蓝)。
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "intro_bg.png", 40, 40,
+                            Rgba{0, 255, 0, 255}));
+    plan.assets["intro_bg"] = "background/intro_bg.png";
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.background_color = {0.0F, 0.0F, 1.0F, 1.0F};
+    intro.background = std::string("intro_bg");
+    plan.intros.push_back(std::move(intro));
+
+    const auto outcome = render_one(plan, 0, 0);
+    if (outcome.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << outcome.error);
+    }
+    REQUIRE(outcome.status == RenderStatus::Ok);
+    require_pixel(outcome.frame, width / 2, height / 2, Rgba{0, 255, 0, 255});
+    require_pixel(outcome.frame, 2, 2, Rgba{0, 255, 0, 255});
+    require_pixel(outcome.frame, width - 3, height - 3, Rgba{0, 255, 0, 255});
+
+    // 去掉背景图后只剩背景色 (蓝) —— 证明绿色来自图, 且背景色确实垫在图的下面。
+    auto colored_only = plan;
+    colored_only.intros[0].background.reset();
+    const auto colored = render_one(colored_only, 0, 0);
+    REQUIRE(colored.status == RenderStatus::Ok);
+    require_pixel(colored.frame, width / 2, height / 2, Rgba{0, 0, 255, 255});
+}
+
+TEST_CASE("intro text uses the configured font color") {
+    constexpr std::uint32_t width = 640;
+    constexpr std::uint32_t height = 360;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.lines = {std::string("Abc Efg 123")};
+    intro.font_size = "medium";
+    intro.animation = "fadeIn";
+    // 引擎默认是白字黑底; 这里显式改成红字, 用来钉住 fontColor 进了计划而且画了出来。
+    intro.font_color = {1.0F, 0.0F, 0.0F, 1.0F};
+    plan.intros.push_back(std::move(intro));
+
+    const auto outcome = render_one(plan, 2'000'000, 0);
+    if (outcome.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << outcome.error);
+    }
+    if (outcome.status == RenderStatus::Failed && outcome.error.find("字体") != std::string::npos) {
+        SKIP("本机没有可用字体, 无法验证文字: " << outcome.error);
+    }
+    REQUIRE(outcome.status == RenderStatus::Ok);
+    std::size_t red = 0;
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const auto pixel = outcome.frame.at(x, y);
+            if (pixel[0] > 180 && pixel[1] < 60 && pixel[2] < 60) {
+                ++red;
+            }
+        }
+    }
+    REQUIRE(red > 10);
+    // 文字以外仍是纯黑底: 红色只该出现在字形上。
+    require_pixel(outcome.frame, width - 4, height - 4, Rgba{0, 0, 0, 255});
+}
+
+TEST_CASE("intro fadeIn really fades the text") {
+    // 引擎的 fadeIn 是 1.5s 淡入。模拟粗体时同一个字形会叠 9 遍, 如果每遍都按目标 alpha
+    // 混合, 0.4 会被叠到接近不透明 —— 淡入看起来就是"瞬间出现"。这里用 0.6s (进度 0.4)
+    // 的峰值亮度钉住它: 应该接近 0.4 * 255, 而不是 255。
+    constexpr std::uint32_t width = 640;
+    constexpr std::uint32_t height = 360;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.lines = {std::string("Abc Efg")};
+    intro.font_size = "medium";
+    intro.animation = "fadeIn";
+    plan.intros.push_back(std::move(intro));
+
+    const auto early = render_one(plan, 600'000, 0);
+    if (early.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << early.error);
+    }
+    if (early.status == RenderStatus::Failed && early.error.find("字体") != std::string::npos) {
+        SKIP("本机没有可用字体, 无法验证文字: " << early.error);
+    }
+    REQUIRE(early.status == RenderStatus::Ok);
+
+    const auto brightest = [](const Frame& frame) {
+        int value = 0;
+        for (std::uint32_t y = 0; y < frame.height; ++y) {
+            for (std::uint32_t x = 0; x < frame.width; ++x) {
+                value = std::max(value, static_cast<int>(frame.at(x, y)[0]));
+            }
+        }
+        return value;
+    };
+    const int dim = brightest(early.frame);
+    INFO("0.6s 时的峰值亮度: " << dim);
+    // 0.4 进度 → 约 102。留足抗锯齿与色域转换的余量, 但不能接近 255。
+    REQUIRE(dim > 60);
+    REQUIRE(dim < 160);
+
+    // 2s 时动画已经结束, 文字应当处于不透明状态。
+    const auto finished = render_one(plan, 2'000'000, 0);
+    REQUIRE(finished.status == RenderStatus::Ok);
+    REQUIRE(brightest(finished.frame) > 200);
+}
+
+TEST_CASE("pixelate intro paints the configured background color") {
+    // 像素化 intro 画在场景 pass 里 (见上一条用例), 背景色走的是另一段代码, 单独钉一下。
+    constexpr std::uint32_t width = 320;
+    constexpr std::uint32_t height = 180;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.animation = "pixelateEffect";
+    intro.background_color = {0.0F, 0.0F, 1.0F, 1.0F};
+    plan.intros.push_back(std::move(intro));
+
+    const auto outcome = render_one(plan, 500'000, 1);
+    if (outcome.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << outcome.error);
+    }
+    REQUIRE(outcome.status == RenderStatus::Ok);
+    require_pixel(outcome.frame, width / 2, height / 2, Rgba{0, 0, 255, 255});
+}
+
+TEST_CASE("intro lines stagger by the configured delay") {
+    // 引擎给每行设 `animationDelay = delayTime * 行号`: 同一时刻, 间隔越大后面的行越晚亮起来。
+    // 用 fadeIn 在第二行只跑到 0.6 的时刻取一帧, 与"没有间隔"的同一帧比较亮像素数量。
+    constexpr std::uint32_t width = 640;
+    constexpr std::uint32_t height = 360;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.lines = {std::string("Abc Efg"), std::string("Abc Efg")};
+    intro.font_size = "medium";
+    intro.animation = "fadeIn";
+    plan.intros.push_back(std::move(intro));
+
+    const auto immediate = render_one(plan, 1'600'000, 0);
+    if (immediate.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << immediate.error);
+    }
+    if (immediate.status == RenderStatus::Failed &&
+        immediate.error.find("字体") != std::string::npos) {
+        SKIP("本机没有可用字体, 无法验证文字: " << immediate.error);
+    }
+    REQUIRE(immediate.status == RenderStatus::Ok);
+
+    auto staggered = plan;
+    staggered.intros[0].delay_ms = 1'000;
+    const auto delayed = render_one(staggered, 1'600'000, 0);
+    REQUIRE(delayed.status == RenderStatus::Ok);
+
+    const auto bright_pixels = [](const Frame& frame) {
+        std::size_t count = 0;
+        for (std::uint32_t y = 0; y < frame.height; ++y) {
+            for (std::uint32_t x = 0; x < frame.width; ++x) {
+                if (frame.at(x, y)[0] > 200) {
+                    ++count;
+                }
+            }
+        }
+        return count;
+    };
+    const std::size_t both = bright_pixels(immediate.frame);
+    const std::size_t first_only = bright_pixels(delayed.frame);
+    INFO("两行都完成: " << both << " 个亮像素; 第二行还差 0.9s: " << first_only);
+    REQUIRE(both > 0);
+    // 第二行 1.6s 时进度 0.6, 峰值亮度只有 153, 不该算进"亮像素"; 第一行仍然是满亮度。
+    REQUIRE(first_only > 0);
+    REQUIRE(first_only < both * 3 / 4);
+}

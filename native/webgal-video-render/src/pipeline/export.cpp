@@ -8,21 +8,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <objbase.h>
-
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <future>
-#include <memory>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "common/log.hpp"
@@ -39,304 +33,191 @@ std::wstring quote(const std::filesystem::path& path) {
     return L"\"" + path.wstring() + L"\"";
 }
 
-bool run_process(const std::wstring& command, const run::Context& context, std::string& error) {
-    std::wstring mutable_command = command;
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    if (CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-                       nullptr, nullptr, &startup, &process) == 0) {
-        error = "无法启动 ffmpeg";
-        return false;
-    }
-
-    bool cancelled = false;
-    for (;;) {
-        const DWORD wait = WaitForSingleObject(process.hProcess, 200);
-        if (wait == WAIT_OBJECT_0) {
-            break;
-        }
-        if (wait == WAIT_FAILED) {
-            error = "等待 ffmpeg 失败";
-            TerminateProcess(process.hProcess, 1);
-            WaitForSingleObject(process.hProcess, INFINITE);
-            break;
-        }
-        if (context.cancel_requested()) {
-            cancelled = true;
-            TerminateProcess(process.hProcess, 1);
-            WaitForSingleObject(process.hProcess, INFINITE);
-            break;
-        }
-    }
-
-    DWORD exit_code = 1;
-    GetExitCodeProcess(process.hProcess, &exit_code);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    if (cancelled) {
-        error = "已取消";
-        return false;
-    }
-    if (exit_code != 0) {
-        error = "ffmpeg 退出码: " + std::to_string(exit_code);
-        return false;
-    }
-    return true;
-}
-
-std::filesystem::path temp_frame_dir() {
+std::filesystem::path temp_work_dir() {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     return std::filesystem::temp_directory_path() /
            ("webgal-video-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(stamp) +
-            "-frames");
+            "-work");
 }
 
-std::filesystem::path temp_segment_dir() {
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    return std::filesystem::temp_directory_path() /
-           ("webgal-video-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(stamp) +
-            "-segments");
-}
-
-std::uint64_t frame_count_for(std::uint64_t start_us, std::uint64_t end_us, std::uint32_t fps_num,
-                              std::uint32_t fps_den) {
-    if (end_us <= start_us || fps_num == 0 || fps_den == 0) {
-        return 0;
+/// 读 ffmpeg 日志的末尾 (最多 1.5 KB), 拼进错误信息。
+std::string log_tail(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        return {};
     }
-    const std::uint64_t numerator = (end_us - start_us) * fps_num;
-    const std::uint64_t denominator = 1'000'000ULL * fps_den;
-    return (numerator + denominator - 1) / denominator;
+    stream.seekg(0, std::ios::end);
+    const auto end = static_cast<std::streamoff>(stream.tellg());
+    if (end <= 0) {
+        return {};
+    }
+    constexpr std::streamoff kTail = 1536;
+    const std::streamoff begin = end > kTail ? end - kTail : 0;
+    stream.seekg(begin, std::ios::beg);
+    std::string text(static_cast<std::size_t>(end - begin), '\0');
+    stream.read(text.data(), static_cast<std::streamsize>(text.size()));
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+        text.pop_back();
+    }
+    return text;
 }
 
-/// 把若干段 MP4 用 ffmpeg 无损拼接，并在有音频时一起封装。
-bool concat_segments(const std::vector<std::filesystem::path>& segments,
-                     const std::filesystem::path& output, const std::filesystem::path& audio,
-                     bool has_audio, const run::Context& context, std::string& error) {
-    if (segments.empty()) {
-        error = "没有可拼接的视频段";
-        return false;
+/// 把 ffmpeg 作为子进程启动, 渲染出的 BGRA 帧直接写进它的 stdin。
+///
+/// 旧做法是先把整片落成 PNG 序列再让 ffmpeg 读: 4K 长片要几十 GB 磁盘、多一次 PNG
+/// 编解码, 而且渲染结束后才开始编码。管道版让 ffmpeg 边收边编码, 峰值磁盘占用只剩
+/// 音频临时 WAV 与日志。
+class FfmpegPipe {
+  public:
+    FfmpegPipe() = default;
+    ~FfmpegPipe() {
+        close_stdin();
+        if (process_ != nullptr) {
+            TerminateProcess(process_, 1);
+            WaitForSingleObject(process_, INFINITE);
+            CloseHandle(process_);
+            process_ = nullptr;
+        }
+        if (thread_ != nullptr) {
+            CloseHandle(thread_);
+            thread_ = nullptr;
+        }
     }
-    if (!output.parent_path().empty()) {
-        std::error_code code;
-        std::filesystem::create_directories(output.parent_path(), code);
-        if (code) {
-            error = "无法创建输出目录: " + to_utf8(output.parent_path());
+
+    FfmpegPipe(const FfmpegPipe&) = delete;
+    FfmpegPipe& operator=(const FfmpegPipe&) = delete;
+
+    /// `command` 必须以 `... -i -` 从 stdin 读视频; stderr/stdout 写进 `log_path`。
+    bool start(const std::wstring& command, const std::filesystem::path& log_path,
+               std::string& error) {
+        SECURITY_ATTRIBUTES security{};
+        security.nLength = sizeof(security);
+        security.bInheritHandle = TRUE;
+        HANDLE read_end = nullptr;
+        HANDLE write_end = nullptr;
+        if (CreatePipe(&read_end, &write_end, &security, 0) == 0) {
+            error = "创建 ffmpeg 管道失败";
             return false;
         }
-    }
-    const auto list = segments.front().parent_path() / "concat.txt";
-    std::ofstream stream(list, std::ios::binary | std::ios::trunc);
-    if (!stream) {
-        error = "无法写入拼接列表: " + to_utf8(list);
-        return false;
-    }
-    for (const auto& segment : segments) {
-        std::string line = to_utf8(segment);
-        std::replace(line.begin(), line.end(), '\\', '/');
-        stream << "file '" << line << "'\n";
-    }
-    stream.close();
-    if (!stream) {
-        error = "写入拼接列表失败";
-        return false;
+        // 子进程只需要继承读端; 写端留在父进程 (并显式去掉继承标记)。
+        SetHandleInformation(write_end, HANDLE_FLAG_INHERIT, 0);
+        HANDLE log = CreateFileW(log_path.wstring().c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                                 &security, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (log == INVALID_HANDLE_VALUE) {
+            CloseHandle(read_end);
+            CloseHandle(write_end);
+            error = "无法创建 ffmpeg 日志: " + to_utf8(log_path);
+            return false;
+        }
+
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = read_end;
+        startup.hStdOutput = log;
+        startup.hStdError = log;
+        PROCESS_INFORMATION process{};
+        std::wstring mutable_command = command;
+        const BOOL created = CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE,
+                                            CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+        CloseHandle(read_end);
+        CloseHandle(log);
+        if (created == 0) {
+            CloseHandle(write_end);
+            error = "无法启动 ffmpeg";
+            return false;
+        }
+        stdin_ = write_end;
+        process_ = process.hProcess;
+        thread_ = process.hThread;
+        log_path_ = log_path;
+        return true;
     }
 
-    const std::wstring ffmpeg_path = context.ffmpeg.empty() ? L"ffmpeg" : quote(context.ffmpeg);
-    std::wstring command = ffmpeg_path + L" -y -f concat -safe 0 -i " + quote(list);
-    if (has_audio) {
-        command += L" -i " + quote(audio) + L" -c:a aac -b:a 192k";
+    bool write_frame(const std::vector<std::uint8_t>& pixels, std::string& error) {
+        if (stdin_ == nullptr) {
+            error = "ffmpeg 管道已关闭";
+            return false;
+        }
+        const char* data = reinterpret_cast<const char*>(pixels.data());
+        std::size_t remaining = pixels.size();
+        while (remaining > 0) {
+            const auto chunk = static_cast<DWORD>(std::min<std::size_t>(remaining, 1U << 20));
+            DWORD written = 0;
+            if (WriteFile(stdin_, data, chunk, &written, nullptr) == 0 || written == 0) {
+                error = "写入 ffmpeg 管道失败";
+                return false;
+            }
+            data += written;
+            remaining -= written;
+        }
+        return true;
     }
-    command += L" -c:v copy -shortest -movflags +faststart ";
-    if (!has_audio) {
-        command += L"-an ";
+
+    /// 关闭 stdin 并等 ffmpeg 收尾; 用户取消时直接终止进程。
+    ///
+    /// 返回 false 时 `error` 会带上退出码与日志末尾 (ffmpeg 的参数/输入错误都在 stderr)。
+    bool finish(const run::Context& context, bool& cancelled, std::string& error) {
+        close_stdin();
+        if (process_ == nullptr) {
+            return true;
+        }
+        for (;;) {
+            const DWORD wait = WaitForSingleObject(process_, 200);
+            if (wait == WAIT_OBJECT_0) {
+                break;
+            }
+            if (wait == WAIT_FAILED) {
+                error = "等待 ffmpeg 失败";
+                TerminateProcess(process_, 1);
+                WaitForSingleObject(process_, INFINITE);
+                break;
+            }
+            if (context.cancel_requested()) {
+                cancelled = true;
+                TerminateProcess(process_, 1);
+                WaitForSingleObject(process_, INFINITE);
+                break;
+            }
+        }
+        DWORD exit_code = 1;
+        GetExitCodeProcess(process_, &exit_code);
+        CloseHandle(process_);
+        process_ = nullptr;
+        if (thread_ != nullptr) {
+            CloseHandle(thread_);
+            thread_ = nullptr;
+        }
+        if (cancelled) {
+            error = "已取消";
+            return false;
+        }
+        if (exit_code != 0) {
+            const std::string tail = log_tail(log_path_);
+            error = "ffmpeg 退出码: " + std::to_string(exit_code);
+            if (!tail.empty()) {
+                error += "; " + tail;
+            }
+            return false;
+        }
+        return true;
     }
-    command += quote(output);
-    return run_process(command, context, error);
-}
+
+  private:
+    void close_stdin() {
+        if (stdin_ != nullptr) {
+            CloseHandle(stdin_);
+            stdin_ = nullptr;
+        }
+    }
+
+    HANDLE stdin_ = nullptr;
+    HANDLE process_ = nullptr;
+    HANDLE thread_ = nullptr;
+    std::filesystem::path log_path_;
+};
 
 } // namespace
-
-bool export_native_segmented(const job::Plan& plan, const std::filesystem::path& output,
-                             const run::Context& context, std::uint32_t bitrate,
-                             std::uint64_t segment_frames, bool has_audio, std::string& error) {
-    const auto dir = temp_segment_dir();
-    std::error_code code;
-    std::filesystem::create_directories(dir, code);
-    if (code) {
-        error = "无法创建临时分段目录: " + to_utf8(dir);
-        return false;
-    }
-
-    std::vector<std::filesystem::path> segments;
-    std::unique_ptr<media::MfEncoder> encoder;
-    std::future<void> finalize_future;
-    bool finalize_ok = true;
-    std::string finalize_error;
-    std::filesystem::path current_path;
-    std::uint64_t base = 0;
-    const auto wait_for_finalize = [&](std::string& target) {
-        if (!finalize_future.valid()) {
-            return true;
-        }
-        finalize_future.get();
-        if (!finalize_ok) {
-            target = finalize_error;
-            return false;
-        }
-        return true;
-    };
-    const auto start_segment = [&](std::uint64_t at) {
-        current_path = dir / ("segment_" + std::to_string(segments.size()) + ".mp4");
-        encoder = std::make_unique<media::MfEncoder>();
-        if (!encoder->init(current_path, plan.output_w, plan.output_h, plan.fps_num, plan.fps_den,
-                           bitrate, false, error)) {
-            return false;
-        }
-        base = at;
-        return true;
-    };
-    if (!start_segment(0)) {
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    context.report_encoder("Media Foundation（分段）");
-
-    const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
-    const auto clock_now = [] { return std::chrono::steady_clock::now(); };
-    const auto export_started = clock_now();
-    const auto render_started = clock_now();
-    // 长片段数多，Finalize 的串行时间才值得用后台线程换回来；短片保持同步，
-    // 避免两个硬件编码器会话互相抢资源。
-    const bool async_finalize =
-        frame_count_for(0, plan.duration_us, plan.fps_num, plan.fps_den) > 1800;
-
-    // 分段编码时音频只写临时 WAV，与 MF 编码器完全独立；提前到渲染线程旁边跑，
-    // 把约 0.5-0.8s 的混音时间藏进视频渲染。音频线程不调用用户回调，只保留内部
-    // 取消标志，避免 C ABI 的“回调都在调用线程执行”约定被打破。
-    const auto audio_path = dir / "audio.wav";
-    std::string audio_error;
-    bool audio_ok = true;
-    std::atomic<bool> audio_cancel{false};
-    auto audio_started = render_started;
-    auto audio_finished = render_started;
-    std::jthread audio_thread;
-    if (has_audio) {
-        run::Context audio_context = context;
-        audio_context.progress = {};
-        audio_context.preview = {};
-        audio_context.encoder = {};
-        audio_context.cancelled = [&audio_cancel] {
-            return audio_cancel.load(std::memory_order_relaxed);
-        };
-        audio_thread = std::jthread([&, audio_context] {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-            audio_started = clock_now();
-            audio_ok = media::render_audio(plan, audio_path, audio_context, audio_error);
-            audio_finished = clock_now();
-        });
-    }
-
-    const bool rendered = stage::render_sequence(
-        plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
-        [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
-            const std::vector<std::uint8_t>& pixels, std::string& frame_error) {
-            if (context.cancel_requested()) {
-                audio_cancel.store(true, std::memory_order_relaxed);
-                frame_error = "已取消";
-                return false;
-            }
-            if (index % 10 == 0 || index + 1 == total) {
-                context.report("render", index + 1, total,
-                               static_cast<double>(plan.fps_num) / plan.fps_den);
-            }
-            if (!encoder) {
-                if (!start_segment(index)) {
-                    frame_error = error;
-                    return false;
-                }
-            }
-            if (!encoder->write_video(index - base, pixels, frame_error)) {
-                return false;
-            }
-            if (index - base + 1 == segment_frames || index + 1 == total) {
-                // 上一段的 Finalize 在后台跑，下一段立刻开始编码；只保留一个
-                // 未完成的 Finalize，避免多段编码器同时占用硬件编码器与内存。
-                if (!wait_for_finalize(frame_error)) {
-                    return false;
-                }
-                if (async_finalize) {
-                    auto finished = std::move(encoder);
-                    segments.push_back(current_path);
-                    finalize_ok = true;
-                    finalize_error.clear();
-                    finalize_future =
-                        std::async(std::launch::async, [encoder = std::move(finished), &finalize_ok,
-                                                        &finalize_error]() mutable {
-                            const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-                            finalize_ok = encoder->finish(finalize_error);
-                            if (SUCCEEDED(com)) {
-                                CoUninitialize();
-                            }
-                        });
-                } else {
-                    if (!encoder->finish(frame_error)) {
-                        return false;
-                    }
-                    segments.push_back(current_path);
-                    encoder.reset();
-                }
-                if (index + 1 < total && !start_segment(index + 1)) {
-                    frame_error = error;
-                    return false;
-                }
-            }
-            return true;
-        },
-        error);
-    if (!rendered) {
-        audio_cancel.store(true, std::memory_order_relaxed);
-    }
-    if (audio_thread.joinable()) {
-        audio_thread.join();
-    }
-    if (!wait_for_finalize(error)) {
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    if (!rendered) {
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    if (has_audio && !audio_ok) {
-        error = audio_error;
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    const auto render_finished = clock_now();
-    const auto concat_started = clock_now();
-
-    if (!concat_segments(segments, output, audio_path, has_audio, context, error)) {
-        std::filesystem::remove_all(dir, code);
-        return false;
-    }
-    const auto finished = clock_now();
-    std::filesystem::remove_all(dir, code);
-
-    if (profile) {
-        const auto milliseconds = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
-        };
-        std::ostringstream message;
-        message << "profile: export total=" << milliseconds(export_started, finished)
-                << "ms render=" << milliseconds(render_started, render_finished)
-                << "ms audio=" << milliseconds(audio_started, audio_finished)
-                << "ms concat=" << milliseconds(concat_started, finished)
-                << "ms segments=" << segments.size();
-        log::info(message.str());
-    }
-    return true;
-}
 
 bool export_native(const job::Plan& plan, const std::filesystem::path& output,
                    const run::Context& context, std::string& error) {
@@ -349,22 +230,6 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
     const std::uint32_t bitrate =
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
 
-    // MF sink writer 的队列会随帧数增长; 长片按约 1 GiB NV12 输入分段编码, 限制峰值内存。
-    const std::uint64_t frame_count =
-        frame_count_for(0, plan.duration_us, plan.fps_num, plan.fps_den);
-    const std::uint64_t frame_bytes =
-        static_cast<std::uint64_t>(plan.output_w) * plan.output_h * 3 / 2;
-    // 长片用更大的段，减少编码器初始化/Finalize/concat 次数；短片仍保持 1 GiB，
-    // 让 20-30s 的 1080p 也能分成至少两段限制峰值内存。
-    const std::uint64_t target_bytes =
-        frame_count > 1800 ? 2048ULL * 1024ULL * 1024ULL : 1024ULL * 1024ULL * 1024ULL;
-    const std::uint64_t segment_frames =
-        std::clamp<std::uint64_t>(target_bytes / std::max<std::uint64_t>(1, frame_bytes), 60, 600);
-    if (frame_count > segment_frames) {
-        return export_native_segmented(plan, output, context, bitrate, segment_frames, has_audio,
-                                       error);
-    }
-
     media::MfEncoder encoder;
     const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
     const auto clock_now = [] { return std::chrono::steady_clock::now(); };
@@ -374,10 +239,57 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
                       has_audio, error)) {
         return false;
     }
+    log::info(encoder.summary());
     const auto init_finished = clock_now();
-    context.report_encoder("Media Foundation");
+    const auto& settings = encoder.settings();
+    // 把"到底是硬件还是软件编码器"报给前端: 用户选"自动"时最想知道这个。
+    if (!settings.hardware_known) {
+        context.report_encoder("Media Foundation");
+    } else {
+        context.report_encoder(settings.hardware ? "Media Foundation · 硬件"
+                                                 : "Media Foundation · 软件");
+    }
 
     const auto render_started = clock_now();
+    // 音频必须**边渲染边**写进 sink writer。MP4 muxer 要按时间戳交织音视频: 先把整片视频
+    // 写完再补音频, 它就会把视频样本压在队列里等音频, 等到内存撑不住为止 (实测 70s 720p
+    // 就卡死, 峰值内存涨到 1GB, 产物只有文件头)。所以这里按帧时间戳把音频追平;
+    // 混音是分块的, 不额外占内存。
+    run::Context audio_context = context;
+    // 混音不开进度/预览/编码器回调: 这些事件属于视频阶段, 中途插进来会打乱前端的进度口径。
+    audio_context.progress = {};
+    audio_context.preview = {};
+    audio_context.encoder = {};
+    media::AudioMixer mixer(plan, audio_context);
+    if (has_audio && !mixer.prepare(error)) {
+        return false;
+    }
+    constexpr std::uint32_t kSampleRate = 48000;
+    constexpr std::uint32_t kAudioChunkFrames = 4800;
+    std::uint64_t audio_written = 0;
+    std::vector<float> mixed;
+    std::vector<std::int16_t> pcm;
+    const auto write_audio_until = [&](std::uint64_t target_samples) {
+        const std::uint64_t limit = std::min<std::uint64_t>(target_samples, mixer.frames());
+        while (audio_written < limit) {
+            const auto frames = static_cast<std::uint32_t>(
+                std::min<std::uint64_t>(kAudioChunkFrames, limit - audio_written));
+            if (!mixer.mix(audio_written, frames, mixed, error)) {
+                return false;
+            }
+            pcm.resize(mixed.size());
+            for (std::size_t index = 0; index < mixed.size(); ++index) {
+                pcm[index] = static_cast<std::int16_t>(
+                    std::lround(std::clamp(mixed[index], -1.0F, 1.0F) * 32767.0F));
+            }
+            if (!encoder.write_audio(audio_written, pcm, error)) {
+                return false;
+            }
+            audio_written += frames;
+        }
+        return true;
+    };
+
     if (!stage::render_sequence(
             plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
             [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
@@ -389,40 +301,28 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
                 if (index % 10 == 0 || index + 1 == total) {
                     context.report("render", index + 1, total, fps);
                 }
-                return encoder.write_video(index, pixels, frame_error);
+                if (!encoder.write_video(index, pixels, frame_error)) {
+                    return false;
+                }
+                if (has_audio) {
+                    // 这一帧结束时对应的时间点 (48kHz 采样数), 让音频跟着视频推进。
+                    const std::uint64_t samples =
+                        (index + 1) * kSampleRate * plan.fps_den / plan.fps_num;
+                    if (!write_audio_until(samples)) {
+                        frame_error = error;
+                        return false;
+                    }
+                }
+                return true;
             },
             error)) {
         return false;
     }
     const auto render_finished = clock_now();
-
-    const auto audio_started = clock_now();
-    if (has_audio) {
-        media::AudioMixer mixer(plan, context);
-        if (!mixer.prepare(error)) {
-            return false;
-        }
-        constexpr std::uint32_t kChunkFrames = 48000;
-        std::vector<float> mixed;
-        std::vector<std::int16_t> pcm;
-        for (std::uint64_t start = 0; start < mixer.frames(); start += kChunkFrames) {
-            const auto frames = static_cast<std::uint32_t>(
-                std::min<std::uint64_t>(kChunkFrames, mixer.frames() - start));
-            if (!mixer.mix(start, frames, mixed, error)) {
-                return false;
-            }
-            pcm.resize(mixed.size());
-            for (std::size_t index = 0; index < mixed.size(); ++index) {
-                pcm[index] = static_cast<std::int16_t>(
-                    std::lround(std::clamp(mixed[index], -1.0F, 1.0F) * 32767.0F));
-            }
-            if (!encoder.write_audio(start, pcm, error)) {
-                return false;
-            }
-        }
+    if (has_audio && !write_audio_until(mixer.frames())) {
+        return false;
     }
 
-    const auto audio_finished = clock_now();
     if (!encoder.finish(error)) {
         return false;
     }
@@ -435,8 +335,7 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
         message << "profile: export total=" << milliseconds(export_started, finish_finished)
                 << "ms init=" << milliseconds(init_started, init_finished)
                 << "ms render=" << milliseconds(render_started, render_finished)
-                << "ms audio=" << milliseconds(audio_started, audio_finished)
-                << "ms finalize=" << milliseconds(audio_finished, finish_finished) << "ms";
+                << "ms finalize=" << milliseconds(render_finished, finish_finished) << "ms";
         log::info(message.str());
     }
     return true;
@@ -455,23 +354,20 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
     const std::uint32_t bitrate =
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
     const bool has_audio = !plan.audio.empty();
+    const double fps = static_cast<double>(plan.fps_num) / static_cast<double>(plan.fps_den);
 
-    const auto frame_dir = temp_frame_dir();
+    const auto work_dir = temp_work_dir();
     std::error_code code;
-    std::filesystem::create_directories(frame_dir, code);
+    std::filesystem::create_directories(work_dir, code);
     if (code) {
-        error = "无法创建临时帧目录: " + to_utf8(frame_dir);
+        error = "无法创建临时目录: " + to_utf8(work_dir);
         return false;
     }
 
-    const auto audio_path = frame_dir / "audio.wav";
-    if (!stage::render_frames(plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, frame_dir,
-                              context, error)) {
-        std::filesystem::remove_all(frame_dir, code);
-        return false;
-    }
+    // 音频先混好 (临时 WAV), 视频则从管道喂给 ffmpeg; 两者都不再落 PNG 序列。
+    const auto audio_path = work_dir / "audio.wav";
     if (has_audio && !media::render_audio(plan, audio_path, context, error)) {
-        std::filesystem::remove_all(frame_dir, code);
+        std::filesystem::remove_all(work_dir, code);
         return false;
     }
 
@@ -479,25 +375,60 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
         std::filesystem::create_directories(output.parent_path(), code);
         if (code) {
             error = "无法创建输出目录: " + to_utf8(output.parent_path());
-            std::filesystem::remove_all(frame_dir, code);
+            std::filesystem::remove_all(work_dir, code);
             return false;
         }
     }
 
     const std::wstring ffmpeg_path = context.ffmpeg.empty() ? L"ffmpeg" : quote(context.ffmpeg);
-    const auto pattern = frame_dir / "frame_%06d.png";
-    std::wstring command = ffmpeg_path + L" -y -loglevel error -framerate " +
-                           std::to_wstring(plan.fps_num) + L"/" + std::to_wstring(plan.fps_den) +
-                           L" -start_number 0 -i " + quote(pattern);
+    const std::uint32_t keyframe_interval =
+        media::default_keyframe_interval(plan.fps_num, plan.fps_den);
+    std::wstring command = ffmpeg_path + L" -y -loglevel error -f rawvideo -pix_fmt bgra -s " +
+                           std::to_wstring(plan.output_w) + L"x" + std::to_wstring(plan.output_h) +
+                           L" -framerate " + std::to_wstring(plan.fps_num) + L"/" +
+                           std::to_wstring(plan.fps_den) + L" -i -";
     if (has_audio) {
         command += L" -i " + quote(audio_path) + L" -c:a aac -b:a 192k";
     }
-    command += L" -c:v libx264 -pix_fmt yuv420p -b:v " + std::to_wstring(bitrate) +
-               L"k -shortest -movflags +faststart " + quote(output);
+    command += L" -c:v libx264 -pix_fmt yuv420p -b:v " + std::to_wstring(bitrate) + L"k -g " +
+               std::to_wstring(keyframe_interval) +
+               // ffmpeg 路径统一按 BT.709 转换并写全套 VUI (含 SD 尺寸); MF 路径在 SD 下改用
+               // BT.601 转换, 理由见 media/mf_encoder.cpp 的 `YuvMatrix`。
+               L" -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv" +
+               L" -shortest -movflags +faststart " + quote(output);
 
     context.report_encoder("外部 ffmpeg");
-    const bool ok = run_process(command, context, error);
-    std::filesystem::remove_all(frame_dir, code);
+    FfmpegPipe pipe;
+    if (!pipe.start(command, work_dir / "ffmpeg.log", error)) {
+        std::filesystem::remove_all(work_dir, code);
+        return false;
+    }
+    bool ok = stage::render_sequence(
+        plan, 0, plan.duration_us, plan.fps_num, plan.fps_den, context,
+        [&](std::uint64_t index, std::uint64_t total, std::uint64_t,
+            const std::vector<std::uint8_t>& pixels, std::string& frame_error) {
+            if (context.cancel_requested()) {
+                frame_error = "已取消";
+                return false;
+            }
+            if (index % 10 == 0 || index + 1 == total) {
+                context.report("render", index + 1, total, fps);
+            }
+            return pipe.write_frame(pixels, frame_error);
+        },
+        error);
+
+    bool cancelled = false;
+    std::string pipe_error;
+    if (!pipe.finish(context, cancelled, pipe_error)) {
+        // 渲染阶段的错误信息更具体 (帧号/取消), 只有"管道写不进去"时才用 ffmpeg 的错误
+        // 覆盖 —— 那种情况基本是 ffmpeg 自己提前退出, 日志末尾才是真正的原因。
+        if (ok || error == "写入 ffmpeg 管道失败") {
+            error = pipe_error;
+        }
+        ok = false;
+    }
+    std::filesystem::remove_all(work_dir, code);
     return ok;
 }
 

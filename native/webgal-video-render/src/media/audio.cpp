@@ -4,15 +4,14 @@
 
 #include "common/path.hpp"
 #include "media/video.hpp"
+#include "media/wav.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <limits>
 #include <string_view>
 
 #define DR_WAV_IMPLEMENTATION
@@ -30,7 +29,6 @@ namespace {
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint32_t kChannels = 2;
 constexpr std::uint32_t kMixChunkFrames = 48000;
-constexpr std::uint64_t kWavDataLimit = std::numeric_limits<std::uint32_t>::max();
 
 std::string extension_of(const std::filesystem::path& path) {
     auto extension = path.extension().string();
@@ -73,40 +71,6 @@ bool resample_to_48k(const AudioClip& source, AudioClip& result, std::string& er
         }
     }
     return true;
-}
-
-void write_le16(std::ofstream& output, std::uint16_t value) {
-    const std::array<char, 2> bytes{
-        static_cast<char>(value & 0xFFU),
-        static_cast<char>((value >> 8U) & 0xFFU),
-    };
-    output.write(bytes.data(), bytes.size());
-}
-
-void write_le32(std::ofstream& output, std::uint32_t value) {
-    const std::array<char, 4> bytes{
-        static_cast<char>(value & 0xFFU),
-        static_cast<char>((value >> 8U) & 0xFFU),
-        static_cast<char>((value >> 16U) & 0xFFU),
-        static_cast<char>((value >> 24U) & 0xFFU),
-    };
-    output.write(bytes.data(), bytes.size());
-}
-
-void write_wav_header(std::ofstream& output, std::uint32_t data_bytes) {
-    output.write("RIFF", 4);
-    write_le32(output, 36 + data_bytes);
-    output.write("WAVE", 4);
-    output.write("fmt ", 4);
-    write_le32(output, 16);
-    write_le16(output, 1);
-    write_le16(output, static_cast<std::uint16_t>(kChannels));
-    write_le32(output, kSampleRate);
-    write_le32(output, kSampleRate * kChannels * 2);
-    write_le16(output, static_cast<std::uint16_t>(kChannels * 2));
-    write_le16(output, 16);
-    output.write("data", 4);
-    write_le32(output, data_bytes);
 }
 
 std::filesystem::path resolve_event_path(const job::Plan& plan, const std::string& path) {
@@ -453,17 +417,13 @@ bool render_audio(const job::Plan& plan, const std::filesystem::path& output,
         return false;
     }
     const std::uint64_t data_bytes = mixer.frames() * kChannels * 2;
-    if (data_bytes > kWavDataLimit) {
-        error = "WAV 超过 4 GiB，请改用 MP4 或缩短导出时长";
-        return false;
-    }
-
     std::ofstream stream(output, std::ios::binary | std::ios::trunc);
     if (!stream) {
         error = "无法写入音频: " + to_utf8(output);
         return false;
     }
-    write_wav_header(stream, 0);
+    // 超过 4 GiB 时头部自动换成 RF64 (64 位大小), 不再拒绝导出。
+    const bool rf64 = write_wav_header(stream, data_bytes);
 
     std::vector<float> mixed;
     std::vector<std::int16_t> pcm;
@@ -491,11 +451,7 @@ bool render_audio(const job::Plan& plan, const std::filesystem::path& output,
         context.report("audio", chunk + 1, chunks, 0.0);
     }
 
-    stream.seekp(4);
-    write_le32(stream, 36 + static_cast<std::uint32_t>(written * kChannels * 2));
-    stream.seekp(40);
-    write_le32(stream, static_cast<std::uint32_t>(written * kChannels * 2));
-    stream.seekp(0, std::ios::end);
+    patch_wav_header(stream, rf64, written * kChannels * 2);
     if (!stream) {
         error = "写入 WAV 头失败: " + to_utf8(output);
         return false;

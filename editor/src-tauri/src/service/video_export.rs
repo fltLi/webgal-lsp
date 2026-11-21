@@ -86,6 +86,10 @@ pub struct VideoExportResult {
     pub encoder: Option<String>,
     /// 编译期发现的非致命问题 (暂不支持的演出等); 导出前会先用事件推一遍。
     pub warnings: Vec<VideoExportWarning>,
+    /// 产物字节数; 文件没写出来或已被移走时为 `None`。
+    pub bytes: Option<u64>,
+    /// 从产物反推的平均码率 (kbps, 含音轨); 音频导出或算不出来时为 `None`。
+    pub bitrate_kbps: Option<u32>,
 }
 
 /// 编译期警告: 某条语句/某个动画在导出里不会完全生效。
@@ -600,10 +604,23 @@ impl RenderJob {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        // 完成页展示"预设码率 vs 实际码率": 用产物大小除以计划时长反推, 含音轨。
+        let bytes = std::fs::metadata(&self.output)
+            .ok()
+            .map(|metadata| metadata.len());
+        let bitrate_kbps = if self.audio_only {
+            None
+        } else {
+            bytes.and_then(|bytes| {
+                webgal_video_export::api::average_bitrate_kbps(bytes, plan.meta.duration_us)
+            })
+        };
         Ok(VideoExportResult {
             output: self.output.to_string_lossy().to_string(),
             encoder,
             warnings,
+            bytes,
+            bitrate_kbps,
         })
     }
 }

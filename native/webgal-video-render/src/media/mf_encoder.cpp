@@ -7,17 +7,24 @@
 #include <windows.h>
 
 #include <codecapi.h>
+#include <icodecapi.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <mftransform.h>
 
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <sstream>
+#include <string_view>
 #include <thread>
+
+#include "common/log.hpp"
+#include "common/path.hpp"
 
 namespace webgal::media {
 namespace {
@@ -38,9 +45,89 @@ bool check(HRESULT result, const char* what, std::string& error) {
     return false;
 }
 
+/// 设置一个 UINT32 型的编解码器属性。
+///
+/// 硬件 MFT 未必支持每个属性, 所以这里只返回"是否真的设置成功": 失败时沿用编码器默认值,
+/// 不把导出搞失败。刻意不先问 `IsSupported`: 有的编码器对色彩这类属性会漏实现它, 但
+/// `SetValue` 仍然有效。
+bool set_codec_uint32(ICodecAPI* codec, const GUID& api, std::uint32_t value) {
+    if (codec == nullptr) {
+        return false;
+    }
+    GUID id = api;
+    // 只用 `VT_UI4`, 不涉及分配, 所以零初始化就够, 不需要 VariantInit/VariantClear
+    // (那两个会额外依赖 oleaut32)。
+    VARIANT variant{};
+    variant.vt = VT_UI4;
+    variant.ulVal = value;
+    return SUCCEEDED(codec->SetValue(&id, &variant));
+}
+
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint32_t kChannels = 2;
 constexpr std::uint32_t kAudioFramesPerChunk = 4800;
+
+/// YUV 转换系数 (乘 256 取整) 与对应的色彩口径。
+///
+/// 播放器对**没有** VUI 矩阵标注的 H.264 默认按分辨率猜: 720 线以上按 BT.709,
+/// 以下按 BT.601。Media Foundation 的 H.264 编码器实测只写 primaries/transfer/range,
+/// 不写 matrix_coefficients, 所以转换矩阵必须跟着这条约定走 —— 否则 480p 导出会被
+/// 播放器按 BT.601 解释一段 BT.709 的数据, 颜色整体偏移。
+struct YuvMatrix {
+    int luma_r;
+    int luma_g;
+    int luma_b;
+    int u_r;
+    int u_g;
+    int u_b;
+    int v_r;
+    int v_g;
+    int v_b;
+    bool bt709;
+};
+
+// 两组都是**有限范围** (16-235) 的整数系数: 亮度系数之和 219/256, 色度系数之和 0。
+// 别换成 JPEG 用的全范围系数 (77/150/29 那组), 那组和是 256, 会把白算成 271 越界。
+constexpr YuvMatrix kBt709{46, 157, 16, -26, -87, 113, 113, -102, -11, true};
+constexpr YuvMatrix kBt601{66, 129, 25, -38, -74, 112, 112, -94, -18, false};
+
+/// 720 线及以上的导出用 BT.709, 以下用 BT.601。
+bool use_bt709_for(std::uint32_t height) {
+    return height >= 720;
+}
+
+} // namespace
+
+std::uint32_t default_keyframe_interval(std::uint32_t fps_num, std::uint32_t fps_den) {
+    if (fps_den == 0) {
+        return 1;
+    }
+    const auto fps = static_cast<double>(fps_num) / static_cast<double>(fps_den);
+    return static_cast<std::uint32_t>(std::max<long>(1, std::lround(fps)));
+}
+
+namespace {
+
+const char* h264_profile_name(std::uint32_t profile) {
+    switch (profile) {
+    case 66:
+        return "Baseline";
+    case 77:
+        return "Main";
+    case 100:
+        return "High";
+    case 110:
+        return "High 10";
+    case 122:
+        return "High 4:2:2";
+    default:
+        return "未知";
+    }
+}
+
+std::string h264_level_name(std::uint32_t level) {
+    return std::to_string(level / 10) + "." + std::to_string(level % 10);
+}
 
 } // namespace
 
@@ -57,6 +144,97 @@ struct MfEncoder::Impl {
     bool mf_started = false;
     bool use_nv12 = false;
     std::vector<std::uint8_t> nv12;
+    YuvMatrix matrix = kBt709;
+    EncoderSettings settings;
+
+    /// 码率控制、关键帧间隔与色彩元数据都走编码器 MFT 的 `ICodecAPI`。
+    /// 必须在 `BeginWriting` 之前调用: 编解码器属性在开始写样本后不再生效。
+    void configure(std::uint32_t bitrate, std::uint32_t keyframe_interval) {
+        ComPtr<ICodecAPI> codec;
+        // 文档: `dwStreamIndex` 传流的序号时, sink writer 会先向该流的编码器 MFT 要接口。
+        const HRESULT result = writer->GetServiceForStream(video_stream, GUID_NULL,
+                                                           IID_PPV_ARGS(codec.GetAddressOf()));
+        if (FAILED(result) || codec == nullptr) {
+            log::warn("取不到编码器的 ICodecAPI, 码率控制/关键帧/色彩沿用编码器默认: " +
+                      hresult(result));
+            return;
+        }
+
+        // 码率: CBR + 平均码率。原先只写 MF_MT_AVG_BITRATE, 实际用哪种码控取决于
+        // 编码器 MFT 的默认值(硬编码器可能是 VBR), 产物大小不可预测。
+        settings.constant_bitrate =
+            set_codec_uint32(codec.Get(), CODECAPI_AVEncCommonRateControlMode,
+                             eAVEncCommonRateControlMode_CBR) &&
+            set_codec_uint32(codec.Get(), CODECAPI_AVEncCommonMeanBitRate, bitrate);
+        if (!settings.constant_bitrate) {
+            log::warn("编码器不接受 CBR 码率控制, 沿用其默认码控");
+        }
+
+        if (set_codec_uint32(codec.Get(), CODECAPI_AVEncMPVGOPSize, keyframe_interval)) {
+            settings.keyframe_interval = keyframe_interval;
+        } else {
+            log::warn("编码器不接受关键帧间隔, 关键帧位置由编码器决定");
+        }
+
+        // 色彩口径 (BT.709 + 16-235) 由输入/输出媒体类型声明, 不走 ICodecAPI:
+        // 实测编码器对 `AVEncVideoOutputColorPrimaries` 直接报错, 但媒体类型上的
+        // `MF_MT_VIDEO_PRIMARIES` 等属性会被接受并反映到协商后的输出类型里。
+    }
+
+    /// 记录下来实际是哪个编码器: 硬件 MFT 带 `MFT_ENUM_HARDWARE_URL` 属性。
+    void detect_encoder() {
+        ComPtr<IMFSinkWriterEx> extended;
+        if (FAILED(writer.As(&extended))) {
+            log::warn("sink writer 不支持 IMFSinkWriterEx, 查不到编码器 MFT");
+            return;
+        }
+        ComPtr<IMFTransform> transform;
+        if (FAILED(extended->GetTransformForStream(video_stream, 0, nullptr, &transform)) ||
+            transform == nullptr) {
+            log::warn("取不到视频流的编码器 MFT, 无法区分硬件/软件编码");
+            return;
+        }
+        ComPtr<IMFAttributes> attributes;
+        if (FAILED(transform->GetAttributes(&attributes)) || attributes == nullptr) {
+            return;
+        }
+        settings.hardware_known = true;
+        // 硬件 MFT 会带 `MFT_ENUM_HARDWARE_URL` 属性; 软件 MFT 只有显示名。
+        MF_ATTRIBUTE_TYPE type = MF_ATTRIBUTE_STRING;
+        settings.hardware =
+            SUCCEEDED(attributes->GetItemType(MFT_ENUM_HARDWARE_URL_Attribute, &type));
+        // 协商后的输出类型才代表真正写进码流的口径 (profile/level/色彩)。
+        ComPtr<IMFMediaType> negotiated;
+        if (SUCCEEDED(transform->GetOutputCurrentType(0, &negotiated)) && negotiated != nullptr) {
+            UINT32 profile = 0;
+            UINT32 level = 0;
+            UINT32 matrix = 0;
+            UINT32 range = 0;
+            negotiated->GetUINT32(MF_MT_MPEG2_PROFILE, &profile);
+            negotiated->GetUINT32(MF_MT_MPEG2_LEVEL, &level);
+            negotiated->GetUINT32(MF_MT_YUV_MATRIX, &matrix);
+            negotiated->GetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, &range);
+            settings.profile = profile;
+            settings.level = level;
+            // 以矩阵系数判断实际口径: VUI 里的 primaries 由编码器自己决定写不写,
+            // 只有矩阵 (与范围) 才是必须跟转换公式对齐的东西。
+            if (range == MFNominalRange_16_235) {
+                if (matrix == MFVideoTransferMatrix_BT709) {
+                    settings.color = "BT.709";
+                } else if (matrix == MFVideoTransferMatrix_BT601) {
+                    settings.color = "BT.601";
+                }
+            }
+        }
+        LPWSTR name = nullptr;
+        UINT32 length = 0;
+        if (SUCCEEDED(
+                attributes->GetAllocatedString(MFT_FRIENDLY_NAME_Attribute, &name, &length)) &&
+            name != nullptr) {
+            settings.name = to_utf8(std::wstring_view(name, length));
+            CoTaskMemFree(name);
+        }
+    }
 };
 
 MfEncoder::MfEncoder() : impl_(std::make_unique<Impl>()) {}
@@ -86,6 +264,13 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     // NV12 需要偶数宽高; 任意舞台尺寸下退回 RGB32, 避免最后一行/列未初始化。
     impl_->use_nv12 = width % 2 == 0 && height % 2 == 0;
     const std::uint32_t bitrate = std::max<std::uint32_t>(1U, bitrate_kbps) * 1000U;
+    const std::uint32_t keyframe_interval =
+        default_keyframe_interval(impl_->fps_num, impl_->fps_den);
+    impl_->settings.bitrate_kbps = bitrate_kbps;
+    impl_->settings.nv12 = impl_->use_nv12;
+    // 转换矩阵与媒体类型上的色彩声明必须一致 (见 `YuvMatrix` 的注释)。
+    impl_->matrix = use_bt709_for(height) ? kBt709 : kBt601;
+    const bool bt709 = impl_->matrix.bt709;
 
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com) && com != RPC_E_CHANGED_MODE) {
@@ -102,7 +287,10 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
         return false;
     }
     attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
-    attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
+    // 刻意**不**设 `MF_SINK_WRITER_DISABLE_THROTTLING`: 关掉节流后 `WriteSample` 从不阻塞,
+    // 编码器跟不上时队列会一直长下去 (4K 30fps 每帧 NV12 就有 12.4 MB)。开着节流, sink writer
+    // 在队列满时让 `WriteSample` 阻塞, 峰值内存由 MF 自己兜住, 也就不需要把长片切成多段
+    // 再用 ffmpeg 拼接 —— 拼接那一步会让 4K 长片 (约 3 秒以上就超过分段阈值) 依赖用户自备 ffmpeg。
 
     if (!check(MFCreateSinkWriterFromURL(output.c_str(), nullptr, attributes.Get(), &impl_->writer),
                "MFCreateSinkWriterFromURL", error)) {
@@ -117,7 +305,20 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     video_out->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
     video_out->SetUINT32(MF_MT_AVG_BITRATE, bitrate);
     video_out->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    // Main profile 是实测选择: 同一段 1080p 噪声素材、4 Mbps CBR 下, 把这里换成 High
+    // 协商出的产物字节数与 PSNR 完全相同 (硬件编码器并不因此改变编码决策), 却会缩小
+    // 老设备的解码兼容面。ffmpeg 回退路径的 libx264 默认就是 High, 不受这里影响。
     video_out->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
+    // 渲染器转出的 NV12 用的是 BT.709 (720 线以上) 或 BT.601 (以下), 输出类型声明同一套口径。
+    // primaries 只在 BT.709 时写: MF 把 SMPTE170M 映射成 H.264 的 "reserved", 不如不写,
+    // 让播放器按分辨率默认 (SD -> BT.601) 走, 与我们的转换矩阵一致。
+    if (bt709) {
+        video_out->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709);
+    }
+    video_out->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709);
+    video_out->SetUINT32(MF_MT_YUV_MATRIX,
+                         bt709 ? MFVideoTransferMatrix_BT709 : MFVideoTransferMatrix_BT601);
+    video_out->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
     MFSetAttributeSize(video_out.Get(), MF_MT_FRAME_SIZE, width, height);
     MFSetAttributeRatio(video_out.Get(), MF_MT_FRAME_RATE, impl_->fps_num, impl_->fps_den);
     MFSetAttributeRatio(video_out.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
@@ -134,6 +335,14 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     video_in->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     video_in->SetGUID(MF_MT_SUBTYPE, impl_->use_nv12 ? MFVideoFormat_NV12 : MFVideoFormat_RGB32);
     video_in->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    // 输入侧也声明同一套色彩口径: 部分编码器 MFT 只从输入类型推导 VUI。
+    if (bt709) {
+        video_in->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709);
+    }
+    video_in->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709);
+    video_in->SetUINT32(MF_MT_YUV_MATRIX,
+                        bt709 ? MFVideoTransferMatrix_BT709 : MFVideoTransferMatrix_BT601);
+    video_in->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
     video_in->SetUINT32(MF_MT_DEFAULT_STRIDE,
                         static_cast<UINT32>(impl_->use_nv12 ? width : width * 4));
     MFSetAttributeSize(video_in.Get(), MF_MT_FRAME_SIZE, width, height);
@@ -143,6 +352,9 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
                "SetInputMediaType(video)", error)) {
         return false;
     }
+
+    // 编码器已经选定, 在 BeginWriting 之前把参数写进去。
+    impl_->configure(bitrate, keyframe_interval);
 
     if (has_audio) {
         ComPtr<IMFMediaType> audio_out;
@@ -182,8 +394,38 @@ bool MfEncoder::init(const std::filesystem::path& output, std::uint32_t width, s
     if (!check(impl_->writer->BeginWriting(), "BeginWriting", error)) {
         return false;
     }
+    impl_->detect_encoder();
     impl_->started = true;
     return true;
+}
+
+const EncoderSettings& MfEncoder::settings() const {
+    return impl_->settings;
+}
+
+std::string MfEncoder::summary() const {
+    const auto& settings = impl_->settings;
+    std::ostringstream message;
+    message << "编码器 " << (settings.name.empty() ? "Media Foundation" : settings.name);
+    if (settings.hardware_known) {
+        message << (settings.hardware ? " · 硬件" : " · 软件");
+    }
+    message << ", 码率 " << settings.bitrate_kbps << "kbps"
+            << (settings.constant_bitrate ? " (CBR)" : " (编码器默认码控)");
+    if (settings.keyframe_interval > 0) {
+        message << ", 关键帧 " << settings.keyframe_interval << " 帧";
+    } else {
+        message << ", 关键帧 编码器默认";
+    }
+    if (settings.profile > 0) {
+        message << ", " << h264_profile_name(settings.profile) << " profile";
+    }
+    if (settings.level > 0) {
+        message << " level " << h264_level_name(settings.level);
+    }
+    message << ", " << (settings.color.empty() ? "未标注色彩" : settings.color + " 有限范围")
+            << ", 输入 " << (settings.nv12 ? "NV12" : "RGB32");
+    return message.str();
 }
 
 bool MfEncoder::write_video(std::uint64_t frame_index, const std::vector<std::uint8_t>& bgra,
@@ -194,12 +436,13 @@ bool MfEncoder::write_video(std::uint64_t frame_index, const std::vector<std::ui
         return false;
     }
 
-    // BGRA -> NV12 (BT.709 limited): sink writer 排队 1.5 字节/像素而不是 4 字节/像素,
-    // 长片峰值内存约降到 37%, 同时省掉 MF 自带的颜色转换 MFT。
+    // BGRA -> NV12 (BT.709 或 BT.601, 有限范围): sink writer 排队 1.5 字节/像素而不是
+    // 4 字节/像素, 长片峰值内存约降到 37%, 同时省掉 MF 自带的颜色转换 MFT。
     const std::uint8_t* source = bgra.data();
     std::size_t bytes = pixels * 4;
     if (impl_->use_nv12) {
         impl_->nv12.resize(pixels * 3 / 2);
+        const YuvMatrix& matrix = impl_->matrix;
         const auto width = static_cast<int>(impl_->width);
         const auto height = static_cast<int>(impl_->height);
         std::uint8_t* y_plane = impl_->nv12.data();
@@ -223,23 +466,34 @@ bool MfEncoder::write_video(std::uint64_t frame_index, const std::vector<std::ui
                     const int b11 = row1[x * 4 + 4];
                     const int g11 = row1[x * 4 + 5];
                     const int r11 = row1[x * 4 + 6];
-                    luma0[x] = static_cast<std::uint8_t>(
-                        ((46 * r00 + 157 * g00 + 16 * b00 + 128) >> 8) + 16);
-                    luma0[x + 1] = static_cast<std::uint8_t>(
-                        ((46 * r01 + 157 * g01 + 16 * b01 + 128) >> 8) + 16);
-                    luma1[x] = static_cast<std::uint8_t>(
-                        ((46 * r10 + 157 * g10 + 16 * b10 + 128) >> 8) + 16);
-                    luma1[x + 1] = static_cast<std::uint8_t>(
-                        ((46 * r11 + 157 * g11 + 16 * b11 + 128) >> 8) + 16);
+                    const auto to_byte = [](int value) {
+                        return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
+                    };
+                    luma0[x] = to_byte(
+                        ((matrix.luma_r * r00 + matrix.luma_g * g00 + matrix.luma_b * b00 + 128) >>
+                         8) +
+                        16);
+                    luma0[x + 1] = to_byte(
+                        ((matrix.luma_r * r01 + matrix.luma_g * g01 + matrix.luma_b * b01 + 128) >>
+                         8) +
+                        16);
+                    luma1[x] = to_byte(
+                        ((matrix.luma_r * r10 + matrix.luma_g * g10 + matrix.luma_b * b10 + 128) >>
+                         8) +
+                        16);
+                    luma1[x + 1] = to_byte(
+                        ((matrix.luma_r * r11 + matrix.luma_g * g11 + matrix.luma_b * b11 + 128) >>
+                         8) +
+                        16);
 
                     const int b = (b00 + b01 + b10 + b11) / 4;
                     const int g = (g00 + g01 + g10 + g11) / 4;
                     const int r = (r00 + r01 + r10 + r11) / 4;
                     const std::size_t offset = static_cast<std::size_t>(y / 2) * width + x;
-                    uv_plane[offset] =
-                        static_cast<std::uint8_t>(((-26 * r - 87 * g + 113 * b + 128) >> 8) + 128);
-                    uv_plane[offset + 1] =
-                        static_cast<std::uint8_t>(((113 * r - 102 * g - 11 * b + 128) >> 8) + 128);
+                    uv_plane[offset] = to_byte(
+                        ((matrix.u_r * r + matrix.u_g * g + matrix.u_b * b + 128) >> 8) + 128);
+                    uv_plane[offset + 1] = to_byte(
+                        ((matrix.v_r * r + matrix.v_g * g + matrix.v_b * b + 128) >> 8) + 128);
                 }
             }
         };

@@ -205,8 +205,16 @@ int webgal_plan_add_text_char(WebgalPlan* plan, const char* text);
 int webgal_plan_add_choice(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, size_t selected);
 int webgal_plan_add_choice_option(WebgalPlan* plan, const char* prompt, const char* target);
 
+/*
+ * 开始一段全屏文字; 之后用 webgal_plan_add_intro_line 填充内容。
+ * delay_ms 是每行的出场间隔 (引擎的 `-delayTime`, 缺省 1500)。
+ * font_color / background_color 是长度 4 的 RGBA 分量数组 (0..1), 传 NULL 用引擎默认
+ * (白字 / 纯黑底); background 是可空的背景图资源路径, 按 CSS `center/cover` 铺满画面。
+ */
 int webgal_plan_add_intro(WebgalPlan* plan, uint64_t start_us, uint64_t end_us,
-                          const char* font_size, const char* animation);
+                          const char* font_size, const char* animation, uint32_t delay_ms,
+                          const float* font_color, const float* background_color,
+                          const char* background);
 int webgal_plan_add_intro_line(WebgalPlan* plan, const char* text);
 
 /* 全屏视频段; 覆盖背景、立绘与 UI，按 contain 居中显示。 */

@@ -5,10 +5,14 @@ find_package(Catch2 3 CONFIG REQUIRED)
 add_executable(webgal-render-tests
     audio_test.cpp
     bridge_test.cpp
+    cancel_test.cpp
+    encoder_test.cpp
+    ffmpeg_test.cpp
     live2d_test.cpp
     render_test.cpp
     shaders_test.cpp
     video_test.cpp
+    wav_test.cpp
 )
 
 target_link_libraries(webgal-render-tests

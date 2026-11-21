@@ -168,6 +168,14 @@ struct Compiler<'a> {
     labels: HashMap<String, HashMap<String, usize>>,
     visited: HashSet<(String, usize, usize)>,
     time_us: u64,
+    /// 非 keep 演出结束前, 自动播放不会推进到下一句。按**目标**记下最晚的阻塞结束点
+    /// (微秒): 同目标的新动画会卸载旧 perform, 所以非 `-parallel` 的写入是覆盖而不是取最大。
+    blocked_until: HashMap<String, u64>,
+    /// 上一条语句带 `-next`: 当前语句属于同一轮连续执行, 不该被阻塞截止时间推迟。
+    chained: bool,
+    /// `-continue`（或主动继续的演出）要求"演出结束时立即继续": 下一条非 `-next` 语句
+    /// 从这里开始, 并结算其它非 hold 演出 (它们的阻塞也随之失效)。
+    continue_at: Option<u64>,
     steps: usize,
     last_text: Option<usize>,
     finished: bool,
@@ -220,10 +228,64 @@ impl<'a> Compiler<'a> {
             labels: collect_labels(project),
             visited: HashSet::new(),
             time_us: 0,
+            blocked_until: HashMap::new(),
+            chained: false,
+            continue_at: None,
             steps: 0,
             last_text: None,
             finished: false,
             coordinate_scale,
+        }
+    }
+
+    /// 下一条语句至少要等到所有"阻塞自动播放"的演出结束。
+    fn apply_blocking_deadline(&mut self) {
+        let until = self.blocked_until.values().copied().max().unwrap_or(0);
+        if until > self.time_us {
+            self.time_us = until;
+        }
+    }
+
+    /// 登记一个"演出结束时继续"的时间点 (`-continue` 的语义; `wait`/intro/视频在结束时
+    /// 直接调用 [`Self::clear_blocking`] 结算, 不需要这个时间点)。
+    fn set_continue_at(&mut self, duration_ms: u32) {
+        if duration_ms == 0 {
+            return;
+        }
+        let at = self.time_us.saturating_add(Timing::ms(duration_ms));
+        self.continue_at = Some(self.continue_at.map_or(at, |current| current.min(at)));
+    }
+
+    /// 主动继续/结算: 引擎在 `-continue`、`wait`、intro、视频结束时调用
+    /// `continueSentence`, 它会结算所有非 hold 演出, 所以阻塞截止时间一并失效。
+    fn clear_blocking(&mut self) {
+        self.blocked_until.clear();
+        self.continue_at = None;
+    }
+
+    /// 登记 (或清除) 某个目标上的自动播放阻塞。
+    ///
+    /// 引擎的语义: 演出的 `blockingAuto = !keep`, 自动播放计时器在有阻塞演出时不会
+    /// 推进到下一句。`replace` 表示这次演出会卸载同目标旧 perform (非 `-parallel`),
+    /// 被卸载的旧演出不再阻塞, 所以覆盖/删除旧截止时间; `-parallel` 则与现有截止时间
+    /// 取最大值。`-continue` 不走这里, 它由 [`Self::set_continue_at`] 处理。
+    fn set_blocking(&mut self, target: &str, duration_ms: u32, blocks: bool, replace: bool) {
+        if blocks {
+            if duration_ms == 0 {
+                if replace {
+                    self.blocked_until.remove(target);
+                }
+                return;
+            }
+            let until = self.time_us.saturating_add(Timing::ms(duration_ms));
+            if replace {
+                self.blocked_until.insert(target.to_owned(), until);
+            } else {
+                let entry = self.blocked_until.entry(target.to_owned()).or_insert(0);
+                *entry = (*entry).max(until);
+            }
+        } else if replace {
+            self.blocked_until.remove(target);
         }
     }
 
@@ -268,6 +330,20 @@ impl<'a> Compiler<'a> {
             {
                 self.line += 1;
                 continue;
+            }
+
+            // 非 keep 演出会阻塞自动播放: 下一条**不在** `-next` 链上的语句要等它结束。
+            // 待兑现的 `-continue` 优先: 它在自己的结束时结算其它非 hold 演出, 所以
+            // 下一条从它结束处开始, 其它阻塞不再等。
+            if !self.chained {
+                if let Some(at) = self.continue_at.take() {
+                    if at > self.time_us {
+                        self.time_us = at;
+                    }
+                    self.blocked_until.clear();
+                } else {
+                    self.apply_blocking_deadline();
+                }
             }
 
             match &sentence {
@@ -396,6 +472,10 @@ impl<'a> Compiler<'a> {
                     )));
                 }
             }
+
+            // 只有带 `-next` 的语句会把下一条也拉进同一轮连续执行; `-continue` 不是链,
+            // 它由 `continue_at` 在演出结束时兑现。
+            self.chained = forward_of(&sentence) == Some(Forward::Next);
         }
         Ok(())
     }
@@ -585,11 +665,14 @@ impl<'a> Compiler<'a> {
             });
             self.background = asset.map(|asset| BackgroundState { asset, transform });
         }
-        if sentence.forward == Forward::Wait {
-            // 引擎把 perform 的时长改成退场动画的时长 (`changeBg` 的顺序如此),
-            // 自动播放会等这么久。
-            let advance_ms = exit_animation.unwrap_or(advance_ms);
-            self.time_us = self.time_us.saturating_add(Timing::ms(advance_ms));
+        // 引擎的 changeBg perform 时长是退场动画的时长 (没有则入场/默认), `blockingAuto`
+        // 恒为真: 自动播放要等它结束。换图会卸载同目标旧 perform, 所以截止时间覆盖。
+        let advance_ms = exit_animation.unwrap_or(advance_ms);
+        if sentence.forward == Forward::Continue {
+            self.blocked_until.remove("bg-main");
+            self.set_continue_at(advance_ms);
+        } else {
+            self.set_blocking("bg-main", advance_ms, true, true);
         }
         Ok(())
     }
@@ -760,10 +843,13 @@ impl<'a> Compiler<'a> {
                     snap_transform: identity_switch,
                 });
             }
-            if sentence.forward == Forward::Wait {
-                // 引擎把 perform 时长改成退场动画时长, 自动播放会等这么久。
-                let advance_ms = exit_animation.unwrap_or(advance_ms);
-                self.time_us = self.time_us.saturating_add(Timing::ms(advance_ms));
+            // 引擎把 perform 时长改成退场动画时长, 自动播放会等它结束。
+            let advance_ms = exit_animation.unwrap_or(advance_ms);
+            if sentence.forward == Forward::Continue {
+                self.blocked_until.remove(&id);
+                self.set_continue_at(advance_ms);
+            } else {
+                self.set_blocking(&id, advance_ms, true, true);
             }
         }
         let requested_expression = sentence
@@ -889,6 +975,8 @@ impl<'a> Compiler<'a> {
             .as_ref()
             .map(ToString::to_string)
             .unwrap_or_else(|| "stage-main".to_owned());
+        // 下面的 figure 分支会 move `target`; 阻塞登记要用到它, 先留一份。
+        let blocking_target = target.clone();
 
         // `-transformFrom=default` (旧 `-writeDefault`) 表示从默认变换起算而不是当前状态:
         // 没写到的字段回到默认值, 写到的字段仍然生效。
@@ -969,8 +1057,20 @@ impl<'a> Compiler<'a> {
             );
         }
 
-        if sentence.forward == Forward::Wait && !sentence.parallel {
-            self.time_us = self.time_us.saturating_add(Timing::ms(duration_ms));
+        // `keep` 的演出不阻塞自动播放; `-continue` 例外——它要求演出结束时继续,
+        // 即使 keep 也一样。非 `-parallel` 会卸载同目标旧演出, 截止时间随之覆盖。
+        if sentence.forward == Forward::Continue {
+            if !sentence.parallel {
+                self.blocked_until.remove(&blocking_target);
+            }
+            self.set_continue_at(duration_ms);
+        } else {
+            self.set_blocking(
+                &blocking_target,
+                duration_ms,
+                !sentence.keep,
+                !sentence.parallel,
+            );
         }
         Ok(())
     }
@@ -1291,8 +1391,13 @@ impl<'a> Compiler<'a> {
         else {
             return Ok(());
         };
-        if sentence.forward == Forward::Wait {
-            self.time_us = self.time_us.saturating_add(Timing::ms(total));
+        if sentence.forward == Forward::Continue {
+            if !sentence.parallel {
+                self.blocked_until.remove(&target);
+            }
+            self.set_continue_at(total);
+        } else {
+            self.set_blocking(&target, total, !sentence.keep, !sentence.parallel);
         }
         Ok(())
     }
@@ -1329,8 +1434,13 @@ impl<'a> Compiler<'a> {
         else {
             return Ok(());
         };
-        if sentence.forward == Forward::Wait {
-            self.time_us = self.time_us.saturating_add(Timing::ms(total));
+        if sentence.forward == Forward::Continue {
+            if !sentence.parallel {
+                self.blocked_until.remove(&target);
+            }
+            self.set_continue_at(total);
+        } else {
+            self.set_blocking(&target, total, !sentence.keep, !sentence.parallel);
         }
         Ok(())
     }
@@ -1369,8 +1479,12 @@ impl<'a> Compiler<'a> {
         // 关键帧时间是这段过渡的开始, `enter_ms` 是往前走多久到达终态;
         // 所以这里只落一个终态关键帧, 起点由上一个关键帧提供。
         self.push_alpha_key(&target, self.time_us, alpha, duration, ease, line);
-        if sentence.forward == Forward::Wait {
-            self.time_us = self.time_us.saturating_add(Timing::ms(duration));
+        // setComplexAnimation 没有 keep 参数, 引擎里 `blockingAuto` 恒为真。
+        if sentence.forward == Forward::Continue {
+            self.blocked_until.remove(&target);
+            self.set_continue_at(duration);
+        } else {
+            self.set_blocking(&target, duration, true, true);
         }
         Ok(())
     }
@@ -1503,18 +1617,14 @@ impl<'a> Compiler<'a> {
             loop_: false,
         });
         self.time_us = end_us;
+        // 视频 perform 的 `goNextWhenOver` 为真: 结束时引擎会结算其它非 hold 演出。
+        self.clear_blocking();
         Ok(())
     }
 
-    fn intro(&mut self, sentence: &IntroSentence, line: usize) -> Result<()> {
-        // 渲染器画的是白字黑底: 五种 `animation` 都已实现 (fadeIn / slideIn / typingEffect /
-        // pixelateEffect / revealAnimation), 配色与背景图还没有对应实现, 只对后者报警。
-        if sentence.font_color.is_some()
-            || sentence.background_color.is_some()
-            || sentence.background_image.is_some()
-        {
-            self.warn("WG_INTRO_STYLE", "intro 的文字颜色/背景暂不参与导出", line);
-        }
+    fn intro(&mut self, sentence: &IntroSentence, _line: usize) -> Result<()> {
+        // 五种 `animation`、配色与背景图都按引擎的 DOM 表现还原:
+        // 背景色默认纯黑, 背景图按 `center/cover` 铺满, 文字默认白色。
         let lines = sentence
             .content
             .join("|")
@@ -1526,26 +1636,28 @@ impl<'a> Compiler<'a> {
             .as_deref()
             .map(|value| self.add_asset("background", value, AssetKind::Background))
             .transpose()?;
+        // 引擎的 `-delayTime` 缺省是 1500ms, 既决定每行的出场间隔, 也决定整段时长。
+        let delay_ms = sentence.delay.unwrap_or(Timing::DEFAULT_INTRO_DELAY_MS);
         let start = self.time_us;
         let end = if sentence.hold {
             start + Timing::ms(self.timing.intro_hold_ms)
         } else {
-            start
-                + self
-                    .timing
-                    .intro_ms(lines.len(), sentence.delay.unwrap_or(0))
-                    * 1000
+            start + self.timing.intro_ms(lines.len(), delay_ms) * 1000
         };
         self.plan.intros.push(IntroSegment {
             start_us: start,
             end_us: end,
             lines,
             font_size: sentence.font_size.to_string(),
-            color: color(sentence.font_color),
+            font_color: rgba(sentence.font_color, [1.0, 1.0, 1.0, 1.0]),
+            background_color: rgba(sentence.background_color, [0.0, 0.0, 0.0, 1.0]),
             background,
             animation: sentence.animation.to_string(),
+            delay_ms,
         });
         self.time_us = end;
+        // intro perform 的 `goNextWhenOver` 为真: 结束时结算其它非 hold 演出。
+        self.clear_blocking();
         Ok(())
     }
 
@@ -1565,6 +1677,9 @@ impl<'a> Compiler<'a> {
 
     fn wait(&mut self, sentence: &WaitSentence) {
         self.time_us = self.time_us.saturating_add(Timing::ms(sentence.duration));
+        // `wait` 的 perform 结束时引擎会 `continueSentence`: 结算所有非 hold 演出,
+        // 所以之前动画的自动播放阻塞到这里就失效了 (keep 演出不受影响, 本来也不阻塞)。
+        self.clear_blocking();
     }
 
     fn choose(&mut self, sentence: &ChooseSentence, line: usize) -> Result<()> {
@@ -1634,6 +1749,8 @@ impl<'a> Compiler<'a> {
                 sentence.scene
             )));
         }
+        // 切场景会销毁舞台上的演出，旧场景的阻塞不应该拖住新场景的第一句。
+        self.clear_blocking();
         self.change_scene_name(&sentence.scene);
         Ok(())
     }
@@ -1815,6 +1932,19 @@ fn animation_target(target: Option<&ObjectId>) -> String {
         .unwrap_or_else(|| "0".to_owned())
 }
 
+/// 语句的 `-next` / `-continue` 标记; 没有该参数的语句返回 `None`。
+fn forward_of(sentence: &Sentence) -> Option<Forward> {
+    match sentence {
+        Sentence::ChangeBackground(sentence) => Some(sentence.forward),
+        Sentence::ChangeFigure(sentence) => Some(sentence.forward),
+        Sentence::SetTransform(sentence) => Some(sentence.forward),
+        Sentence::SetAnimation(sentence) => Some(sentence.forward),
+        Sentence::SetTempAnimation(sentence) => Some(sentence.forward),
+        Sentence::SetComplexAnimation(sentence) => Some(sentence.forward),
+        _ => None,
+    }
+}
+
 fn merge_transform(base: &Transform, patch: Option<&Transform>) -> Transform {
     let mut transform = base.clone();
     if let Some(patch) = patch {
@@ -1886,10 +2016,14 @@ fn percent(value: u8) -> f32 {
     f32::from(value.min(100)) / 100.0
 }
 
-fn color(value: Option<webgal_language_core::element::Color>) -> String {
-    let value = value.unwrap_or_default();
-    format!(
-        "rgba({}, {}, {}, {})",
-        value.red, value.green, value.blue, value.alpha
-    )
+/// 可选的颜色参数 → ABI 的 RGBA 分量 (0..1); 缺省时用引擎默认色。
+fn rgba(value: Option<webgal_language_core::element::Color>, default: [f32; 4]) -> [f32; 4] {
+    value.map_or(default, |value| {
+        [
+            f32::from(value.red) / 255.0,
+            f32::from(value.green) / 255.0,
+            f32::from(value.blue) / 255.0,
+            value.alpha,
+        ]
+    })
 }

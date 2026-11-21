@@ -10,6 +10,35 @@
 
 namespace webgal::media {
 
+/// 关键帧间隔 (帧): 导出片固定按 1 秒一个关键帧, 保证能拖动进度条。
+///
+/// MF 的 H.264 编码器不设置 `AVEncMPVGOPSize` 时可能整片只在开头放一个 IDR,
+/// 长片拖动等于从头解码; ffmpeg 路径用同一个值, 两条编码路径的关键帧密度一致。
+std::uint32_t default_keyframe_interval(std::uint32_t fps_num, std::uint32_t fps_den);
+
+/// 编码器实际生效的参数; 写进日志, 也让验收用例能钉住"参数真的落到了编码器上"。
+struct EncoderSettings {
+    /// 目标平均码率 (kbps)。
+    std::uint32_t bitrate_kbps = 0;
+    /// 关键帧间隔 (帧); 0 表示没能设置, 沿用编码器默认。
+    std::uint32_t keyframe_interval = 0;
+    /// 是否确认把码率控制切成了 CBR; false 时沿用编码器默认。
+    bool constant_bitrate = false;
+    /// 协商后的 H.264 profile_idc (77 = Main, 100 = High)。
+    std::uint32_t profile = 0;
+    /// 协商后的 H.264 level_idc (31 = 3.1, 41 = 4.1)。
+    std::uint32_t level = 0;
+    /// 实际采用的色彩矩阵: "BT.709" / "BT.601"; 空表示编码器不接受我们的声明。
+    std::string color;
+    /// 是否硬件 MFT; `hardware_known` 为假时无意义。
+    bool hardware = false;
+    bool hardware_known = false;
+    /// 输入是 NV12 (否则 RGB32)。
+    bool nv12 = true;
+    /// 编码器 MFT 的显示名; 空表示查不到。
+    std::string name;
+};
+
 /// Media Foundation Sink Writer: RGB32 + PCM -> H.264/AAC MP4.
 class MfEncoder {
   public:
@@ -30,6 +59,12 @@ class MfEncoder {
                      std::string& error);
 
     bool finish(std::string& error);
+
+    /// 已生效的编码参数; `init` 返回后有效。
+    const EncoderSettings& settings() const;
+
+    /// 一行人类可读的摘要, 用于导出日志。
+    std::string summary() const;
 
   private:
     struct Impl;

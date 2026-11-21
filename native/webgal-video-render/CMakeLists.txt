@@ -100,6 +100,7 @@ add_library(webgal-video-render STATIC
     src/media/stb_image_impl.cpp
     src/media/stb_vorbis_impl.cpp
     src/media/video.cpp
+    src/media/wav.cpp
     src/pipeline/export.cpp
     src/stage/renderer.cpp
     "${WEBGAL_EMBEDDED_ASSETS}"

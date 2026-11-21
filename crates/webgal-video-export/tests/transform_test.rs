@@ -62,8 +62,11 @@ fn set_transform_key_starts_at_statement_time() {
 fn set_transform_without_next_advances_timeline() {
     let plan = plan();
     let first = plan.texts.first().expect("text segments");
-    // 场上有 setTransform -duration=1000 (没有 -next), 之后才开始第一句。
-    assert_eq!(first.start_us, 1_000_000);
+    // 台词前是 `changeBg -next; changeFigure -next; setTransform -duration=1000`。
+    // 后两条在 `-next` 链里立刻执行，但链里的 changeBg 入场默认 1500ms 且
+    // `blockingAuto` 恒为真：自动播放要等它结束（比 setTransform 的 1000ms 更晚），
+    // 所以第一句在 1500ms 开始。
+    assert_eq!(first.start_us, 1_500_000);
 }
 
 #[test]

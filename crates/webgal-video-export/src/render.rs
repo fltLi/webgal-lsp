@@ -7,9 +7,9 @@
 //! 视频时长探测与渲染入口。
 
 use webgal_video_render_sys::{
-    AudioKind, AudioSpec, BackgroundSpec, Blink, Error, FigureKeySpec, FilmSpec, Focus, Meta,
-    ParticleKind as SysParticleKind, ParticleSpec, PlanBuilder, StageSpec, TextSpec, Transform,
-    VideoSpec,
+    AudioKind, AudioSpec, BackgroundSpec, Blink, Error, FigureKeySpec, FilmSpec, Focus, IntroSpec,
+    Meta, ParticleKind as SysParticleKind, ParticleSpec, PlanBuilder, StageSpec, TextSpec,
+    Transform, VideoSpec,
 };
 
 use crate::plan::{
@@ -146,12 +146,16 @@ pub fn from_plan(plan: &Plan) -> Result<PlanBuilder, Error> {
     }
 
     for segment in &plan.intros {
-        builder.add_intro(
-            segment.start_us,
-            segment.end_us,
-            &segment.font_size,
-            &segment.animation,
-        )?;
+        builder.add_intro(&IntroSpec {
+            start_us: segment.start_us,
+            end_us: segment.end_us,
+            font_size: &segment.font_size,
+            animation: &segment.animation,
+            delay_ms: segment.delay_ms,
+            font_color: segment.font_color,
+            background_color: segment.background_color,
+            background: segment.background.as_deref(),
+        })?;
         for line in &segment.lines {
             builder.add_intro_line(line)?;
         }

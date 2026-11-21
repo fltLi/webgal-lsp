@@ -42,6 +42,8 @@ pub struct VideoProjectInfo {
 pub struct VideoExportResult {
     pub output: String,
     pub encoder: Option<String>,
+    pub bytes: Option<u64>,
+    pub bitrate_kbps: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

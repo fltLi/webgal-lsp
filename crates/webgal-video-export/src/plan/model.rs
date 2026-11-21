@@ -325,8 +325,14 @@ pub struct IntroSegment {
     pub end_us: u64,
     pub lines: Vec<String>,
     pub font_size: String,
-    pub color: String,
+    /// 文字颜色 (RGBA, 0..1); 引擎默认白色。
+    pub font_color: [f32; 4],
+    /// 背景色 (RGBA, 0..1); 引擎默认纯黑。
+    pub background_color: [f32; 4],
+    /// 背景图资源 (项目相对路径); 按 CSS `center/cover` 铺满整幅画面。
     pub background: Option<String>,
+    /// 每行的出场间隔 (引擎的 `animationDelay = delayTime * 行号`)。
+    pub delay_ms: u32,
     pub animation: String,
 }
 

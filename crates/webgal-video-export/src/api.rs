@@ -99,6 +99,18 @@ pub fn output_width(height: u32, stage_width: u32, stage_height: u32) -> u32 {
     (width as u32) & !1
 }
 
+/// 由产物大小与时长估算平均码率 (kbps, 含音轨)。
+///
+/// 配置里的码率是编码目标; 这个值是从**实际产物**反推出来的, UI 用它告诉用户
+/// "预设 8000 到底导出了多少"。任一参数为 0 时返回 `None`。
+pub fn average_bitrate_kbps(bytes: u64, duration_us: u64) -> Option<u32> {
+    if bytes == 0 || duration_us == 0 {
+        return None;
+    }
+    let kbps = u128::from(bytes) * 8 * 1000 / u128::from(duration_us);
+    u32::try_from(kbps).ok()
+}
+
 /// 路线节点；UI 用它展示 scene/choose/call。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -308,5 +320,20 @@ fn scale_time(plan: &mut plan::Plan, speed: f32) {
         event.end_us = event.end_us.map(|value| us(value, speed));
         event.fade_in_ms = ms(event.fade_in_ms, speed);
         event.fade_out_ms = ms(event.fade_out_ms, speed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn average_bitrate_follows_size_and_duration() {
+        // 10 秒 10 MB = 8000 kbps (十进制单位, 与 UI 文案口径一致)。
+        assert_eq!(average_bitrate_kbps(10_000_000, 10_000_000), Some(8000));
+        // 同一码率, 时长减半 → 产物减半。
+        assert_eq!(average_bitrate_kbps(5_000_000, 5_000_000), Some(8000));
+        assert_eq!(average_bitrate_kbps(0, 1_000_000), None);
+        assert_eq!(average_bitrate_kbps(1_000, 0), None);
     }
 }

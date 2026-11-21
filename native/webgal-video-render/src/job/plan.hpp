@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -167,6 +168,14 @@ struct IntroSegment {
     std::vector<std::string> lines;
     std::string font_size;
     std::string animation;
+    /// 每行的出场间隔 (毫秒); 第 i 行在 `start_us + delay_ms * i` 开始动画。
+    std::uint32_t delay_ms = 0;
+    /// 文字颜色 (RGBA, 0..1); 引擎默认白色.
+    std::array<float, 4> font_color{1.0F, 1.0F, 1.0F, 1.0F};
+    /// 背景色 (RGBA, 0..1); 引擎默认纯黑.
+    std::array<float, 4> background_color{0.0F, 0.0F, 0.0F, 1.0F};
+    /// 背景图资源 (项目相对路径); 按 CSS `center/cover` 铺满画面.
+    std::optional<std::string> background;
 };
 
 /// 全屏视频段。视频覆盖背景、立绘与 UI，按 `contain` 居中并铺黑边。

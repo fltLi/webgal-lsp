@@ -391,7 +391,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | `playVideo` 画面出现斜向条纹/逐行错位 | Media Foundation 的 RGB32 缓冲区可能按 16 像素对齐（如 1918×1080 实际为 1920×1088），`MF_MT_DEFAULT_STRIDE` 仍是 1918×4；行距必须从 buffer 长度推断，见 `media/video.cpp` 的 `decode()` |
 | **任意视频/预览全屏后底部留一条黑带** | 最大化窗口 + 无边框全屏时 tao 不清最大化状态；`editor/src/lib/fullscreen.ts` 全局监听 `fullscreenchange` 并复用 `preview/fullscreen.ts` 的顺序补正，预览 iframe 与原生 `<video>` 共用这一处 |
 | 导出的视频没有声音 / 图层开关无效 | 检查 `ExportConfig.include_audio` 与 `layers`；计划完成后会按它们裁剪 `plan.audio` / `plan.background` / `plan.figures` / UI，不在渲染器里猜 |
-| 导出 WAV 报 `WAV 超过 4 GiB` | WAV 头是 32 位长度；改用 MP4（AAC）或缩短时长 |
+| 长片导出（带 BGM/语音）卡在进度 0%、内存持续上涨、MP4 只有文件头 | Media Foundation 的 MP4 muxer 要音视频按时间戳交织；先写完视频再补音频会把视频样本压在队列里（实测 70 s 就开始卡）。音频必须边渲染边写，见 `native/webgal-video-render/src/pipeline/export.cpp` 的 `write_audio_until`，不要改回"渲染完再混音写入" |
+| 导出的 WAV 超过 4 GiB | 现在会自动改用 RF64（64 位长度，见 `media/wav.cpp`）；个别老工具不认 RF64 时再改用 MP4（AAC） |
 | 仓库里出现 `target-xxx/` 之类的目录 | 设了自定义 `CARGO_TARGET_DIR`（例如验证 `+crt-static` 时）。`.gitignore` 的 `target-*/` 已覆盖；不需要就删掉，它会占几 GB |
 | **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
 | **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |

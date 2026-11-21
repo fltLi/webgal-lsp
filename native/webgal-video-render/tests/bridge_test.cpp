@@ -126,7 +126,13 @@ TEST_CASE("plan builder records the fields the renderer consumes") {
     REQUIRE(webgal_plan_add_choice_option(raw, "选项一", "scene/next.txt") == WEBGAL_STATUS_OK);
     REQUIRE(webgal_plan_add_choice_option(raw, "选项二", nullptr) == WEBGAL_STATUS_OK);
 
-    REQUIRE(webgal_plan_add_intro(raw, 0, 1'000'000, "large", "fadeIn") == WEBGAL_STATUS_OK);
+    const float font_color[4] = {1.0F, 0.8F, 0.8F, 1.0F};
+    const float background_color[4] = {0.0F, 0.0F, 1.0F, 0.5F};
+    REQUIRE(webgal_plan_add_intro(raw, 0, 1'000'000, "large", "fadeIn", 1500, font_color,
+                                  background_color, "background/bg.png") == WEBGAL_STATUS_OK);
+    // 颜色、背景图与行间隔都可空: 传 NULL/0 时用引擎默认值 (白字黑底、无背景图)。
+    REQUIRE(webgal_plan_add_intro(raw, 2'000'000, 3'000'000, nullptr, nullptr, 0, nullptr, nullptr,
+                                  nullptr) == WEBGAL_STATUS_OK);
     REQUIRE(webgal_plan_add_intro_line(raw, "第一行") == WEBGAL_STATUS_OK);
 
     REQUIRE(webgal_plan_add_film(raw, 0, 1) == WEBGAL_STATUS_OK);

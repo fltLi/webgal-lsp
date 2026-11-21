@@ -219,14 +219,27 @@ fn set_transform_from_default_resets_the_state() {
 }
 
 #[test]
-fn intro_style_is_reported() {
+fn intro_style_reaches_the_plan() {
     let plan = plan_for("intro");
-    // 五种 intro 动画都已实现 (含 pixelateEffect), 只有配色/背景图还会报 style。
+    // 五种 intro 动画都已实现 (含 pixelateEffect), 配色与背景图现在也进计划, 不再报警。
     assert!(!has_warning(&plan, "WG_INTRO_ANIMATION"));
-    assert!(has_warning(&plan, "WG_INTRO_STYLE"));
+    assert!(!has_warning(&plan, "WG_INTRO_STYLE"));
     // intro 至少要出现在计划里, 否则这个用例只证明了"没编译"。
-    assert_eq!(plan.intros.len(), 1);
-    assert_eq!(plan.intros[0].animation, "pixelateEffect");
+    assert_eq!(plan.intros.len(), 2);
+    let intro = &plan.intros[0];
+    assert_eq!(intro.animation, "pixelateEffect");
+    // -fontColor=rgba(255,204,204,1)
+    assert_eq!(intro.font_color, [1.0, 0.8, 0.8, 1.0]);
+    // -backgroundColor=rgba(0,0,255,0.5)
+    assert_eq!(intro.background_color, [0.0, 0.0, 1.0, 0.5]);
+    assert_eq!(intro.background.as_deref(), Some("background/bg.png"));
+    // 没写 -delayTime 时用引擎默认 1500ms; 整段时长 = 1000 + 1500 * 2 行。
+    assert_eq!(intro.delay_ms, 1500);
+    assert_eq!(intro.end_us - intro.start_us, 4_000_000);
+    // 写了 -delayTime=300: 一行, 时长 = 1000 + 300。
+    let second = &plan.intros[1];
+    assert_eq!(second.delay_ms, 300);
+    assert_eq!(second.end_us - second.start_us, 1_300_000);
 }
 
 #[test]

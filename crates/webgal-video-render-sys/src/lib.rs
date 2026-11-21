@@ -498,6 +498,10 @@ unsafe extern "C" {
         end_us: u64,
         font_size: *const c_char,
         animation: *const c_char,
+        delay_ms: u32,
+        font_color: *const f32,
+        background_color: *const f32,
+        background: *const c_char,
     ) -> c_int;
     fn webgal_plan_add_intro_line(plan: *mut WebgalPlan, text: *const c_char) -> c_int;
     fn webgal_plan_add_video(
@@ -625,6 +629,23 @@ pub struct VideoSpec<'a> {
     pub start_us: u64,
     pub end_us: u64,
     pub path: &'a str,
+}
+
+/// 一段全屏文字。
+#[derive(Debug, Clone, Copy)]
+pub struct IntroSpec<'a> {
+    pub start_us: u64,
+    pub end_us: u64,
+    pub font_size: &'a str,
+    pub animation: &'a str,
+    /// 每行的出场间隔 (毫秒); 引擎默认 1500。
+    pub delay_ms: u32,
+    /// 文字颜色 (RGBA, 0..1)。
+    pub font_color: [f32; 4],
+    /// 背景色 (RGBA, 0..1)。
+    pub background_color: [f32; 4],
+    /// 背景图资源 (项目相对路径); `None` 表示只有背景色。
+    pub background: Option<&'a str>,
 }
 
 /// 一条音频事件。
@@ -848,22 +869,21 @@ impl PlanBuilder {
     }
 
     /// 开始一段全屏文字。
-    pub fn add_intro(
-        &mut self,
-        start_us: u64,
-        end_us: u64,
-        font_size: &str,
-        animation: &str,
-    ) -> Result<(), Error> {
-        let font_size = cstring(font_size)?;
-        let animation = cstring(animation)?;
+    pub fn add_intro(&mut self, spec: &IntroSpec<'_>) -> Result<(), Error> {
+        let font_size = cstring(spec.font_size)?;
+        let animation = cstring(spec.animation)?;
+        let background = optional_cstring(spec.background)?;
         check(unsafe {
             webgal_plan_add_intro(
                 self.raw,
-                start_us,
-                end_us,
+                spec.start_us,
+                spec.end_us,
                 font_size.as_ptr(),
                 animation.as_ptr(),
+                spec.delay_ms,
+                spec.font_color.as_ptr(),
+                spec.background_color.as_ptr(),
+                background.as_ptr(),
             )
         })
     }

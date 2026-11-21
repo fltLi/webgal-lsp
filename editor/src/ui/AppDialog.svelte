@@ -20,7 +20,7 @@
   let {
     title,
     iconName,
-    /** 标题下方的补充说明 */
+    /** 标题下方的补充说明: 只放一两句话; 长串/多行原文请放进主体 (如 `.confirm-message`) */
     description,
     /** 尺寸档位, 对应 styles.css 的 `.dialog-<size>` */
     size = 'medium',

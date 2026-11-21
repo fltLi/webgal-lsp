@@ -10,6 +10,10 @@
 #include <string>
 #include <vector>
 
+#include "common/context.hpp"
+#include "common/path.hpp"
+#include "job/plan.hpp"
+
 namespace {
 
 void write_u16(std::ofstream& output, std::uint16_t value) {
@@ -67,4 +71,37 @@ TEST_CASE("audio probe rejects unsupported formats") {
     REQUIRE_FALSE(webgal::media::probe_audio_duration(path, duration_us, error));
     REQUIRE_FALSE(error.empty());
     std::filesystem::remove(path);
+}
+
+TEST_CASE("render_audio writes a wav header that reads back") {
+    // WAV 头现在由 media/wav.cpp 生成; 写完必须能被自己的探测器/解码器读回,
+    // 时长与采样率都要对得上 (回填大小或 RIFF 结构写错时这里会失败)。
+    const auto source = write_silence_wav(1);
+    const auto output = std::filesystem::temp_directory_path() / "webgal-audio-render-test.wav";
+
+    webgal::job::Plan plan;
+    plan.duration_us = 500'000;
+    webgal::job::AudioEvent event;
+    event.path = webgal::to_utf8(source);
+    event.kind = webgal::job::AudioKind::Bgm;
+    event.volume = 1.0F;
+    plan.audio.push_back(event);
+
+    webgal::run::Context context;
+    std::string error;
+    REQUIRE(webgal::media::render_audio(plan, output, context, error));
+
+    std::uint64_t duration_us = 0;
+    REQUIRE(webgal::media::probe_audio_duration(output, duration_us, error));
+    REQUIRE(duration_us == 500'000);
+
+    webgal::media::AudioClip clip;
+    REQUIRE(webgal::media::load_audio(output, clip, error));
+    REQUIRE(clip.sample_rate == 48'000);
+    REQUIRE(clip.channels == 2);
+    REQUIRE(clip.frames == 24'000);
+
+    std::error_code code;
+    std::filesystem::remove(output, code);
+    std::filesystem::remove(source, code);
 }

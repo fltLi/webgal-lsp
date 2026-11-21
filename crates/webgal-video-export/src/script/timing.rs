@@ -24,6 +24,10 @@ pub struct Timing {
 }
 
 impl Timing {
+    /// 引擎给每行 intro 的默认 `animationDelay`, 见 `Core/gameScripts/intro.tsx`
+    /// (`getNumberArgByKey(sentence, 'delayTime') ?? 1500`)。它同时决定整段时长:
+    /// `1000 + delayTime * 行数`。
+    pub const DEFAULT_INTRO_DELAY_MS: u32 = 1500;
     /// 从导出配置构造, 数值超出 0..=100 会被夹取.
     pub fn new(config: &TimingConfig) -> Self {
         let text_speed = f64::from(config.text_speed.min(100));

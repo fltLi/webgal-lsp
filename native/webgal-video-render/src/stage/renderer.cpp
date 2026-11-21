@@ -4212,6 +4212,14 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
     const float bold =
         ui_style_.bold && !font_is_bold_ ? std::max(0.2F, static_cast<float>(size) * 0.008F) : 0.0F;
 
+    // 模拟粗体时同一个字形要叠 9 遍 (8 个偏移 + 本体), 每次绘制都会做一次 alpha 混合。
+    // 直接把目标 alpha 用在这 9 遍上会被叠到接近不透明 (0.4 叠 9 遍 ≈ 0.99),
+    // 淡入淡出就完全看不出来了。这里按 1-(1-a)^(1/9) 分摊, 让叠完仍等于目标 alpha;
+    // a = 1 时结果仍是 1, 不影响平时的不透明文字。
+    constexpr int kBoldPasses = 9;
+    const float paint_alpha =
+        bold > 0.0F ? 1.0F - std::pow(1.0F - alpha, 1.0F / static_cast<float>(kBoldPasses)) : alpha;
+
     struct TextBatch {
         DrawItem item;
         int order = 0;
@@ -4288,7 +4296,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                     const float angle =
                         static_cast<float>(direction) * 3.14159265358979323846F / 4.0F;
                     add_glyph(glyph, left + std::cos(angle) * half, top + std::sin(angle) * half,
-                              color, alpha, 1);
+                              color, paint_alpha, 1);
                 }
             }
             if (stroke > 0.0F) {
@@ -4312,7 +4320,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
                     }
                 }
             }
-            add_glyph(glyph, left, top, color, alpha, 3);
+            add_glyph(glyph, left, top, color, paint_alpha, 3);
         }
         x += glyph.advance + spacing;
         ++revealed;
@@ -4820,6 +4828,38 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         items.push_back(std::move(item));
     };
 
+    // intro 的背景: 引擎用容器的 CSS `background` / `backgroundColor`, 背景色垫底,
+    // 背景图按 `center/cover` 铺满 (等比放大到盖住整幅画面, 居中裁掉溢出部分)。
+    const auto append_intro_backdrop = [&](const job::IntroSegment& intro) -> bool {
+        const auto& color = intro.background_color;
+        add_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), color[0],
+                 color[1], color[2], color[3]);
+        if (!intro.background.has_value()) {
+            return true;
+        }
+        auto* image = image_for(plan, *intro.background, error);
+        if (image == nullptr) {
+            return false;
+        }
+        const float image_w = static_cast<float>(image->width);
+        const float image_h = static_cast<float>(image->height);
+        if (image_w <= 0.0F || image_h <= 0.0F) {
+            return true;
+        }
+        const float fit = std::max(static_cast<float>(stage_w_) / image_w,
+                                   static_cast<float>(stage_h_) / image_h);
+        const float quad_w = image_w * fit;
+        const float quad_h = image_h * fit;
+        DrawItem item;
+        item.descriptor = image->descriptor;
+        // 溢出的顶点由视口裁掉, 不需要额外的裁剪面。
+        build_rect((static_cast<float>(stage_w_) - quad_w) * 0.5F,
+                   (static_cast<float>(stage_h_) - quad_h) * 0.5F, quad_w, quad_h, 0.0F, 0.0F, 1.0F,
+                   1.0F, item.vertices);
+        items.push_back(std::move(item));
+        return true;
+    };
+
     // `pixelateEffect` 的 intro 需要跑模糊滤镜链, 而滤镜链的目标固定是舞台目标 —— UI 叠层在
     // SSAA/MSAA 下画在输出目标上, 没法接。所以这种 intro 放在场景 pass 里 (所有舞台内容之后),
     // 代价是它必须自己压掉文本框与选项; intro 的纯黑底本来就会盖住它们, 画面与引擎一致。
@@ -4836,8 +4876,9 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     const bool intro_covers_stage =
         intro_now != nullptr && intro_now->animation == "pixelateEffect";
     if (intro_covers_stage) {
-        add_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
-                 0.0F, 1.0F);
+        if (!append_intro_backdrop(*intro_now)) {
+            return false;
+        }
         const float percent = intro_now->font_size == "small"
                                   ? 280.0F
                                   : (intro_now->font_size == "large" ? 420.0F : 350.0F);
@@ -4845,27 +4886,34 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
             std::max(12, static_cast<int>(std::lround(25.6F * percent / 100.0F * ui_style_.scale *
                                                       ui_font_scale_)));
         const float left = 4.0F * static_cast<float>(intro_size);
-        const std::array<float, 4> intro_color{1.0F, 1.0F, 1.0F, 1.0F};
-        // 引擎的 `pixelateAnimation` 是 3s: opacity 0→1 线性, filter blur 0→5px→0 (50% 峰值)。
+        const std::array<float, 4> intro_color = intro_now->font_color;
+        // 引擎给每一行设 `animationDelay = delayTime * 行号`, 所以每行的 opacity/blur
+        // 各自从 `start_us + delay * i` 开始算; delay 为 0 时与原来完全一致。
         const float elapsed =
             static_cast<float>(elapsed_us(t_us, intro_now->start_us)) / 1000000.0F;
-        const float opacity = std::clamp(elapsed / 3.0F, 0.0F, 1.0F);
-        const float half = std::clamp(elapsed / 1.5F, 0.0F, 2.0F);
-        const float ramp = half < 1.0F ? half : 2.0F - half;
-        // 5 CSS px 按舞台宽度换算; 滤镜链的半径单位是输出像素, 与舞台一致。
-        const float blur = 5.0F * ui_style_.scale * ramp;
-        const std::size_t text_begin = items.size();
+        const float delay = static_cast<float>(intro_now->delay_ms) / 1000.0F;
         float baseline =
             3.0F * static_cast<float>(intro_size) + 0.80F * static_cast<float>(intro_size);
-        for (const auto& line : intro_now->lines) {
+        for (std::size_t line_index = 0; line_index < intro_now->lines.size(); ++line_index) {
+            const auto& line = intro_now->lines[line_index];
+            const float line_elapsed =
+                std::max(0.0F, elapsed - delay * static_cast<float>(line_index));
+            // 引擎的 `pixelateAnimation` 是 3s: opacity 0→1 线性,
+            // filter blur 0→5px→0 (50% 峰值)。
+            const float opacity = std::clamp(line_elapsed / 3.0F, 0.0F, 1.0F) * intro_color[3];
+            const float half = std::clamp(line_elapsed / 1.5F, 0.0F, 2.0F);
+            const float ramp = half < 1.0F ? half : 2.0F - half;
+            // 5 CSS px 按舞台宽度换算; 滤镜链的半径单位是输出像素, 与舞台一致。
+            const float blur = 5.0F * ui_style_.scale * ramp;
+            const std::size_t line_begin = items.size();
             std::size_t revealed = 0;
             append_text(items, line, left, baseline, intro_size, opacity, revealed,
                         std::numeric_limits<std::size_t>::max(), intro_color, false, 0.0F, false);
+            for (std::size_t index = line_begin; index < items.size(); ++index) {
+                items[index].transform.blur = blur;
+                items[index].force_blur = true;
+            }
             baseline += 1.2F * static_cast<float>(intro_size);
-        }
-        for (std::size_t index = text_begin; index < items.size(); ++index) {
-            items[index].transform.blur = blur;
-            items[index].force_blur = true;
         }
     }
     const std::size_t scene_item_count = items.size();
@@ -5050,31 +5098,38 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         if (intro.animation == "pixelateEffect") {
             continue;
         }
-        // 引擎的 intro: 纯黑底 + 内边距 3em/4em, 文字逐行**左对齐**; 字号是 medium 350%。
-        add_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
-                 0.0F, 1.0F);
+        // 引擎的 intro: 背景色 + 可选背景图, 内边距 3em/4em, 文字逐行**左对齐**;
+        // 字号是 medium 350%。
+        if (!append_intro_backdrop(intro)) {
+            return false;
+        }
         const float percent =
             intro.font_size == "small" ? 280.0F : (intro.font_size == "large" ? 420.0F : 350.0F);
         const int intro_size =
             std::max(12, static_cast<int>(std::lround(25.6F * percent / 100.0F * ui_style_.scale *
                                                       ui_font_scale_)));
         const float left = 4.0F * static_cast<float>(intro_size);
-        const std::array<float, 4> intro_color{1.0F, 1.0F, 1.0F, 1.0F};
-        // 引擎的 intro 是 DOM CSS 动画: fadeIn 1.5s ease-out 淡入, slideIn 1.5s 从左滑入。
-        // typingEffect / revealAnimation 也在这里画; pixelateEffect 在场景 pass 里另画 (要跑
-        // 模糊滤镜链), 上面已经 continue。
+        const std::array<float, 4> intro_color = intro.font_color;
+        // 引擎的 intro 是 DOM CSS 动画: fadeIn 1.5s ease-out 淡入, slideIn 1.5s 从左滑入;
+        // 每行还有 `animationDelay = delayTime * 行号`, 所以逐行用自己的局部时间。
+        // typingEffect / revealAnimation 也在这里画; pixelateEffect 在场景 pass 里另画
+        // (要跑模糊滤镜链), 上面已经 continue。
         const float elapsed = static_cast<float>(elapsed_us(t_us, intro.start_us)) / 1000000.0F;
-        const float progress = std::clamp(elapsed / 1.5F, 0.0F, 1.0F);
-        float intro_alpha = 1.0F;
-        float slide = 0.0F;
-        if (intro.animation == "fadeIn") {
-            intro_alpha = progress;
-        } else if (intro.animation == "slideIn") {
-            slide = -(1.0F - progress) * static_cast<float>(stage_w_);
-        }
+        const float delay = static_cast<float>(intro.delay_ms) / 1000.0F;
         float baseline =
             3.0F * static_cast<float>(intro_size) + 0.80F * static_cast<float>(intro_size);
-        for (const auto& line : intro.lines) {
+        for (std::size_t line_index = 0; line_index < intro.lines.size(); ++line_index) {
+            const auto& line = intro.lines[line_index];
+            const float line_elapsed =
+                std::max(0.0F, elapsed - delay * static_cast<float>(line_index));
+            const float progress = std::clamp(line_elapsed / 1.5F, 0.0F, 1.0F);
+            float intro_alpha = 1.0F;
+            float slide = 0.0F;
+            if (intro.animation == "fadeIn") {
+                intro_alpha = progress;
+            } else if (intro.animation == "slideIn") {
+                slide = -(1.0F - progress) * static_cast<float>(stage_w_);
+            }
             std::size_t revealed = 0;
             std::size_t reveal_count = std::numeric_limits<std::size_t>::max();
             if (intro.animation == "typingEffect") {
@@ -5082,11 +5137,12 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
                 reveal_count = static_cast<std::size_t>(progress * static_cast<float>(line.size()));
             } else if (intro.animation == "revealAnimation") {
                 // 引擎是 3s 的 clip-path 从左展开; 这里按字数从左往右揭开, 观感接近。
-                const float reveal = std::clamp(elapsed / 3.0F, 0.0F, 1.0F);
+                const float reveal = std::clamp(line_elapsed / 3.0F, 0.0F, 1.0F);
                 reveal_count = static_cast<std::size_t>(reveal * static_cast<float>(line.size()));
             }
-            append_text(items, line, left + slide, baseline, intro_size, intro_alpha, revealed,
-                        reveal_count, intro_color, false, 0.0F, false);
+            append_text(items, line, left + slide, baseline, intro_size,
+                        intro_alpha * intro_color[3], revealed, reveal_count, intro_color, false,
+                        0.0F, false);
             baseline += 1.2F * static_cast<float>(intro_size);
         }
     }

@@ -1559,16 +1559,24 @@ body.resizing {
   color: #d13438;
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 [data-theme='dark'] .prompt-error {
   color: #f1707b;
 }
 
+/*
+ * 对话框正文里的"具体对象或原文" (路径、错误信息)。
+ *
+ * `pre-wrap` 保留调用方写的 `\n\n` 分段; `anywhere` 让 Windows 绝对路径这种没有空格的
+ * 长串也能折行 —— 少了它, 对话框正文会横向滚出一条滚动条。
+ */
 .confirm-message {
   margin: 0 0 4px;
   font-size: 13px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.6;
 }
 
@@ -2258,11 +2266,13 @@ body.resizing {
   line-height: 1.3;
 }
 
-/* 与 `.welcome-subtitle` 一致: 12px 弱化, 紧贴标题 */
+/* 与 `.welcome-subtitle` 一致: 12px 弱化, 紧贴标题。只放一两句话, 长串走正文的 `.confirm-message` */
 .dialog-description {
   margin: 2px 0 0;
   font-size: 12px;
   color: var(--app-muted);
+  /* 兜底: 万一传进来一个长 token (文件名/版本号), 也别把标题行撑出横向滚动 */
+  overflow-wrap: anywhere;
 }
 
 .dialog-body {
@@ -4223,6 +4233,13 @@ input[type='number'].voice-control {
   display: flex;
   align-items: center;
   gap: 4px;
+  /* 错误里可能出现没有空格的路径: 允许折行, 也别让 flex 子项把对话框撑宽 */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.voice-error > span {
+  min-width: 0;
 }
 
 [data-theme='dark'] .voice-error {
@@ -7244,6 +7261,8 @@ body.path-dragging * {
   border-radius: 4px;
   font-size: 12px;
   color: #d13438;
+  /* 错误里常带没有空格的绝对路径: 允许任意位置折行, 别把对话框撑出横向滚动 */
+  overflow-wrap: anywhere;
 }
 
 [data-theme='dark'] .video-errors {
@@ -7263,6 +7282,7 @@ body.path-dragging * {
   border-radius: 4px;
   font-size: 12px;
   color: #9a6700;
+  overflow-wrap: anywhere;
 }
 
 [data-theme='dark'] .video-warnings {

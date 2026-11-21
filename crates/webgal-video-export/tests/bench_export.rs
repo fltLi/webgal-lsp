@@ -21,6 +21,8 @@
 //! - `WEBGAL_BENCH_NO_FILTERS=1`：关闭舞台滤镜；
 //! - `WEBGAL_BENCH_NO_FXAA=1`：关闭最终 FXAA；
 //! - `WEBGAL_BENCH_FXAA=off|standard|fast|ssaa2|msaa4|smaa`：选择抗锯齿档位；
+//! - `WEBGAL_BENCH_BITRATE=8000`：目标码率 (kbps)；
+//! - `WEBGAL_BENCH_ENCODER=mf|ffmpeg`：编码后端 (默认 Media Foundation)；
 //! - `WEBGAL_RENDER_PROFILE=1`：让渲染器额外打印分阶段耗时。
 
 use std::path::PathBuf;
@@ -91,6 +93,9 @@ fn bench_export() {
     options.config.video.auto_width = true;
     options.config.video.height = height;
     options.config.video.width = 0;
+    if let Ok(fps) = std::env::var("WEBGAL_BENCH_FPS") {
+        options.config.video.fps = fps.parse().expect("WEBGAL_BENCH_FPS");
+    }
     if let Ok(speed) = std::env::var("WEBGAL_BENCH_SPEED") {
         options.config.playback_speed = speed.parse().expect("WEBGAL_BENCH_SPEED");
     }
@@ -119,7 +124,10 @@ fn bench_export() {
     let _ = std::fs::remove_file(&output);
 
     let mut render_options = RenderOptions::new(&output);
-    render_options.encoder = Encoder::MediaFoundation;
+    render_options.encoder = match std::env::var("WEBGAL_BENCH_ENCODER").as_deref() {
+        Ok("ffmpeg") => Encoder::Ffmpeg,
+        _ => Encoder::MediaFoundation,
+    };
     render_options.live2d_core = std::env::var_os("WEBGAL_BENCH_LIVE2D_CORE").map(PathBuf::from);
     render_options.log = std::env::var_os("WEBGAL_BENCH_LOG").map(PathBuf::from);
     render_options.fxaa = match std::env::var("WEBGAL_BENCH_FXAA").as_deref() {
@@ -132,6 +140,9 @@ fn bench_export() {
     };
     if std::env::var_os("WEBGAL_BENCH_NO_FXAA").is_some() {
         render_options.fxaa = FxaaMode::Off;
+    }
+    if let Ok(bitrate) = std::env::var("WEBGAL_BENCH_BITRATE") {
+        render_options.bitrate_kbps = bitrate.parse().expect("WEBGAL_BENCH_BITRATE");
     }
 
     let preview_count = std::sync::atomic::AtomicUsize::new(0);

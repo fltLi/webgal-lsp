@@ -148,6 +148,9 @@
   let encoder = $state(stored.encoder);
   /* 自动编码实际选中哪个后端由渲染器回调报告, 不能靠猜。 */
   let actualEncoder = $state('');
+  /* 完成页的实测数据: 产物字节数与从产物反推的平均码率; 导出前是 0。 */
+  let actualBytes = $state(0);
+  let actualBitrateKbps = $state(0);
 
   let fontScale = $state(stored.fontScale);
   let bgmVolumeText = $state(stored.bgmVolume);
@@ -226,6 +229,15 @@
     return `剩余约 ${formatDuration(remaining)}`;
   });
   const bitrateLabel = $derived(BITRATE_OPTIONS.find((item) => item.value === bitrate)?.label ?? bitrate);
+  /** 实测码率与产物大小: 只在拿到导出结果之后显示。 */
+  const actualBitrateText = $derived(actualBitrateKbps > 0 ? `${actualBitrateKbps} kbps` : '');
+  const actualSizeText = $derived.by(() => {
+    if (actualBytes <= 0) return '';
+    // 十进制单位, 与资源管理器/发行说明的口径一致。
+    if (actualBytes >= 1_000_000_000) return `${(actualBytes / 1_000_000_000).toFixed(2)} GB`;
+    if (actualBytes >= 1_000_000) return `${(actualBytes / 1_000_000).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(actualBytes / 1000))} KB`;
+  });
   const encoderLabel = $derived(ENCODER_OPTIONS.find((item) => item.value === encoder)?.label ?? encoder);
   /** 配置栏写清楚"自动"到底优先用什么。 */
   const encoderSummary = $derived(
@@ -506,6 +518,8 @@
     startedAt = Date.now();
     finishedAt = 0;
     actualEncoder = '';
+    actualBytes = 0;
+    actualBitrateKbps = 0;
 
     try {
       const result = await exportVideo(source, target, startScene, {
@@ -529,6 +543,9 @@
       });
       resultPath = result.output;
       if (result.encoder) actualEncoder = result.encoder;
+      // 实测产物大小与码率: 完成页据此对照配置里的"码率"预设。
+      actualBytes = result.bytes ?? 0;
+      actualBitrateKbps = result.bitrateKbps ?? 0;
       // 事件可能比完成先到也可能漏掉, 以返回值再兜一次底。
       if (result.warnings?.length) warnings = result.warnings;
       progressCurrent = progressTotal;
@@ -572,7 +589,8 @@
     if (!target) return;
     requestConfirm({
       title: '删除导出的文件？',
-      description: `${target}\n文件会移到系统回收站，之后可以再恢复。`,
+      description: '文件会移到系统回收站，之后可以再恢复。',
+      detail: target,
       confirmLabel: '删除',
       danger: true,
       action: () => void removeOutput(target),
@@ -599,6 +617,8 @@
     previewUrl = '';
     startedAt = 0;
     finishedAt = 0;
+    actualBytes = 0;
+    actualBitrateKbps = 0;
     phase = 'idle';
     notice = message;
     void checkOutputName(false);
@@ -934,6 +954,14 @@
           <dd>{fpsText} fps</dd>
           <dt>码率</dt>
           <dd>{bitrateLabel}</dd>
+          {#if actualBitrateText}
+            <dt>实际码率</dt>
+            <dd>{actualBitrateText}</dd>
+          {/if}
+          {#if actualSizeText}
+            <dt>文件大小</dt>
+            <dd>{actualSizeText}</dd>
+          {/if}
           <dt>编码</dt>
           <dd>{encoderSummary}</dd>
           <dt>导出内容</dt>

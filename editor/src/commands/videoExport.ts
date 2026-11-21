@@ -10,6 +10,10 @@ export interface VideoExportResult {
   encoder?: string | null;
   /** 编译期警告；导出前也会通过 `video-export:warnings` 事件推一次。 */
   warnings?: VideoExportWarning[] | null;
+  /** 产物字节数；文件没写出来或已被移走时为 null。 */
+  bytes?: number | null;
+  /** 从产物反推的平均码率（kbps，含音轨）；音频导出或算不出来时为 null。 */
+  bitrateKbps?: number | null;
 }
 
 /** 编译期警告：某条语句或某个动画在导出里不会完全生效。 */

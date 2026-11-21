@@ -13,6 +13,7 @@
 #include <exception>
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -165,16 +166,33 @@ using EncoderFn = void (*)(void*, const char*);
     return context;
 }
 
+/// 记录产物大小与平均码率: 让日志里的"目标码率"和"实际码率"能对上。
+void log_output_size(const std::filesystem::path& output, std::uint64_t duration_us) {
+    std::error_code code;
+    const auto bytes = std::filesystem::file_size(output, code);
+    if (code || bytes == 0 || duration_us == 0) {
+        return;
+    }
+    const double kbps =
+        static_cast<double>(bytes) * 8.0 * 1'000'000.0 / static_cast<double>(duration_us) / 1000.0;
+    std::ostringstream message;
+    message << "导出产物 " << bytes << " 字节, 平均 " << std::llround(kbps) << " kbps";
+    webgal::log::info(message.str());
+}
+
 [[nodiscard]] Status export_video(const webgal::job::Plan& plan,
                                   const std::filesystem::path& output, int encoder,
                                   const webgal::run::Context& context, std::string& error) {
     if (encoder == WEBGAL_ENCODER_FFMPEG) {
-        return webgal::pipeline::export_ffmpeg(plan, output, context, error)
-                   ? WEBGAL_STATUS_OK
-                   : WEBGAL_STATUS_RENDER_FAILED;
+        const bool ok = webgal::pipeline::export_ffmpeg(plan, output, context, error);
+        if (ok) {
+            log_output_size(output, plan.duration_us);
+        }
+        return ok ? WEBGAL_STATUS_OK : WEBGAL_STATUS_RENDER_FAILED;
     }
 
     if (webgal::pipeline::export_native(plan, output, context, error)) {
+        log_output_size(output, plan.duration_us);
         return WEBGAL_STATUS_OK;
     }
     if (context.cancel_requested()) {
@@ -187,6 +205,7 @@ using EncoderFn = void (*)(void*, const char*);
     webgal::log::warn("原生编码失败, 回退到外部 ffmpeg: " + error);
     const std::string native_error = error;
     if (webgal::pipeline::export_ffmpeg(plan, output, context, error)) {
+        log_output_size(output, plan.duration_us);
         return WEBGAL_STATUS_OK;
     }
     error = "原生编码与 ffmpeg 回退都失败; 原生: " + native_error + "; ffmpeg: " + error;
@@ -560,7 +579,9 @@ int webgal_plan_add_choice_option(WebgalPlan* plan, const char* prompt, const ch
 }
 
 int webgal_plan_add_intro(WebgalPlan* plan, uint64_t start_us, uint64_t end_us,
-                          const char* font_size, const char* animation) {
+                          const char* font_size, const char* animation, uint32_t delay_ms,
+                          const float* font_color, const float* background_color,
+                          const char* background) {
     if (plan == nullptr) {
         return WEBGAL_STATUS_INVALID_ARGUMENT;
     }
@@ -572,6 +593,14 @@ int webgal_plan_add_intro(WebgalPlan* plan, uint64_t start_us, uint64_t end_us,
         if (valid_string(animation)) {
             segment.animation = animation;
         }
+        segment.delay_ms = delay_ms;
+        if (font_color != nullptr) {
+            std::copy(font_color, font_color + 4, segment.font_color.begin());
+        }
+        if (background_color != nullptr) {
+            std::copy(background_color, background_color + 4, segment.background_color.begin());
+        }
+        segment.background = optional_string(background);
         plan->plan.intros.push_back(std::move(segment));
         return WEBGAL_STATUS_OK;
     } catch (...) {

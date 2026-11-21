@@ -74,11 +74,13 @@
 <AppDialog
   title="文件已被外部修改"
   iconName="Warning"
-  description={path}
   size="medium"
   closeOnBackdrop
   onClose={() => dismissDiskConflict(path)}
 >
+  <!-- 完整路径放正文: `description` 是标题下的 12px 副标题, 长路径会被挤成一团且不会换行 -->
+  <p class="confirm-message" title={path}>{path}</p>
+
   <p class="voice-dialog-hint">
     这份文件在磁盘上被改过（例如切换分支、还原历史、外部编辑器或另一个窗口），而编辑器里这一份还没保存。
     在做选择之前，这个文件不会自动保存 —— 免得把磁盘上的新内容又盖回去。
