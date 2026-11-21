@@ -25,7 +25,6 @@ import { useAppStore } from '../state/store.svelte';
 import { createCodeBlockHighlight } from './code-block-highlight';
 import {
   lspClient,
-  type LspCompletionItem,
   type LspDiagnostic,
   type LspHover,
   type LspInlayHint,
@@ -33,6 +32,7 @@ import {
   type LspRange,
   type LspTextEdit,
 } from './client';
+import { toCompletionItem, type CompletionConversionDeps } from './completion';
 import { installDocAlerts } from './doc-alert';
 import { resolveSemanticTokens } from './highlight-fallback';
 // 语言判据放在纯模块里 (可单测, 见 `lsp/language.ts`); 这里连同 `LANGUAGE_ID` 一起转出去,
@@ -177,40 +177,19 @@ function toMonacoRange(range: LspRange): monaco.Range {
   return new monaco.Range(range.start.line + 1, range.start.character + 1, range.end.line + 1, range.end.character + 1);
 }
 
+// 注入给纯转换模块 `completion.ts` 的 Monaco 常量 (保持那边可单测)。
+const completionDeps: CompletionConversionDeps = {
+  kinds: LSP_KIND_TO_MONACO,
+  textKind: monaco.languages.CompletionItemKind.Text,
+  insertAsSnippet: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+  toRange: toMonacoRange,
+};
+
 function hoverText(hover: LspHover): string {
   const contents = hover.contents;
   if (typeof contents === 'string') return contents;
   if (Array.isArray(contents)) return contents.map((c) => c.value).join('\n\n');
   return contents.value;
-}
-
-function toCompletionItem(item: LspCompletionItem, fallbackRange: monaco.IRange): monaco.languages.CompletionItem {
-  const edit = item.textEdit;
-  const isSnippet = item.insertTextFormat === 2;
-  const insertText = edit && 'newText' in edit ? edit.newText : (item.insertText ?? item.label);
-  const range = edit && 'range' in edit ? toMonacoRange(edit.range) : fallbackRange;
-  const label = item.labelDetails
-    ? {
-        label: item.label,
-        detail: item.labelDetails.detail ?? undefined,
-        description: item.labelDetails.description ?? undefined,
-      }
-    : item.label;
-  // 文档: 兼容字符串与 MarkupContent {kind, value}, 以 markdown 形式呈现
-  const rawDoc = item.documentation;
-  const docValue = typeof rawDoc === 'string' ? rawDoc : rawDoc?.value;
-  return {
-    label,
-    kind:
-      item.kind !== undefined
-        ? (LSP_KIND_TO_MONACO[item.kind] ?? monaco.languages.CompletionItemKind.Text)
-        : monaco.languages.CompletionItemKind.Text,
-    detail: item.detail,
-    documentation: docValue ? { value: docValue, isTrusted: false } : undefined,
-    insertText,
-    insertTextRules: isSnippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
-    range,
-  };
 }
 
 function toMarker(d: LspDiagnostic): monaco.editor.IMarkerData {
@@ -543,7 +522,7 @@ export function setupMonaco(): void {
           character: position.column - 1,
         });
         if (!items || items.length === 0) return { suggestions: [] };
-        const suggestions = items.map((item) => toCompletionItem(item, fallbackRange));
+        const suggestions = items.map((item) => toCompletionItem(item, fallbackRange, completionDeps));
         // 补全项的文档里也有 ```webgal 代码块: 交给后端高亮并缓存, 之后 Monaco 渲染它们时
         // 用同步 tokenizer 取色 (见 code-block-highlight.ts)
         await Promise.all(

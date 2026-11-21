@@ -102,6 +102,8 @@ export interface LspWorkspaceEdit {
 
 export interface LspCompletionItem {
   label: string;
+  /** LSP sortText: 服务端给出的排序键, Monaco 据此决定补全列表顺序 */
+  sortText?: string;
   kind?: number;
   detail?: string;
   documentation?: string | { kind: string; value: string };

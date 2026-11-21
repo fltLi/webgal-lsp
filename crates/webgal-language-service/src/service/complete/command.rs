@@ -77,12 +77,15 @@ impl CommandInfo {
         });
 
         // 语句模板补全
-        completions.extend(self.templates.iter().map(
-            |&CommandTemplate {
-                 name,
-                 description,
-                 template,
-             }| PrimaryCompletion {
+        completions.extend(self.templates.iter().enumerate().map(
+            |(
+                i,
+                &CommandTemplate {
+                    name,
+                    description,
+                    template,
+                },
+            )| PrimaryCompletion {
                 name: name.to_string(),
                 kind: CompletionItemKind::SNIPPET,
                 description: Some(if description.is_empty() {
@@ -91,7 +94,7 @@ impl CommandInfo {
                     format!("{} ({description})", self.description)
                 }),
                 document: document.map(Document::to_markdown),
-                sort_key: Some(format!("a{name}")),
+                sort_key: Some(format!("a{}{i:016x}", self.name)),
                 span: make_span(position, input.len()),
                 insert_text: Some(template.to_string()),
             },
