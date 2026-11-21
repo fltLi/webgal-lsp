@@ -224,8 +224,8 @@ body {
 
 /* -------- 开始界面 -------- */
 /*
- * 两段式: `head` 固定 (品牌 + 搜索 + 新建/打开), `body` 是唯一的滚动区。
- * 列表再长也不会把上面的按钮顶走, 反过来按钮也不会跟着列表一起滚。
+ * 两段式: `head` 固定 (品牌 + 搜索 + 新建/打开), `body` 固定最近项目标题, 仅项目列表滚动。
+ * 列表再长也不会把上面的按钮顶走, 反过来按钮与标题也不会跟着列表一起滚。
  *
  * 搜索框与两个按钮同层同行: 三者都是"对列表做的事", 分两层会让眼睛来回找。
  */
@@ -233,34 +233,28 @@ body {
   /*
    * 开始页的三个尺寸常量 —— **改尺寸只改这里**。
    *
-   * 策略 (维护者反复强调): 卡片**定宽**, 窗口变宽时不变大, 余量由整列居中吸收。
-   * 内容列 = 三张卡片 + 两个间距 + 左右内边距, 于是顶栏与卡片的左右边界严格重合。
+   * 策略: 卡片**定宽**, 窗口变宽时不变大; 项目区通过增加列数使用多出的宽度。
+   * 顶栏内容列 = 三张卡片 + 两个间距 + 左右内边距。
    *
-   * 数字链 (默认欢迎窗口 900x620):
-   *   滚动条出现时正文可用宽 ≈ 883 (900 − 17 滚动条)
-   *   净宽 = 883 − 2×20 内边距 = **843**
-   *   三张要 3c + 2×12 ≤ 843  →  c ≤ 273  →  取 **273** (3×273 + 24 = 843, 零余量)
-   *   内容列 = 273×3 + 24 + 40 = **883** = 正文可用宽
+   * 数字链 (默认欢迎窗口 915x620):
+   *   网格可用宽 = 915 − 20 左内边距 − 20 右内边距 − 17 滚动条预留 = **858**
+   *   三张卡片需要 3×273 + 2×12 = **843**, 在最小窗口下仍有 15px 余量
+   *   顶栏内容列 = 273×3 + 24 + 40 = **883**
    *
    * 为什么内边距是 20 而不是 28: 卡片要保持定宽、默认窗口又要"每行三张", 那 6px 只能从内边距里腾。
    * 20 + 半格居中偏移, 观感上仍是 28 左右。
    */
   --project-card-width: 273px;
   --welcome-padding-x: 20px;
+  --welcome-scrollbar-width: 17px;
   --welcome-column: calc(3 * var(--project-card-width) + 2 * 12px + 2 * var(--welcome-padding-x));
 
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /*
-   * **滚动条归整页, 不归内容列** (`--welcome-column` 的 883 就是"900 减去滚动条"的量出来的)。
-   *
-   * 滚动条如果挂在 `.welcome-body` 上, 它吃掉的是**那一层自己的宽度**: 内容列 883 再减去 17,
-   * 三张 273 的卡片就正好差这 17px 排不下, 于是项目一多到需要滚动 (第 2 行出现) 就变成一行两张。
-   * 挂在 `.welcome` 上则顶栏与正文一起被压缩, 网格宽度依旧 843 = 3×273 + 2×12。
-   */
-  overflow-y: auto;
+  /* 滚动只交给下方项目区, 避免外层再出现第二根滚动条。 */
+  overflow: hidden;
 }
 
 .welcome-head {
@@ -269,21 +263,15 @@ body {
   align-items: center;
   gap: 24px;
   flex-wrap: wrap;
-  /* 滚动的是整页 (见 `.welcome`), 顶栏因此要贴在顶部: 搜索、新建、打开不该被列表滚走 */
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--app-canvas);
   /* 左右内边距取自 `--welcome-padding-x`: 它与卡片宽度共同决定内容列宽 (见 `.welcome`) */
   padding: 24px var(--welcome-padding-x) 20px;
   /*
-   * 开始页的布局策略 (维护者反复强调过, 我前面几轮一直改错方向, 这次写死在注释里):
+   * 开始页的布局策略:
    *
-   *   **卡片尺寸固定不动; 窗口变化带来的余量, 由"整块内容居中"吸收。**
+   *   **卡片尺寸固定不动; 顶栏保持原定宽居中, 列表在宽屏增加列数。**
    *
-   * 所以顶栏与正文共用一条**定宽的内容列** (`--welcome-column`, 见下), 列宽 = 3 张卡片
-   * + 2 个间距 + 左右内边距 —— 于是顶栏的左右边界与卡片的左右边界**恰好重合**, 窗口一拉
-   * 两者一起内缩, 而卡片本身一个像素都不变。
+   * 顶栏列宽 = 3 张卡片 + 2 个间距 + 左右内边距 (`--welcome-column`, 见下)。
+   * 卡片列表在 `.welcome-projects` 内独立滚动, 由固定宽度卡片网格按可用宽度增加列数。
    *
    * 反面做法 (都试过、都被否):
    *   * `minmax(232px, 1fr)` / `minmax(272px, 340px)`: 卡片会随窗口伸缩 —— **不要**;
@@ -340,16 +328,23 @@ body {
 
 .welcome-body {
   /*
-   * 这一层**不自己滚动** —— 滚动条挂在 `.welcome` 上, 否则它会吃掉内容列的 17px, 项目一多
-   * 就从"一行三张"掉成两张 (理由见 `.welcome` 的注释)。
-   *
-   * `flex: 1 0 auto`: 内容不满时撑满一页 (空态居中), 内容超出时按内容高度长出去, 由整页来滚。
+   * 标题与卡片共用固定宽度列; 滚动容器向右延伸到预留区, 让标题线、卡片网格和滚动内容等宽。
+   * 915 最小宽度已为此处的 17px 滚动条预留空间 (见 `.welcome`)。
    */
-  flex: 1 0 auto;
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--project-card-width));
+  grid-template-rows: auto minmax(0, 1fr);
+  justify-content: center;
+  column-gap: 12px;
+  row-gap: 16px;
   padding: 0 var(--welcome-padding-x) 32px;
-  /* 与顶栏共用同一条定宽内容列; 见 `.welcome-head` 的说明 */
+  padding-right: calc(var(--welcome-padding-x) + var(--welcome-scrollbar-width));
+  overflow: hidden;
+  /* 项目区占满可用宽度; 内部卡片网格按固定卡片宽度计算列数。 */
   width: 100%;
-  max-width: var(--welcome-column);
+  max-width: max(var(--welcome-column), 100%);
   margin-inline: auto;
 }
 
@@ -357,9 +352,19 @@ body {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  grid-column: 1 / -1;
   padding: 0 0 12px;
   border-bottom: 1px solid var(--app-border);
-  margin-bottom: 16px;
+}
+
+.welcome-projects {
+  grid-column: 1 / -1;
+  width: calc(100% + var(--welcome-scrollbar-width));
+  margin-right: calc(-1 * var(--welcome-scrollbar-width));
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .welcome-section-head h3 {
@@ -377,20 +382,15 @@ body {
 }
 
 .project-grid {
-  display: grid;
   /*
-   * **卡片定宽 267px** —— 这是"每行正好三张"的唯一含义, 也是维护者要的策略:
-   * 卡片尺寸不随窗口变, 余量交给内容列居中 (`--welcome-column`) 吸收。
-   *
-   * 267 的来历 (不是拍的): `tauri.conf.json` 的欢迎窗口 900, WebView 视口约 883;
-   *   内容列 = min(视口, 881) - 2×28 内边距 = **825**
-   *   放三张要 3c + 2×12 ≤ 825  →  c ≤ 267  →  取 **267** (3×267 + 24 = 825, 零余量)。
-   * 于是: 默认窗口刚好三张、窗口再宽卡片也还是 267 (整列居中)、最小窗口 800 下是两张。
-   *
-   * **不要再写 `minmax(...)`/`1fr`**: 那是"卡片随窗口伸缩"的策略, 维护者明确否过两次。
+   * 卡片保持固定宽度; auto-fill 只增加列数, 不拉伸卡片。
+   * 自然行高配合封面 16:9, 避免滚动容器压扁卡片。
    */
+  display: grid;
   grid-template-columns: repeat(auto-fill, var(--project-card-width));
+  grid-auto-rows: max-content;
   justify-content: center;
+  align-content: start;
   gap: 12px;
 }
 
@@ -417,6 +417,7 @@ body {
 
 .project-cover {
   position: relative;
+  flex: 0 0 auto;
   aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;

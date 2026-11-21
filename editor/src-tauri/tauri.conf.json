@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "WebGAL Ink",
-        "width": 900,
+        "width": 915,
         "height": 620,
-        "minWidth": 800,
+        "minWidth": 915,
         "minHeight": 560,
         "decorations": false,
         "visible": false,

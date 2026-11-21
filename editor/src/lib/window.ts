@@ -15,7 +15,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
  * 必须与 `tauri.conf.json` 里主窗口的 `width`/`height` 保持一致: 配置决定**首帧**大小,
  * 这里管之后每次回到开始界面的大小。不一致的话启动瞬间会看到一次跳动。
  */
-export const WELCOME_WINDOW_SIZE = { width: 900, height: 620 };
+export const WELCOME_WINDOW_SIZE = { width: 915, height: 620 };
 
 /** 按当前页面切换窗口形态 (打开项目 -> 最大化; 回到开始界面 -> 紧凑 + 居中)。 */
 export async function applyWindowMode(hasProject: boolean): Promise<void> {

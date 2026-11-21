@@ -215,25 +215,29 @@
       {/if}
     </div>
 
-    {#if views.length === 0}
-      <p class="welcome-empty">还没有项目。用「新建项目」由引擎生成一个，或「打开项目」打开已有的 WebGAL 项目目录。</p>
-    {:else if visible.length === 0}
-      <p class="welcome-empty">没有匹配「{query.trim()}」的项目</p>
-    {:else}
-      <div class="project-grid">
-        {#each visible as project (project.path)}
-          <RecentProjectCard
-            {project}
-            onOpen={() => void openPath(project.path)}
-            onMenu={(position) => (menu = { path: project.path, x: position.x, y: position.y })}
-            onCardContextMenu={(event) => {
-              event.preventDefault();
-              menu = { path: project.path, x: event.clientX, y: event.clientY };
-            }}
-          />
-        {/each}
-      </div>
-    {/if}
+    <div class="welcome-projects">
+      {#if views.length === 0}
+        <p class="welcome-empty">
+          还没有项目。用「新建项目」由引擎生成一个，或「打开项目」打开已有的 WebGAL 项目目录。
+        </p>
+      {:else if visible.length === 0}
+        <p class="welcome-empty">没有匹配「{query.trim()}」的项目</p>
+      {:else}
+        <div class="project-grid">
+          {#each visible as project (project.path)}
+            <RecentProjectCard
+              {project}
+              onOpen={() => void openPath(project.path)}
+              onMenu={(position) => (menu = { path: project.path, x: position.x, y: position.y })}
+              onCardContextMenu={(event) => {
+                event.preventDefault();
+                menu = { path: project.path, x: event.clientX, y: event.clientY };
+              }}
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#if menu && menuProject}
