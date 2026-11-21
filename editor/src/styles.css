@@ -2988,6 +2988,9 @@ body.resizing {
 
 .gitignore-editor {
   width: 100%;
+  border: 1px solid var(--app-border);
+  background: var(--app-panel);
+  color: var(--app-fg);
   font-family: Consolas, 'Courier New', monospace;
   font-size: 12px;
 }
