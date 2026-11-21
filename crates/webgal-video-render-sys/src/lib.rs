@@ -94,6 +94,16 @@ pub struct Transform {
     pub bevel_red: f32,
     pub bevel_green: f32,
     pub bevel_blue: f32,
+    /// film 类滤镜开关 (脚本里是布尔, ABI 上是 0/1 的 `int32_t`)。
+    pub old_film: c_int,
+    pub dot_film: c_int,
+    pub rgb_film: c_int,
+    pub glitch_film: c_int,
+    pub godray_film: c_int,
+    pub reflection_film: c_int,
+    /// ShockwaveFilter 的 time 与 RadiusAlphaFilter 的 radius。
+    pub shockwave: f32,
+    pub radius_alpha: f32,
 }
 
 impl Default for Transform {
@@ -123,6 +133,14 @@ impl Default for Transform {
             bevel_red: 1.0,
             bevel_green: 1.0,
             bevel_blue: 1.0,
+            old_film: 0,
+            dot_film: 0,
+            rgb_film: 0,
+            glitch_film: 0,
+            godray_film: 0,
+            reflection_film: 0,
+            shockwave: 0.0,
+            radius_alpha: 0.0,
         }
     }
 }
@@ -180,6 +198,15 @@ pub enum FxaaMode {
     Standard,
     /// FXAA 快速：5 次纹理采样，边缘略软。
     Fast,
+    /// SSAA 2x：按 2 倍尺寸渲染再 box 降采样。离线导出里最清晰，代价是 4 倍像素；
+    /// 与 FXAA 互斥（这个档位不做 FXAA）。
+    Ssaa2,
+    /// MSAA 4x：场景附件按 4 个采样渲染再 resolve。几何边缘比 FXAA 干净，代价远低于 SSAA；
+    /// 滤镜链仍然在 1x 上跑，与 FXAA/SSAA 互斥。
+    Msaa4,
+    /// SMAA 1x：边缘检测 + 混合权重 + 邻域混合三个全屏 pass，保边比 FXAA 好，
+    /// 代价远低于 SSAA；与其它档位互斥。
+    Smaa,
 }
 
 impl FxaaMode {
@@ -188,6 +215,9 @@ impl FxaaMode {
             Self::Off => 0,
             Self::Standard => 1,
             Self::Fast => 2,
+            Self::Ssaa2 => 3,
+            Self::Msaa4 => 4,
+            Self::Smaa => 5,
         }
     }
 }
@@ -1132,6 +1162,17 @@ mod tests {
         assert_eq!(Status::from_code(2), Status::PlanIncomplete);
         assert_eq!(Status::from_code(4), Status::Cancelled);
         assert_eq!(Status::from_code(9), Status::Unknown(9));
+    }
+
+    #[test]
+    fn antialias_modes_map_to_the_header() {
+        // 这几个数字写进了 C ABI 文档与渲染器 init(), 两边必须一一对应。
+        assert_eq!(FxaaMode::Off.code(), 0);
+        assert_eq!(FxaaMode::Standard.code(), 1);
+        assert_eq!(FxaaMode::Fast.code(), 2);
+        assert_eq!(FxaaMode::Ssaa2.code(), 3);
+        assert_eq!(FxaaMode::Msaa4.code(), 4);
+        assert_eq!(FxaaMode::Smaa.code(), 5);
     }
 
     #[test]

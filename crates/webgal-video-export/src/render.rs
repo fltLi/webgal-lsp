@@ -254,6 +254,68 @@ fn transform(value: &PlanTransform) -> Transform {
     if let Some(blue) = value.bevel_blue {
         result.bevel_blue = f32::from(blue) / 255.0;
     }
+    // film 类滤镜: 布尔开关在 ABI 上是 0/1 的 int, 数值参数原样透传。
+    if let Some(old_film) = value.old_film {
+        result.old_film = if old_film { 1 } else { 0 };
+    }
+    if let Some(dot_film) = value.dot_film {
+        result.dot_film = if dot_film { 1 } else { 0 };
+    }
+    if let Some(rgb_film) = value.rgb_film {
+        result.rgb_film = if rgb_film { 1 } else { 0 };
+    }
+    if let Some(glitch_film) = value.glitch_film {
+        result.glitch_film = if glitch_film { 1 } else { 0 };
+    }
+    if let Some(godray_film) = value.godray_film {
+        result.godray_film = if godray_film { 1 } else { 0 };
+    }
+    if let Some(reflection_film) = value.reflection_film {
+        result.reflection_film = if reflection_film { 1 } else { 0 };
+    }
+    if let Some(shockwave) = value.shockwave {
+        result.shockwave = shockwave;
+    }
+    if let Some(radius_alpha) = value.radius_alpha {
+        result.radius_alpha = radius_alpha;
+    }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// film 类滤镜的布尔开关在 ABI 上是 `int`, 这里是唯一会把 `bool` 变成 0/1 的地方。
+    #[test]
+    fn film_filters_reach_the_renderer_transform() {
+        let source = PlanTransform {
+            old_film: Some(true),
+            dot_film: Some(true),
+            rgb_film: Some(true),
+            glitch_film: Some(true),
+            godray_film: Some(true),
+            reflection_film: Some(true),
+            shockwave: Some(0.5),
+            radius_alpha: Some(0.25),
+            ..PlanTransform::default()
+        };
+
+        let mapped = transform(&source);
+        assert_eq!(mapped.old_film, 1);
+        assert_eq!(mapped.dot_film, 1);
+        assert_eq!(mapped.rgb_film, 1);
+        assert_eq!(mapped.glitch_film, 1);
+        assert_eq!(mapped.godray_film, 1);
+        assert_eq!(mapped.reflection_film, 1);
+        assert_eq!(mapped.shockwave, 0.5);
+        assert_eq!(mapped.radius_alpha, 0.25);
+
+        // 补丁里没写的字段保持默认 (关掉), 不能因为 `Option::None` 变成 1。
+        let defaults = transform(&PlanTransform::default());
+        assert_eq!(defaults.old_film, 0);
+        assert_eq!(defaults.reflection_film, 0);
+        assert_eq!(defaults.shockwave, 0.0);
+    }
 }

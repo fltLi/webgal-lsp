@@ -90,6 +90,14 @@ using Status = int;
     transform.bevel_r = clamp_finite(value->bevel_red, 0.0F, 1.0F, 1.0F);
     transform.bevel_g = clamp_finite(value->bevel_green, 0.0F, 1.0F, 1.0F);
     transform.bevel_b = clamp_finite(value->bevel_blue, 0.0F, 1.0F, 1.0F);
+    transform.film_old = value->old_film != 0;
+    transform.film_dot = value->dot_film != 0;
+    transform.film_rgb = value->rgb_film != 0;
+    transform.film_glitch = value->glitch_film != 0;
+    transform.film_godray = value->godray_film != 0;
+    transform.film_reflection = value->reflection_film != 0;
+    transform.shockwave = clamp_finite(value->shockwave, 0.0F, 1.0F, 0.0F);
+    transform.radius_alpha = finite_or(value->radius_alpha, 0.0F);
     return transform;
 }
 
@@ -261,6 +269,14 @@ void webgal_transform_default(WebgalTransform* transform) {
     transform->bevel_red = 1.0F;
     transform->bevel_green = 1.0F;
     transform->bevel_blue = 1.0F;
+    transform->old_film = 0;
+    transform->dot_film = 0;
+    transform->rgb_film = 0;
+    transform->glitch_film = 0;
+    transform->godray_film = 0;
+    transform->reflection_film = 0;
+    transform->shockwave = 0.0F;
+    transform->radius_alpha = 0.0F;
 }
 
 WebgalPlan* webgal_plan_create(void) {

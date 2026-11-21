@@ -65,8 +65,8 @@ export interface VideoExportOptions {
   /** 立绘身份判定：auto / legacy（4.6.3 及以前）/ modern（4.6.4+）。 */
   figureSide?: string;
   disableFilters?: boolean;
-  /** 抗锯齿：off / standard / fast。 */
-  fxaa?: 'off' | 'standard' | 'fast';
+  /** 抗锯齿：off / standard / fast / ssaa2 / msaa4 / smaa。 */
+  fxaa?: 'off' | 'standard' | 'fast' | 'ssaa2' | 'msaa4' | 'smaa';
   audioOnly?: boolean;
 }
 

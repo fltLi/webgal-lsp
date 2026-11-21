@@ -76,6 +76,18 @@ typedef struct WebgalTransform {
     float bevel_red;
     float bevel_green;
     float bevel_blue;
+    /*
+     * film 类滤镜。开关取 0/1 (脚本里是布尔), shockwave / radius_alpha 是各自的参数。
+     * 渲染器当前还没有实现这些 pass, 但计划里必须能带过来, 否则 Rust 侧的映射成了死代码。
+     */
+    int32_t old_film;
+    int32_t dot_film;
+    int32_t rgb_film;
+    int32_t glitch_film;
+    int32_t godray_film;
+    int32_t reflection_film;
+    float shockwave;
+    float radius_alpha;
 } WebgalTransform;
 
 /* Live2D 眨眼参数, 单位毫秒。 */
@@ -125,7 +137,10 @@ typedef struct WebgalRenderOptions {
     int audio_only;
     /* 视频码率 (kbps); 0 表示使用默认值。 */
     uint32_t bitrate_kbps;
-    /* 抗锯齿模式: 0 关闭, 1 FXAA 标准, 2 FXAA 快速。 */
+    /* 抗锯齿模式: 0 关闭, 1 FXAA 标准, 2 FXAA 快速, 3 SSAA 2x (2 倍渲染 + box 降采样)。
+       字段名沿用 fxaa_mode; 各档位互斥: 0 关, 1 FXAA 标准, 2 FXAA 快速, 3 SSAA 2x,
+   4 MSAA 4x (场景附件 4x 采样 + resolve), 5 SMAA 1x (边缘/权重/混合三 pass)。
+   UI 与视频叠层不进抗锯齿, 始终按原生分辨率画。 */
     int fxaa_mode;
 } WebgalRenderOptions;
 

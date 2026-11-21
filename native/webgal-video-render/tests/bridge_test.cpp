@@ -96,6 +96,11 @@ TEST_CASE("plan builder records the fields the renderer consumes") {
     REQUIRE(transform.scale_x == 1.0F);
     REQUIRE(transform.color_red == 1.0F);
     REQUIRE(transform.alpha == 1.0F);
+    // film 类滤镜默认全关; 字段存在是为了让 Rust 侧的映射能落到计划上。
+    REQUIRE(transform.old_film == 0);
+    REQUIRE(transform.reflection_film == 0);
+    REQUIRE(transform.shockwave == 0.0F);
+    REQUIRE(transform.radius_alpha == 0.0F);
 
     transform.x = 100.0F;
     REQUIRE(webgal_plan_add_background(raw, 0, "background/bg.png", &transform, 1.0F, 100, 200,

@@ -6,6 +6,7 @@ add_executable(webgal-render-tests
     audio_test.cpp
     bridge_test.cpp
     live2d_test.cpp
+    render_test.cpp
     shaders_test.cpp
     video_test.cpp
 )

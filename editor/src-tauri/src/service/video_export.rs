@@ -426,6 +426,9 @@ pub async fn export_video(
         fxaa = match config.fxaa.as_deref() {
             Some("off") => FxaaMode::Off,
             Some("fast") => FxaaMode::Fast,
+            Some("ssaa2") => FxaaMode::Ssaa2,
+            Some("msaa4") => FxaaMode::Msaa4,
+            Some("smaa") => FxaaMode::Smaa,
             _ => FxaaMode::Standard,
         };
         if let Some(mode) = config.figure_side.as_deref() {

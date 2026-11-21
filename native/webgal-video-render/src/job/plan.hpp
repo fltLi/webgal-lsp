@@ -42,6 +42,16 @@ struct Transform {
     float bevel_r = 1.0F;
     float bevel_g = 1.0F;
     float bevel_b = 1.0F;
+    /// film 类滤镜: 引擎用布尔开关, 目前只进计划, 渲染还没实现 (见 filter.frag)。
+    bool film_old = false;
+    bool film_dot = false;
+    bool film_rgb = false;
+    bool film_glitch = false;
+    bool film_godray = false;
+    bool film_reflection = false;
+    /// ShockwaveFilter 的 time 与 RadiusAlphaFilter 的 radius。
+    float shockwave = 0.0F;
+    float radius_alpha = 0.0F;
 };
 
 struct BackgroundKey {

@@ -20,7 +20,7 @@
 //! - `WEBGAL_BENCH_OUTPUT`：保留成片到指定路径；
 //! - `WEBGAL_BENCH_NO_FILTERS=1`：关闭舞台滤镜；
 //! - `WEBGAL_BENCH_NO_FXAA=1`：关闭最终 FXAA；
-//! - `WEBGAL_BENCH_FXAA=off|standard|fast`：选择抗锯齿算法；
+//! - `WEBGAL_BENCH_FXAA=off|standard|fast|ssaa2|msaa4|smaa`：选择抗锯齿档位；
 //! - `WEBGAL_RENDER_PROFILE=1`：让渲染器额外打印分阶段耗时。
 
 use std::path::PathBuf;
@@ -125,6 +125,9 @@ fn bench_export() {
     render_options.fxaa = match std::env::var("WEBGAL_BENCH_FXAA").as_deref() {
         Ok("off") => FxaaMode::Off,
         Ok("fast") => FxaaMode::Fast,
+        Ok("ssaa2") => FxaaMode::Ssaa2,
+        Ok("msaa4") => FxaaMode::Msaa4,
+        Ok("smaa") => FxaaMode::Smaa,
         _ => FxaaMode::Standard,
     };
     if std::env::var_os("WEBGAL_BENCH_NO_FXAA").is_some() {

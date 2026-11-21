@@ -33,7 +33,7 @@ endif()
 
 # ---- shader: glslc -> .spv -> 构建期生成的 C++ 字节数组 ----
 
-set(WEBGAL_SHADER_NAMES quad.vert quad.frag)
+set(WEBGAL_SHADER_NAMES quad.vert quad.frag filter.frag)
 set(WEBGAL_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 set(WEBGAL_SHADER_OUTPUTS)
 foreach(shader IN LISTS WEBGAL_SHADER_NAMES)
@@ -64,6 +64,23 @@ add_custom_command(
     VERBATIM
 )
 
+# ---- 内嵌素材: SMAA 的 area/search LUT (二进制, 原样内嵌) ----
+
+set(WEBGAL_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+set(WEBGAL_EMBEDDED_ASSETS
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/assets/embedded_assets.cpp")
+file(GLOB WEBGAL_ASSET_FILES CONFIGURE_DEPENDS "${WEBGAL_ASSET_DIR}/*")
+add_custom_command(
+    OUTPUT "${WEBGAL_EMBEDDED_ASSETS}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DASSET_DIR=${WEBGAL_ASSET_DIR}"
+            "-DOUTPUT_CPP=${WEBGAL_EMBEDDED_ASSETS}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-assets.cmake"
+    DEPENDS ${WEBGAL_ASSET_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-assets.cmake"
+    COMMENT "Embedding assets"
+    VERBATIM
+)
+
 # ---- 静态库 ----
 
 set(WEBGAL_RENDER_INTERNAL_INCLUDES
@@ -80,10 +97,12 @@ add_library(webgal-video-render STATIC
     src/media/image.cpp
     src/media/mf_encoder.cpp
     src/media/preview.cpp
+    src/media/stb_image_impl.cpp
     src/media/stb_vorbis_impl.cpp
     src/media/video.cpp
     src/pipeline/export.cpp
     src/stage/renderer.cpp
+    "${WEBGAL_EMBEDDED_ASSETS}"
     "${WEBGAL_EMBEDDED_SHADERS}"
 )
 

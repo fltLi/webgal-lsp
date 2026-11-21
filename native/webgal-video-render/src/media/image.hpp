@@ -20,6 +20,10 @@ struct Image {
 [[nodiscard]] bool decode_image(const std::filesystem::path& path, Image& image,
                                 std::string& error);
 
+/// 解码内存里的 PNG (构建期内嵌的素材, 例如 SMAA 的 LUT), 不经过文件系统.
+[[nodiscard]] bool decode_image_bytes(const std::uint8_t* data, std::size_t size, Image& image,
+                                      std::string& error);
+
 /// 把 BGRA8 像素写成 PNG.
 [[nodiscard]] bool write_png(const std::filesystem::path& path, std::uint32_t width,
                              std::uint32_t height, const std::vector<std::uint8_t>& bgra,

@@ -410,6 +410,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | PowerShell 里 `cargo … 2>&1 \| …` 报 `NativeCommandError`、exit=1 | PowerShell 把 cargo 的 stderr 当成错误，**不是编译失败**；改用 `cmd /c "cargo check … > log 2>&1"` 再读 `$LASTEXITCODE` |
 | 用 PowerShell 数文件行数，结果比实际少 | Windows PowerShell 5.1 的 `Get-Content` 按 GBK 解码无 BOM 的 UTF-8，会丢行并产生乱码。用 `[System.IO.File]::ReadAllLines($p, [System.Text.UTF8Encoding]::new($false)).Count` |
 | PowerShell 里 `$bytes[16..19]` 读出的字节序是反的 | PowerShell 的数组切片对反向区间会倒序返回，`[16..19]` 拿到的是 big-endian。二进制解析用 `[BitConverter]`，别手工下标 |
+| **改了 `native/` 的头文件后 `cmake --build` 什么都不编，跑起来行为还是旧的（甚至触发 STL 断言 "null pointer cannot point to a block of non-zero size"）** | 本机 MSVC 的输出是本地化文案（`注意: 包含文件:`），Ninja 的 `msvc_deps_prefix` 匹配不上，头文件依赖一条也没记（`ninja -t deps <obj>` 显示 `#deps 0`）。**改头文件后必须 `cmake --build --preset … --clean-first`**；要让增量构建恢复正常，得让 cl 输出英文（`VSLANG=1033`），或者把 `msvc_deps_prefix` 调对 |
+| `cargo check -p webgal-ink` 报 `LNK1104: 无法打开文件 target\debug\build\webgal-sentence-macro\…\webgal_sentence_macro-*.dll` | 这个 proc-macro DLL 被编辑器的 `rust-analyzer-proc-macro-srv` 进程加载着（不是编译错误）。结束那几个 `rust-analyzer-proc-macro-srv`（rust-analyzer 会自己重启它们）或稍后重试；别用并发跑两个 cargo 命令，那把锁也会由另一个 cargo 自己造成 |
 | playground 行为与源码不一致 | `pkg/` 是旧产物，重跑 `bun run build:wasm` |
 | `tauri build` 报 `Found version mismatched Tauri packages` | 前端包与 crate 的主次版本不一致，见第 3 节「Tauri 的前端包与 crate 必须同主次版本」 |
 | **任何构建报 "Tsconfig not found … editor/.svelte-kit/tsconfig.json"** | 说明有任务在转换 `editor/` 下的源码：`editor/tsconfig.json` 的 `extends` 指向 `svelte-kit sync` 的生成物，而只构建其它模块的任务里不会有它。**别从别的子模块 import `editor/src/**`**——Playground 曾经这么做，代价是 CI 里要放一个占位 tsconfig（已移除）。确实要共享，就把那份代码提成独立子模块 |

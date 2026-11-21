@@ -66,6 +66,9 @@
   const FXAA_OPTIONS = [
     { value: 'standard', label: 'FXAA 标准' },
     { value: 'fast', label: 'FXAA 快速' },
+    { value: 'msaa4', label: 'MSAA 4x' },
+    { value: 'smaa', label: 'SMAA' },
+    { value: 'ssaa2', label: 'SSAA 2x' },
     { value: 'off', label: '关闭' },
   ];
 
@@ -150,7 +153,7 @@
   const exportVideoClip = $derived(contentMode !== 'audio');
   const includeAudio = $derived(contentMode !== 'video');
   let enableFilters = $state(stored.enableFilters);
-  let fxaa = $state<'off' | 'standard' | 'fast'>('standard');
+  let fxaa = $state<'off' | 'standard' | 'fast' | 'ssaa2' | 'msaa4' | 'smaa'>('standard');
   let includeStage = $state(stored.includeStage);
   let includeUi = $state(stored.includeUi);
 
@@ -702,8 +705,7 @@
             <Select
               value={fxaa}
               options={FXAA_OPTIONS}
-              title="关闭或选快速可提升导出速度"
-              onchange={(next) => (fxaa = next as 'off' | 'standard' | 'fast')}
+              onchange={(next) => (fxaa = next as 'off' | 'standard' | 'fast' | 'ssaa2' | 'msaa4' | 'smaa')}
             />
           </div>
         </div>

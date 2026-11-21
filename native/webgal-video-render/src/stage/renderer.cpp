@@ -28,6 +28,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 
+#include "assets/embedded_assets.hpp"
 #include "common/context.hpp"
 #include "common/log.hpp"
 #include "common/path.hpp"
@@ -42,12 +43,19 @@
 namespace webgal::stage {
 namespace {
 
-constexpr VkFormat kFormat = VK_FORMAT_B8G8R8A8_SRGB;
+// 全程在 sRGB **编码空间**计算: 附件与贴图都用 UNORM, 不做任何传递函数转换。
+//
+// WebGL 的默认行为就是这样 —— 纹理按字节采样、混合与滤镜都在编码值上做,
+// pixi 的滤镜 GLSL 也是按编码值写的。之前用 *_SRGB 格式时, 驱动会在采样/写入时
+// 自动做线性转换, 于是 brightness、contrast、gamma、bloom 阈值这些滤镜全部落在
+// 线性空间, 结果与引擎预览对不上 (半透明像素的混合同理)。
+constexpr VkFormat kFormat = VK_FORMAT_B8G8R8A8_UNORM;
 constexpr std::size_t kMaxQuads = 32768;
 constexpr std::size_t kMaxMeshIndices = 262144;
 /// Live2D mask 的离屏分辨率；mask 只用于 alpha 裁切，128 足够且填充量只有 256 的 1/4。
 constexpr int kMaskSize = 128;
-constexpr int kAtlasSize = 2048;
+// 图集只存覆盖率 (R8), 所以 4096 也只要 16 MB; 2048 RGBA 是同样显存、1/4 容量。
+constexpr int kAtlasSize = 4096;
 
 /// `WEBGAL_RENDER_PROFILE=1` 时的单帧耗时统计；平时不付任何计时代价。
 struct RendererProfile {
@@ -87,6 +95,8 @@ struct Vertex {
 
 struct DrawItem {
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    /// 贴图是单通道覆盖率 (文字图集) 时置位, 片元着色器据此只取 R 通道当 alpha。
+    bool coverage_only = false;
     /// 一个批次可以包含多个 quad; 文字按样式合并后 items 从数千降到几个。
     std::vector<Vertex> vertices;
     /// 上传到顶点缓冲后的起始偏移（字节），避免再假设固定 6 个顶点。
@@ -96,8 +106,6 @@ struct DrawItem {
     float radius = 0.0F;
     float width = 0.0F;
     float height = 0.0F;
-    /// 背景只做倒角, 不做泛光: 背景上大面积高光做 bloom 会把整幅画面糊成白雾。
-    bool is_background = false;
 };
 
 /// 文本框/姓名/文字的样式, 数值一律是 **CSS px (按 2560×1440 舞台书写)**。
@@ -211,6 +219,8 @@ struct MeshDraw {
 
 struct PushConstants {
     float tint[4];
+    /// `adjust` 与 `fx` 目前没有读取方: 颜色调整/模糊/泛光都改走滤镜链。
+    /// 保留它们是为了让 push constant 块的大小 (128 字节) 与两个 shader 的声明一致。
     float adjust[4];
     float fx[4];
     float mask[4];
@@ -218,6 +228,69 @@ struct PushConstants {
     float multiply[4];
     float screen[4];
     float shape[4];
+};
+
+/// 滤镜链里的一个 pass; `filter.frag` 用 specialization constant 区分类型。
+enum class FilterKind : int {
+    /// pixi-filters AdjustmentFilter: gamma / 对比度 / 饱和度 / 通道 / 亮度。
+    Adjustment = 0,
+    /// @pixi/filter-blur 的单方向 5 tap 高斯; 一次只做一个轴。
+    Blur = 1,
+    /// AdvancedBloomFilter 的亮度提取, 泛光子链的起点。
+    Extract = 2,
+    /// AdvancedBloomFilter 内部的 Kawase 盒式模糊。
+    Kawase = 3,
+    /// 泛光合成: 原图 * brightness + 泛光 * bloomScale。
+    Bloom = 4,
+    /// WebGAL 的 BevelFilter (light + shadow)。
+    Bevel = 5,
+    /// 最终抗锯齿。
+    Fxaa = 6,
+    /// 把滤镜结果按层 alpha 混回舞台。
+    Composite = 7,
+    /// SSAA 的 2x2 box 降采样。
+    Downsample = 8,
+    /// pixi-filters OldFilmFilter。
+    OldFilm = 9,
+    /// pixi-filters DotFilter。
+    DotFilm = 10,
+    /// pixi-filters RGBSplitFilter。
+    RgbSplit = 11,
+    /// pixi-filters ReflectionFilter。
+    Reflection = 12,
+    /// WebGAL 自定义 RadiusAlphaFilter。
+    RadiusAlpha = 13,
+    /// pixi-filters ShockwaveFilter。
+    Shockwave = 14,
+    /// pixi-filters GodrayFilter。
+    Godray = 15,
+    /// pixi-filters GlitchFilter (hash 噪声版本)。
+    Glitch = 16,
+    /// SMAA pass 1: 色彩边缘检测。
+    SmaaEdge = 17,
+    /// SMAA pass 2: 混合权重 (需要 area/search LUT)。
+    SmaaWeights = 18,
+    /// SMAA pass 3: 邻域混合。
+    SmaaBlend = 19,
+};
+constexpr int kFilterKindCount = 20;
+
+/// 一个滤镜 pass 的参数。槽位含义按 `kind` 复用, 与 `filter.frag` 的 `pc.params*` 对齐。
+struct FilterStep {
+    FilterKind kind = FilterKind::Adjustment;
+    float params[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+    float params2[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+    float params3[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+    float params4[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+};
+
+/// 滤镜链中间目标; 每帧按需借用, 跨帧复用。
+struct FilterTarget {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 };
 
 struct GpuImage {
@@ -239,6 +312,15 @@ struct Glyph {
     int bearing_x = 0;
     int bearing_y = 0;
     float advance = 0.0F;
+    /// 阴影字形: 与主字形同一张图集, 但按 1/2 分辨率烘焙过高斯模糊。
+    /// `shadow_pad` 是相对主字形左上角的扩展量 (已经换算回舞台像素)。
+    float su0 = 0.0F;
+    float sv0 = 0.0F;
+    float su1 = 0.0F;
+    float sv1 = 0.0F;
+    int shadow_width = 0;
+    int shadow_height = 0;
+    int shadow_pad = 0;
 };
 
 struct TextAtlas {
@@ -732,7 +814,7 @@ class Renderer {
         destroy();
     }
 
-    bool init(const job::Plan& plan, std::string& error);
+    bool init(const job::Plan& plan, int antialias_mode, std::string& error);
     bool prepare(const job::Plan& plan, const run::Context& context, std::string& error);
     bool submit_frame(const job::Plan& plan, std::uint64_t t_us, std::string& error);
     bool read_frame(std::vector<std::uint8_t>& pixels, std::string& error);
@@ -747,9 +829,18 @@ class Renderer {
     bool create_target(std::string& error);
     bool create_snapshot(std::string& error);
     bool create_layer(std::string& error);
+    /// 滤镜链的中间目标 (4 张渲染尺寸的 RT); 首次用到滤镜时才创建。
+    bool create_filter_targets(std::string& error);
+    /// SSAA 的降采样目标 (输出尺寸); 只有 render_scale_ > 1 时才创建。
+    bool create_output_target(std::string& error);
     bool create_pipeline(std::string& error);
+    /// 两个输入的 descriptor; 同一个目标取自 `layer_descriptor_` 之类的自带组合。
+    VkDescriptorSet filter_descriptor(VkImageView first, VkImageView second, std::string& error);
     VkFormat choose_stencil_format() const;
     bool create_descriptors(std::string& error);
+    bool create_smaa_luts(std::string& error);
+    /// 写一个"两输入 + SMAA 两张 LUT"的 descriptor set; 所有滤镜/快照/立绘层的 set 都走它。
+    void write_input_descriptors(VkDescriptorSet set, VkImageView first, VkImageView second);
     bool load_font(const std::filesystem::path& project_root, std::string& error);
     bool create_solid(std::string& error);
     bool create_rounded(std::string& error);
@@ -757,7 +848,8 @@ class Renderer {
     bool ensure_glyph(int codepoint, int size, const Glyph*& glyph, std::string& error);
     bool upload_atlas(std::string& error);
     bool upload_pixels(std::uint32_t width, std::uint32_t height,
-                       const std::vector<std::uint8_t>& pixels, GpuImage& gpu, std::string& error);
+                       const std::vector<std::uint8_t>& pixels, GpuImage& gpu, std::string& error,
+                       VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
     bool update_video_pixels(std::uint32_t width, std::uint32_t height,
                              const std::vector<std::uint8_t>& pixels, std::string& error);
 
@@ -825,12 +917,14 @@ class Renderer {
     void push_constants(const job::Transform& transform, float alpha, bool use_mask = false,
                         const float* multiply = nullptr, const float* screen = nullptr,
                         bool inverted_mask = false, float radius = 0.0F, float width = 0.0F,
-                        float height = 0.0F, float output_mode = 0.0F);
+                        float height = 0.0F, float output_mode = 0.0F, bool coverage_only = false);
     void push_constants_mask(const job::Transform& transform, float min_u, float min_v,
                              float size_u, float size_v);
-    /// 立绘层合成: Pixi BevelFilter 的 light 通道 + AdvancedBloomFilter 的柔光。
-    void push_constants_layer(const job::Transform& transform, float alpha,
-                              bool allow_bloom = true);
+    /// 由变换里的滤镜字段生成 pass 列表; 顺序与 WebGAL 的滤镜优先级一致。
+    std::vector<FilterStep> build_filter_chain(const job::Transform& transform,
+                                               std::uint64_t t_us) const;
+    /// 写入一个滤镜 pass 的 push constants; 与 `PushConstants` 共用 128 字节。
+    void push_filter_constants(const FilterStep& step);
     void draw_quad(VkDeviceSize offset, std::uint32_t vertex_count, VkDescriptorSet descriptor);
 
     void destroy();
@@ -859,11 +953,27 @@ class Renderer {
 
     /// 单个立绘层的透明离屏目标; 倒角需要在整模型 alpha 上做屏幕空间采样,
     /// 不能按 drawable 分别近似 (手指等细部会出现重影)。
+    /// 滤镜链按 1x 采样 `layer_image_`, 所以 MSAA 下还要一张多采样图当渲染附件,
+    /// 由 pass 结束时 resolve 回 `layer_image_`。
     VkImage layer_image_ = VK_NULL_HANDLE;
     VkDeviceMemory layer_memory_ = VK_NULL_HANDLE;
     VkImageView layer_view_ = VK_NULL_HANDLE;
     VkImageLayout layer_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     VkDescriptorSet layer_descriptor_ = VK_NULL_HANDLE;
+    VkImage layer_msaa_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory layer_msaa_memory_ = VK_NULL_HANDLE;
+    VkImageView layer_msaa_view_ = VK_NULL_HANDLE;
+    /// 多采样立绘层只在 pass 里当颜色附件用, 首次使用时从 UNDEFINED 转过来即可。
+    VkImageLayout layer_msaa_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    /// 滤镜链的中间目标 (复用, 首次有滤镜时创建)。
+    std::array<FilterTarget, 4> filter_targets_{};
+    bool filter_targets_ready_ = false;
+    /// SSAA 的降采样目标; 输出尺寸, 只在 render_scale_ > 1 时存在。
+    FilterTarget output_target_;
+    bool output_target_ready_ = false;
+    /// (输入, 第二输入) → descriptor; 滤镜 pass 的两张输入各不相同, 不能按目标预建。
+    std::map<std::pair<VkImageView, VkImageView>, VkDescriptorSet> filter_descriptors_;
 
     VkBuffer readback_ = VK_NULL_HANDLE;
     VkDeviceMemory readback_memory_ = VK_NULL_HANDLE;
@@ -896,6 +1006,8 @@ class Renderer {
     UiStyle ui_style_;
     /// C ABI 传入的原始字号缩放。
     float font_scale_ = 1.0F;
+    /// text-shadow 的模糊半径 (舞台像素), 烘焙阴影字形时用; 0 表示不做阴影。
+    float shadow_blur_px_ = 0.0F;
     /// 三档字号统一抬高一级后的实际缩放; 文本框/姓名牌的几何也用它。
     float ui_font_scale_ = 1.0F;
     /// 选中的字体本身是否已经是粗体; 是的话不再用重绘模拟加粗。
@@ -905,6 +1017,12 @@ class Renderer {
     VkDeviceMemory stencil_memory_ = VK_NULL_HANDLE;
     VkImageView stencil_view_ = VK_NULL_HANDLE;
     VkImageLayout stencil_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    /// 输出尺寸的 depth/stencil: SSAA 收尾时 UI 与视频叠层画在降采样目标上, 那条 pass
+    /// 同样要用带 stencil 测试的 `pipeline_`。
+    VkImage output_stencil_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory output_stencil_memory_ = VK_NULL_HANDLE;
+    VkImageView output_stencil_view_ = VK_NULL_HANDLE;
+    VkImageLayout output_stencil_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkDescriptorSetLayout descriptor_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
@@ -912,12 +1030,24 @@ class Renderer {
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline pipeline_add_ = VK_NULL_HANDLE;
     VkPipeline pipeline_mul_ = VK_NULL_HANDLE;
-    /// 直通 alpha 的预乘混合: 立绘层渲染与倒角合成共用。
+    /// 直通 alpha 的预乘混合: 立绘层渲染与合成共用。
     VkPipeline pipeline_layer_ = VK_NULL_HANDLE;
+    /// UI/视频叠层专用: MSAA 档位下场景管道是多采样的, 而叠层画在 1x 的输出目标上,
+    /// 采样数对不上会直接校验失败, 所以单开一份单采样的。
+    VkPipeline pipeline_overlay_ = VK_NULL_HANDLE;
+    /// 滤镜链每个 kind 的 pipeline (无混合, 颜色附件); 索引为 `FilterKind`。
+    std::array<VkPipeline, kFilterKindCount> filter_pipelines_{};
+    /// Composite: 预乘混合写回舞台。
+    VkPipeline pipeline_filter_composite_ = VK_NULL_HANDLE;
     VkPipeline pipeline_fxaa_fast_ = VK_NULL_HANDLE;
     VkPipeline pipeline_stencil_ = VK_NULL_HANDLE;
     VkPipeline pipeline_mask_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
+    /// SMAA 的搜索表必须最近邻采样 (参考实现也是 point), 所以单开一个采样器。
+    VkSampler sampler_nearest_ = VK_NULL_HANDLE;
+    /// 构建期内嵌的 SMAA LUT: area 160×560 (双通道) 与 search 66×33 (单通道)。
+    GpuImage smaa_area_;
+    GpuImage smaa_search_;
     VkShaderModule vertex_shader_ = VK_NULL_HANDLE;
     VkShaderModule fragment_shader_ = VK_NULL_HANDLE;
 
@@ -942,8 +1072,20 @@ class Renderer {
     std::vector<const job::FigureTrack*> sorted_tracks_;
     std::uint32_t stage_w_ = 1920;
     std::uint32_t stage_h_ = 1080;
+    /// 输出尺寸 (编码器/回读的尺寸)。
+    std::uint32_t output_w_ = 1920;
+    std::uint32_t output_h_ = 1080;
+    /// 实际渲染尺寸 = 输出尺寸 × `render_scale_`; SSAA 2x 时是两倍。
     std::uint32_t render_w_ = 1920;
     std::uint32_t render_h_ = 1080;
+    /// 1 或 2; 像素单位的效果参数要按它放大, 否则视觉半径会减半。
+    int render_scale_ = 1;
+    /// MSAA: 场景附件按 `samples_` 采样, 每个 pass 结束时 resolve 到 `output_target_`。
+    /// 滤镜链与后处理仍然在 1x 上跑, 只把"几何边缘"交给多采样。
+    bool msaa_ = false;
+    /// SMAA 1x: 帧收尾时跑三个全屏 pass (边缘 / 权重 / 混合), 滤镜链不受影响。
+    bool smaa_ = false;
+    VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
     live2d::CoreApi core_api_;
     bool core_ready_ = false;
     const run::Context* context_ = nullptr;
@@ -966,15 +1108,35 @@ VkFormat Renderer::choose_stencil_format() const {
     return VK_FORMAT_UNDEFINED;
 }
 
-bool Renderer::init(const job::Plan& plan, std::string& error) {
-    // Rust 已把脚本坐标缩放到输出尺寸；stage_* 是布局/NDC 空间，render_* 是附件/回读尺寸。
+bool Renderer::init(const job::Plan& plan, int antialias_mode, std::string& error) {
+    // Rust 已把脚本坐标缩放到输出尺寸；stage_* 是布局/NDC 空间，render_* 是附件尺寸，
+    // output_* 是回读/编码尺寸。SSAA 2x 时 render_* 是 output_* 的两倍。
     stage_w_ = plan.stage_w;
     stage_h_ = plan.stage_h;
-    render_w_ = plan.output_w;
-    render_h_ = plan.output_h;
+    output_w_ = plan.output_w;
+    output_h_ = plan.output_h;
+    // 与 `WebgalRenderOptions::fxaa_mode` 的取值对应: 3 = SSAA 2x, 4 = MSAA 4x。
+    constexpr int kAntialiasSsaa2 = 3;
+    constexpr int kAntialiasMsaa4 = 4;
+    constexpr int kAntialiasSmaa = 5;
+    render_scale_ = antialias_mode == kAntialiasSsaa2 ? 2 : 1;
+    msaa_ = antialias_mode == kAntialiasMsaa4;
+    smaa_ = antialias_mode == kAntialiasSmaa;
+    samples_ = msaa_ ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
+    render_w_ = output_w_ * static_cast<std::uint32_t>(render_scale_);
+    render_h_ = output_h_ * static_cast<std::uint32_t>(render_scale_);
     if (!create_instance(error) || !create_device(error)) {
         destroy();
         return false;
+    }
+    if (msaa_) {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physical_, &properties);
+        if ((properties.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) {
+            error = "本机 GPU 不支持 4x MSAA, 请改用 FXAA 或 SSAA";
+            destroy();
+            return false;
+        }
     }
     stencil_format_ = choose_stencil_format();
     if (stencil_format_ == VK_FORMAT_UNDEFINED) {
@@ -1006,6 +1168,9 @@ bool Renderer::prepare(const job::Plan& plan, const run::Context& context, std::
     // 三档字号在导出成片里各自小了一级, 这里统一补一级 (0.85/1.0/1.15 → 1.0/1.15/1.30),
     // 不改 C ABI 与前端已经保存的取值。
     ui_font_scale_ = font_scale_ + 0.15F;
+    // 与绘制时同一个取法, 保证烘焙的阴影半径与实际需求一致。
+    shadow_blur_px_ = std::clamp(
+        ui_style_.text_shadow_blur * ui_style_.text_scale * ui_style_.scale, 0.0F, 24.0F);
     for (const auto& video : plan.videos) {
         if (video_decoder(plan, video.path, error) == nullptr) {
             return false;
@@ -1076,7 +1241,7 @@ bool Renderer::load_font(const std::filesystem::path& project_root, std::string&
         error = "无法初始化字体: " + to_utf8(selected);
         return false;
     }
-    text_.pixels.assign(static_cast<std::size_t>(kAtlasSize) * kAtlasSize * 4, 0);
+    text_.pixels.assign(static_cast<std::size_t>(kAtlasSize) * kAtlasSize, 0);
     return true;
 }
 
@@ -1127,14 +1292,9 @@ bool Renderer::ensure_glyph(int codepoint, int size, const Glyph*& glyph, std::s
                                   codepoint);
         for (int row = 0; row < height; ++row) {
             for (int column = 0; column < width; ++column) {
-                const auto destination = (static_cast<std::size_t>(text_.pen_y + row) * kAtlasSize +
-                                          text_.pen_x + column) *
-                                         4;
-                const auto alpha = bitmap[static_cast<std::size_t>(row) * width + column];
-                text_.pixels[destination] = 255;
-                text_.pixels[destination + 1] = 255;
-                text_.pixels[destination + 2] = 255;
-                text_.pixels[destination + 3] = alpha;
+                const auto destination =
+                    static_cast<std::size_t>(text_.pen_y + row) * kAtlasSize + text_.pen_x + column;
+                text_.pixels[destination] = bitmap[static_cast<std::size_t>(row) * width + column];
             }
         }
         result.u0 = (static_cast<float>(text_.pen_x) + 0.5F) / kAtlasSize;
@@ -1144,6 +1304,103 @@ bool Renderer::ensure_glyph(int codepoint, int size, const Glyph*& glyph, std::s
         text_.pen_x += width + 1;
         text_.row_height = std::max(text_.row_height, height);
         text_.dirty = true;
+
+        // 阴影字形: 真正做一次高斯, 而不是把同一个字形在几个方向上平移几遍
+        // (那样在 1080p 上会看到一圈小方块)。为了省图集空间, 按 1/2 分辨率烘焙 ——
+        // 它本来就是模糊的, 放大一倍看不出差别。
+        if (shadow_blur_px_ >= 1.0F) {
+            const int half_w = std::max(1, (width + 1) / 2);
+            const int half_h = std::max(1, (height + 1) / 2);
+            const float sigma = std::max(0.6F, shadow_blur_px_ * 0.25F);
+            const int pad = std::max(1, static_cast<int>(std::ceil(sigma * 2.5F)));
+            const int blur_w = half_w + pad * 2;
+            const int blur_h = half_h + pad * 2;
+            std::vector<float> coverage(static_cast<std::size_t>(blur_w) * blur_h, 0.0F);
+            for (int row = 0; row < half_h; ++row) {
+                for (int column = 0; column < half_w; ++column) {
+                    float sum = 0.0F;
+                    int count = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            const int sx = column * 2 + dx;
+                            const int sy = row * 2 + dy;
+                            if (sx < width && sy < height) {
+                                sum += static_cast<float>(
+                                    bitmap[static_cast<std::size_t>(sy) * width + sx]);
+                                ++count;
+                            }
+                        }
+                    }
+                    coverage[static_cast<std::size_t>(row + pad) * blur_w + column + pad] =
+                        count == 0 ? 0.0F : sum / static_cast<float>(count) / 255.0F;
+                }
+            }
+            // 可分离高斯: 先横向再纵向。
+            const int radius = std::max(1, static_cast<int>(std::ceil(sigma * 2.5F)));
+            std::vector<float> kernel(static_cast<std::size_t>(radius * 2 + 1));
+            float total = 0.0F;
+            for (int offset = -radius; offset <= radius; ++offset) {
+                const float weight = std::exp(-static_cast<float>(offset) *
+                                              static_cast<float>(offset) / (2.0F * sigma * sigma));
+                kernel[static_cast<std::size_t>(offset + radius)] = weight;
+                total += weight;
+            }
+            for (auto& weight : kernel) {
+                weight /= total;
+            }
+            std::vector<float> horizontal(coverage.size(), 0.0F);
+            for (int row = 0; row < blur_h; ++row) {
+                for (int column = 0; column < blur_w; ++column) {
+                    float sum = 0.0F;
+                    for (int offset = -radius; offset <= radius; ++offset) {
+                        const int sx = std::clamp(column + offset, 0, blur_w - 1);
+                        sum += coverage[static_cast<std::size_t>(row) * blur_w + sx] *
+                               kernel[static_cast<std::size_t>(offset + radius)];
+                    }
+                    horizontal[static_cast<std::size_t>(row) * blur_w + column] = sum;
+                }
+            }
+            std::vector<std::uint8_t> blurred(static_cast<std::size_t>(blur_w) * blur_h);
+            for (int row = 0; row < blur_h; ++row) {
+                for (int column = 0; column < blur_w; ++column) {
+                    float sum = 0.0F;
+                    for (int offset = -radius; offset <= radius; ++offset) {
+                        const int sy = std::clamp(row + offset, 0, blur_h - 1);
+                        sum += horizontal[static_cast<std::size_t>(sy) * blur_w + column] *
+                               kernel[static_cast<std::size_t>(offset + radius)];
+                    }
+                    blurred[static_cast<std::size_t>(row) * blur_w + column] =
+                        static_cast<std::uint8_t>(std::clamp(sum * 255.0F, 0.0F, 255.0F));
+                }
+            }
+            if (text_.pen_x + blur_w + 1 > kAtlasSize) {
+                text_.pen_x = 0;
+                text_.pen_y += text_.row_height + 1;
+                text_.row_height = 0;
+            }
+            if (text_.pen_y + blur_h + 1 <= kAtlasSize) {
+                for (int row = 0; row < blur_h; ++row) {
+                    for (int column = 0; column < blur_w; ++column) {
+                        const auto destination =
+                            static_cast<std::size_t>(text_.pen_y + row) * kAtlasSize + text_.pen_x +
+                            column;
+                        text_.pixels[destination] =
+                            blurred[static_cast<std::size_t>(row) * blur_w + column];
+                    }
+                }
+                result.su0 = (static_cast<float>(text_.pen_x) + 0.5F) / kAtlasSize;
+                result.sv0 = (static_cast<float>(text_.pen_y) + 0.5F) / kAtlasSize;
+                result.su1 = (static_cast<float>(text_.pen_x + blur_w) - 0.5F) / kAtlasSize;
+                result.sv1 = (static_cast<float>(text_.pen_y + blur_h) - 0.5F) / kAtlasSize;
+                // 烘焙分辨率是 1/2, 绘制尺寸与偏移都要乘回 2。
+                result.shadow_width = blur_w * 2;
+                result.shadow_height = blur_h * 2;
+                result.shadow_pad = pad * 2;
+                text_.pen_x += blur_w + 1;
+                text_.row_height = std::max(text_.row_height, blur_h);
+                text_.dirty = true;
+            }
+        }
     }
 
     const auto [iterator, inserted] = text_.glyphs.emplace(key, result);
@@ -1159,7 +1416,8 @@ bool Renderer::upload_atlas(std::string& error) {
     if (text_.image.image != VK_NULL_HANDLE) {
         destroy_image(text_.image);
     }
-    if (!upload_pixels(kAtlasSize, kAtlasSize, text_.pixels, text_.image, error)) {
+    if (!upload_pixels(kAtlasSize, kAtlasSize, text_.pixels, text_.image, error,
+                       VK_FORMAT_R8_UNORM)) {
         return false;
     }
     text_.dirty = false;
@@ -1419,9 +1677,11 @@ bool Renderer::create_target(std::string& error) {
     image.extent = {render_w_, render_h_, 1};
     image.mipLevels = 1;
     image.arrayLayers = 1;
-    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.samples = samples_;
     image.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // SAMPLED 是给 SSAA 的降采样用的: 它直接采样整帧目标。
+    image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_SAMPLED_BIT;
     image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (!ok(vkCreateImage(device_, &image, nullptr, &target_), "创建渲染目标", error)) {
@@ -1460,7 +1720,7 @@ bool Renderer::create_target(std::string& error) {
     stencil.extent = {render_w_, render_h_, 1};
     stencil.mipLevels = 1;
     stencil.arrayLayers = 1;
-    stencil.samples = VK_SAMPLE_COUNT_1_BIT;
+    stencil.samples = samples_;
     stencil.tiling = VK_IMAGE_TILING_OPTIMAL;
     stencil.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     stencil.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -1537,7 +1797,7 @@ bool Renderer::create_target(std::string& error) {
     }
     mask_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    const VkDeviceSize readback_size = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
+    const VkDeviceSize readback_size = static_cast<VkDeviceSize>(output_w_) * output_h_ * 4;
     /*
      * 回读缓冲必须是 CPU 可缓存内存。
      *
@@ -1591,7 +1851,8 @@ bool Renderer::create_snapshot(std::string& error) {
     image.arrayLayers = 1;
     image.samples = VK_SAMPLE_COUNT_1_BIT;
     image.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (!ok(vkCreateImage(device_, &image, nullptr, &snapshot_image_), "创建快照图像", error)) {
@@ -1629,20 +1890,7 @@ bool Renderer::create_snapshot(std::string& error) {
             "分配快照 descriptor", error)) {
         return false;
     }
-    VkDescriptorImageInfo snapshot_info{};
-    snapshot_info.sampler = sampler_;
-    snapshot_info.imageView = snapshot_view_;
-    snapshot_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet writes[2]{};
-    for (int slot = 0; slot < 2; ++slot) {
-        writes[slot].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[slot].dstSet = snapshot_descriptor_;
-        writes[slot].dstBinding = static_cast<std::uint32_t>(slot);
-        writes[slot].descriptorCount = 1;
-        writes[slot].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[slot].pImageInfo = &snapshot_info;
-    }
-    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+    write_input_descriptors(snapshot_descriptor_, snapshot_view_, snapshot_view_);
     snapshot_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     return true;
 }
@@ -1686,6 +1934,38 @@ bool Renderer::create_layer(std::string& error) {
         return false;
     }
 
+    // MSAA: 立绘层要按多采样渲染, 再 resolve 回上面这张 1x 图给滤镜链采样。
+    if (msaa_) {
+        VkImageCreateInfo msaa = image;
+        msaa.samples = samples_;
+        msaa.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (!ok(vkCreateImage(device_, &msaa, nullptr, &layer_msaa_image_), "创建立绘层 MSAA 图",
+                error)) {
+            return false;
+        }
+        VkMemoryRequirements msaa_requirements{};
+        vkGetImageMemoryRequirements(device_, layer_msaa_image_, &msaa_requirements);
+        VkMemoryAllocateInfo msaa_alloc{};
+        msaa_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        msaa_alloc.allocationSize = msaa_requirements.size;
+        msaa_alloc.memoryTypeIndex =
+            find_memory_type(msaa_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (!ok(vkAllocateMemory(device_, &msaa_alloc, nullptr, &layer_msaa_memory_),
+                "分配立绘层 MSAA 内存", error)) {
+            return false;
+        }
+        if (!ok(vkBindImageMemory(device_, layer_msaa_image_, layer_msaa_memory_, 0),
+                "绑定立绘层 MSAA", error)) {
+            return false;
+        }
+        VkImageViewCreateInfo msaa_view = view;
+        msaa_view.image = layer_msaa_image_;
+        if (!ok(vkCreateImageView(device_, &msaa_view, nullptr, &layer_msaa_view_),
+                "创建立绘层 MSAA 视图", error)) {
+            return false;
+        }
+    }
+
     VkDescriptorSetAllocateInfo descriptor_alloc{};
     descriptor_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     descriptor_alloc.descriptorPool = descriptor_pool_;
@@ -1695,28 +1975,249 @@ bool Renderer::create_layer(std::string& error) {
             "分配立绘层 descriptor", error)) {
         return false;
     }
-    VkDescriptorImageInfo layer_info{};
-    layer_info.sampler = sampler_;
-    layer_info.imageView = layer_view_;
-    layer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet writes[2]{};
-    for (int slot = 0; slot < 2; ++slot) {
-        writes[slot].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[slot].dstSet = layer_descriptor_;
-        writes[slot].dstBinding = static_cast<std::uint32_t>(slot);
-        writes[slot].descriptorCount = 1;
-        writes[slot].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[slot].pImageInfo = &layer_info;
-    }
-    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+    write_input_descriptors(layer_descriptor_, layer_view_, layer_view_);
     layer_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     return true;
 }
 
+bool Renderer::create_filter_targets(std::string& error) {
+    if (filter_targets_ready_) {
+        return true;
+    }
+    for (auto& target : filter_targets_) {
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = kFormat;
+        image.extent = {render_w_, render_h_, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (!ok(vkCreateImage(device_, &image, nullptr, &target.image), "创建滤镜目标", error)) {
+            return false;
+        }
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, target.image, &requirements);
+        VkMemoryAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.allocationSize = requirements.size;
+        alloc.memoryTypeIndex =
+            find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (!ok(vkAllocateMemory(device_, &alloc, nullptr, &target.memory), "分配滤镜目标内存",
+                error)) {
+            return false;
+        }
+        if (!ok(vkBindImageMemory(device_, target.image, target.memory, 0), "绑定滤镜目标",
+                error)) {
+            return false;
+        }
+        VkImageViewCreateInfo view{};
+        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image = target.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = kFormat;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (!ok(vkCreateImageView(device_, &view, nullptr, &target.view), "创建滤镜目标视图",
+                error)) {
+            return false;
+        }
+        target.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+    filter_targets_ready_ = true;
+    return true;
+}
+
+bool Renderer::create_output_target(std::string& error) {
+    if (output_target_ready_ || (render_scale_ <= 1 && !msaa_)) {
+        return true;
+    }
+    VkImageCreateInfo image{};
+    image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = kFormat;
+    image.extent = {output_w_, output_h_, 1};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!ok(vkCreateImage(device_, &image, nullptr, &output_target_.image), "创建降采样目标",
+            error)) {
+        return false;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, output_target_.image, &requirements);
+    VkMemoryAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = requirements.size;
+    alloc.memoryTypeIndex =
+        find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!ok(vkAllocateMemory(device_, &alloc, nullptr, &output_target_.memory), "分配降采样内存",
+            error)) {
+        return false;
+    }
+    if (!ok(vkBindImageMemory(device_, output_target_.image, output_target_.memory, 0),
+            "绑定降采样", error)) {
+        return false;
+    }
+    VkImageViewCreateInfo view{};
+    view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.image = output_target_.image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = kFormat;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (!ok(vkCreateImageView(device_, &view, nullptr, &output_target_.view), "创建降采样视图",
+            error)) {
+        return false;
+    }
+    output_target_.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    output_target_ready_ = true;
+
+    // 降采样之后还要在输出尺寸上叠 UI/视频, 那条 pass 用 `pipeline_` (带 stencil 测试),
+    // 所以需要一份输出尺寸的 depth/stencil。
+    VkImageCreateInfo stencil{};
+    stencil.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    stencil.imageType = VK_IMAGE_TYPE_2D;
+    stencil.format = stencil_format_;
+    stencil.extent = {output_w_, output_h_, 1};
+    stencil.mipLevels = 1;
+    stencil.arrayLayers = 1;
+    stencil.samples = VK_SAMPLE_COUNT_1_BIT;
+    stencil.tiling = VK_IMAGE_TILING_OPTIMAL;
+    stencil.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    stencil.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    stencil.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!ok(vkCreateImage(device_, &stencil, nullptr, &output_stencil_image_),
+            "创建输出 stencil 目标", error)) {
+        return false;
+    }
+    VkMemoryRequirements stencil_requirements{};
+    vkGetImageMemoryRequirements(device_, output_stencil_image_, &stencil_requirements);
+    VkMemoryAllocateInfo stencil_alloc{};
+    stencil_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    stencil_alloc.allocationSize = stencil_requirements.size;
+    stencil_alloc.memoryTypeIndex =
+        find_memory_type(stencil_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!ok(vkAllocateMemory(device_, &stencil_alloc, nullptr, &output_stencil_memory_),
+            "分配输出 stencil 内存", error)) {
+        return false;
+    }
+    if (!ok(vkBindImageMemory(device_, output_stencil_image_, output_stencil_memory_, 0),
+            "绑定输出 stencil", error)) {
+        return false;
+    }
+    VkImageViewCreateInfo stencil_view{};
+    stencil_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    stencil_view.image = output_stencil_image_;
+    stencil_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    stencil_view.format = stencil_format_;
+    stencil_view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1,
+                                     0, 1};
+    if (!ok(vkCreateImageView(device_, &stencil_view, nullptr, &output_stencil_view_),
+            "创建输出 stencil 视图", error)) {
+        return false;
+    }
+    output_stencil_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    return true;
+}
+
+VkDescriptorSet Renderer::filter_descriptor(VkImageView first, VkImageView second,
+                                            std::string& error) {
+    const auto key = std::make_pair(first, second);
+    if (const auto found = filter_descriptors_.find(key); found != filter_descriptors_.end()) {
+        return found->second;
+    }
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc.descriptorPool = descriptor_pool_;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &descriptor_layout_;
+    if (!ok(vkAllocateDescriptorSets(device_, &alloc, &descriptor), "分配滤镜 descriptor", error)) {
+        return VK_NULL_HANDLE;
+    }
+    write_input_descriptors(descriptor, first, second);
+    filter_descriptors_[key] = descriptor;
+    return descriptor;
+}
+
+bool Renderer::create_smaa_luts(std::string& error) {
+    // 两张 LUT 都来自 three.js 的 `SMAAPass.js` (SMAA v2.8 官方数据), 构建期内嵌成 PNG,
+    // 这里解码后按 8 位单/双通道上传。面积表用线性采样 (它靠双线性插值做亚像素),
+    // 搜索表必须最近邻 (见 write_input_descriptors 里的采样器选择)。
+    struct LutSpec {
+        const char* name;
+        GpuImage* image;
+        bool two_channel;
+    };
+    const LutSpec specs[] = {
+        {"smaa_area.png", &smaa_area_, true},
+        {"smaa_search.png", &smaa_search_, false},
+    };
+    for (const auto& spec : specs) {
+        const assets::EmbeddedAsset* asset = assets::find(spec.name);
+        if (asset == nullptr) {
+            error = std::string("缺少内嵌素材: ") + spec.name;
+            return false;
+        }
+        media::Image decoded;
+        if (!media::decode_image_bytes(asset->data, asset->size, decoded, error)) {
+            return false;
+        }
+        if (decoded.width == 0 || decoded.height == 0) {
+            error = std::string("内嵌素材尺寸无效: ") + spec.name;
+            return false;
+        }
+        // area 表要双通道 (R/G 各一路覆盖度), search 表只需要 R。
+        if (!spec.two_channel) {
+            for (std::size_t index = 0; index < decoded.pixels.size(); index += 4) {
+                const std::uint8_t value = decoded.pixels[index];
+                decoded.pixels[index + 1] = value;
+                decoded.pixels[index + 2] = value;
+            }
+        }
+        if (!upload_pixels(decoded.width, decoded.height, decoded.pixels, *spec.image, error)) {
+            return false;
+        }
+        if (!spec.two_channel) {
+            // rgb 通道留原值, alpha 会被 shader 忽略; 这里不额外处理。
+        }
+    }
+    return true;
+}
+
+void Renderer::write_input_descriptors(VkDescriptorSet set, VkImageView first, VkImageView second) {
+    VkDescriptorImageInfo infos[4]{};
+    const VkImageView views[4] = {first, second, smaa_area_.view, smaa_search_.view};
+    VkWriteDescriptorSet writes[4]{};
+    for (int slot = 0; slot < 4; ++slot) {
+        // 搜索表用最近邻, 其余 (含 area) 用线性。
+        infos[slot].sampler = slot == 3 ? sampler_nearest_ : sampler_;
+        infos[slot].imageView = views[slot];
+        infos[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        writes[slot].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[slot].dstSet = set;
+        writes[slot].dstBinding = static_cast<std::uint32_t>(slot);
+        writes[slot].descriptorCount = 1;
+        writes[slot].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[slot].pImageInfo = &infos[slot];
+    }
+    vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
+}
+
 bool Renderer::create_descriptors(std::string& error) {
-    VkDescriptorSetLayoutBinding bindings[2]{};
-    for (int index = 0; index < 2; ++index) {
-        bindings[index].binding = static_cast<std::uint32_t>(index);
+    // 0/1 = 滤镜的两个输入, 2/3 = SMAA 的 area/search LUT。滤镜模块里四个 binding 都声明了,
+    // 所以每个 set 都要写满四个 (未使用的 pass 用不到它们, 但描述符必须有效)。
+    constexpr std::uint32_t kInputBindingCount = 4;
+    VkDescriptorSetLayoutBinding bindings[kInputBindingCount]{};
+    for (std::uint32_t index = 0; index < kInputBindingCount; ++index) {
+        bindings[index].binding = index;
         bindings[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[index].descriptorCount = 1;
         bindings[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1724,7 +2225,7 @@ bool Renderer::create_descriptors(std::string& error) {
 
     VkDescriptorSetLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.bindingCount = 2;
+    layout.bindingCount = kInputBindingCount;
     layout.pBindings = bindings;
     if (!ok(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &descriptor_layout_),
             "创建 descriptor layout", error)) {
@@ -1758,6 +2259,18 @@ bool Renderer::create_descriptors(std::string& error) {
         return false;
     }
 
+    VkSamplerCreateInfo nearest = sampler;
+    nearest.magFilter = VK_FILTER_NEAREST;
+    nearest.minFilter = VK_FILTER_NEAREST;
+    nearest.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    if (!ok(vkCreateSampler(device_, &nearest, nullptr, &sampler_nearest_), "创建最近邻 sampler",
+            error)) {
+        return false;
+    }
+    if (!create_smaa_luts(error)) {
+        return false;
+    }
+
     VkDescriptorSetAllocateInfo mask_alloc{};
     mask_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     mask_alloc.descriptorPool = descriptor_pool_;
@@ -1767,20 +2280,7 @@ bool Renderer::create_descriptors(std::string& error) {
             "分配 mask descriptor", error)) {
         return false;
     }
-    VkDescriptorImageInfo mask_info{};
-    mask_info.sampler = sampler_;
-    mask_info.imageView = mask_view_;
-    mask_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet mask_writes[2]{};
-    for (int index = 0; index < 2; ++index) {
-        mask_writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        mask_writes[index].dstSet = mask_descriptor_;
-        mask_writes[index].dstBinding = static_cast<std::uint32_t>(index);
-        mask_writes[index].descriptorCount = 1;
-        mask_writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        mask_writes[index].pImageInfo = &mask_info;
-    }
-    vkUpdateDescriptorSets(device_, 2, mask_writes, 0, nullptr);
+    write_input_descriptors(mask_descriptor_, mask_view_, mask_view_);
     return true;
 }
 
@@ -1879,7 +2379,8 @@ bool Renderer::create_pipeline(std::string& error) {
 
     VkPipelineMultisampleStateCreateInfo multisample{};
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    // 场景附件在 MSAA 档位下是多采样的, 管道必须跟着改, 否则 pass 建立时校验失败。
+    multisample.rasterizationSamples = samples_;
 
     VkPipelineColorBlendAttachmentState blend{};
     blend.blendEnable = VK_TRUE;
@@ -1979,7 +2480,7 @@ bool Renderer::create_pipeline(std::string& error) {
     info.pDynamicState = &dynamic;
     info.layout = pipeline_layout_;
 
-    VkGraphicsPipelineCreateInfo infos[7] = {info, info, info, info, info, info, info};
+    VkGraphicsPipelineCreateInfo infos[6] = {info, info, info, info, info, info};
     infos[1].pDepthStencilState = &stencil_depth;
     infos[2].pDepthStencilState = &mask_depth;
     infos[2].pColorBlendState = &mask_color;
@@ -1987,22 +2488,8 @@ bool Renderer::create_pipeline(std::string& error) {
     infos[4].pColorBlendState = &color_mul;
     infos[5].pColorBlendState = &color_premult;
 
-    VkBool32 fast_fxaa = VK_TRUE;
-    VkSpecializationMapEntry fast_entry{};
-    fast_entry.constantID = 0;
-    fast_entry.offset = 0;
-    fast_entry.size = sizeof(fast_fxaa);
-    VkSpecializationInfo fast_spec{};
-    fast_spec.mapEntryCount = 1;
-    fast_spec.pMapEntries = &fast_entry;
-    fast_spec.dataSize = sizeof(fast_fxaa);
-    fast_spec.pData = &fast_fxaa;
-    VkPipelineShaderStageCreateInfo fast_stages[2] = {stages[0], stages[1]};
-    fast_stages[1].pSpecializationInfo = &fast_spec;
-    infos[6].pStages = fast_stages;
-
-    VkPipeline created[7]{};
-    if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 7, infos, nullptr, created),
+    VkPipeline created[6]{};
+    if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 6, infos, nullptr, created),
             "创建 graphics pipelines", error)) {
         return false;
     }
@@ -2012,7 +2499,125 @@ bool Renderer::create_pipeline(std::string& error) {
     pipeline_add_ = created[3];
     pipeline_mul_ = created[4];
     pipeline_layer_ = created[5];
-    pipeline_fxaa_fast_ = created[6];
+
+    VkPipelineMultisampleStateCreateInfo overlay_multisample = multisample;
+    overlay_multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkGraphicsPipelineCreateInfo overlay_info = info;
+    overlay_info.pMultisampleState = &overlay_multisample;
+    if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &overlay_info, nullptr,
+                                      &pipeline_overlay_),
+            "创建叠层 pipeline", error)) {
+        return false;
+    }
+
+    // ---- 滤镜链: 同一个片元模块, 用 specialization constant 选 pass 类型 ----
+    const auto* filter_fragment = shaders::find("filter.frag");
+    if (filter_fragment == nullptr) {
+        error = "缺少内嵌 shader: filter.frag";
+        return false;
+    }
+    VkShaderModule filter_module = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo filter_info{};
+    filter_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    filter_info.codeSize = filter_fragment->size;
+    filter_info.pCode = reinterpret_cast<const std::uint32_t*>(filter_fragment->data);
+    if (!ok(vkCreateShaderModule(device_, &filter_info, nullptr, &filter_module),
+            "创建 filter shader", error)) {
+        return false;
+    }
+
+    // 滤镜 pass 只写颜色附件, 渲染时也不带 depth/stencil, 两者必须一致。
+    VkPipelineRenderingCreateInfo filter_rendering{};
+    filter_rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    filter_rendering.colorAttachmentCount = 1;
+    filter_rendering.pColorAttachmentFormats = &kFormat;
+
+    VkPipelineColorBlendAttachmentState filter_blend{};
+    filter_blend.blendEnable = VK_FALSE;
+    filter_blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo filter_color{};
+    filter_color.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    filter_color.attachmentCount = 1;
+    filter_color.pAttachments = &filter_blend;
+
+    // Composite 按预乘 alpha 混回舞台。
+    VkPipelineColorBlendAttachmentState composite_blend = filter_blend;
+    composite_blend.blendEnable = VK_TRUE;
+    composite_blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    composite_blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    composite_blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    composite_blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    VkPipelineColorBlendStateCreateInfo composite_color = filter_color;
+    composite_color.pAttachments = &composite_blend;
+
+    VkPipelineShaderStageCreateInfo filter_stages[2] = {
+        stages[0],
+        shader_stage(filter_module, VK_SHADER_STAGE_FRAGMENT_BIT),
+    };
+    // 滤镜链的目标都是 1x (见 create_filter_targets), 所以滤镜管道固定 1 个采样;
+    // 唯一的例外是 Composite —— 它把结果混回舞台目标, 要跟舞台的采样数一致。
+    VkPipelineMultisampleStateCreateInfo filter_multisample{};
+    filter_multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    filter_multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkGraphicsPipelineCreateInfo filter_pipeline_info = info;
+    filter_pipeline_info.pNext = &filter_rendering;
+    filter_pipeline_info.pStages = filter_stages;
+    filter_pipeline_info.pDepthStencilState = &normal_depth;
+    filter_pipeline_info.pColorBlendState = &filter_color;
+    filter_pipeline_info.pMultisampleState = &filter_multisample;
+
+    const auto create_filter_pipeline =
+        [&](int kind, bool fast_fxaa, const VkPipelineColorBlendStateCreateInfo& blend,
+            VkSampleCountFlagBits samples, VkPipeline& pipeline) -> bool {
+        // 两个 specialization constant 打包成一块数据: [0] = kind, [1] = fastFxaa。
+        std::array<std::uint32_t, 2> values{};
+        values[0] = static_cast<std::uint32_t>(kind);
+        values[1] = fast_fxaa ? 1U : 0U;
+        std::array<VkSpecializationMapEntry, 2> entries{};
+        entries[0].constantID = 0;
+        entries[0].offset = 0;
+        entries[0].size = sizeof(std::uint32_t);
+        entries[1].constantID = 1;
+        entries[1].offset = sizeof(std::uint32_t);
+        entries[1].size = sizeof(std::uint32_t);
+        VkSpecializationInfo spec{};
+        spec.mapEntryCount = static_cast<std::uint32_t>(entries.size());
+        spec.pMapEntries = entries.data();
+        spec.dataSize = sizeof(values);
+        spec.pData = values.data();
+        VkPipelineShaderStageCreateInfo patched[2] = {filter_stages[0], filter_stages[1]};
+        patched[1].pSpecializationInfo = &spec;
+        VkPipelineMultisampleStateCreateInfo multisample_state = filter_multisample;
+        multisample_state.rasterizationSamples = samples;
+        VkGraphicsPipelineCreateInfo pipeline_info = filter_pipeline_info;
+        pipeline_info.pStages = patched;
+        pipeline_info.pColorBlendState = &blend;
+        pipeline_info.pMultisampleState = &multisample_state;
+        return ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+                                            &pipeline),
+                  "创建滤镜 pipeline", error);
+    };
+
+    for (int kind = 0; kind < kFilterKindCount; ++kind) {
+        if (kind == static_cast<int>(FilterKind::Composite)) {
+            continue;
+        }
+        if (!create_filter_pipeline(kind, false, filter_color, VK_SAMPLE_COUNT_1_BIT,
+                                    filter_pipelines_[static_cast<std::size_t>(kind)])) {
+            vkDestroyShaderModule(device_, filter_module, nullptr);
+            return false;
+        }
+    }
+    if (!create_filter_pipeline(static_cast<int>(FilterKind::Fxaa), true, filter_color,
+                                VK_SAMPLE_COUNT_1_BIT, pipeline_fxaa_fast_) ||
+        !create_filter_pipeline(static_cast<int>(FilterKind::Composite), false, composite_color,
+                                samples_, pipeline_filter_composite_)) {
+        vkDestroyShaderModule(device_, filter_module, nullptr);
+        return false;
+    }
+    vkDestroyShaderModule(device_, filter_module, nullptr);
 
     VkPipelineRenderingCreateInfo mask_rendering{};
     mask_rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
@@ -2028,10 +2633,15 @@ bool Renderer::create_pipeline(std::string& error) {
     mask_fill_color.attachmentCount = 1;
     mask_fill_color.pAttachments = &mask_fill_blend;
 
+    // mask 图恒为 1x (见 create_mask 用的是 stage 尺寸单采样), 所以这条管道不能跟场景一致。
+    VkPipelineMultisampleStateCreateInfo mask_multisample = multisample;
+    mask_multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
     VkGraphicsPipelineCreateInfo mask_fill_info = info;
     mask_fill_info.pNext = &mask_rendering;
     mask_fill_info.pDepthStencilState = &normal_depth;
     mask_fill_info.pColorBlendState = &mask_fill_color;
+    mask_fill_info.pMultisampleState = &mask_multisample;
     if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &mask_fill_info, nullptr,
                                       &pipeline_mask_fill_),
             "创建 mask fill pipeline", error)) {
@@ -2089,8 +2699,11 @@ void Renderer::transition(VkImage image, VkImageLayout old_layout, VkImageLayout
 
 bool Renderer::upload_pixels(std::uint32_t width, std::uint32_t height,
                              const std::vector<std::uint8_t>& pixels, GpuImage& gpu,
-                             std::string& error) {
-    if (width == 0 || height == 0 || pixels.size() < static_cast<std::size_t>(width) * height * 4) {
+                             std::string& error, VkFormat format) {
+    // 文字图集只需要覆盖率, 用 R8 存 (同样的容量只占 1/4 显存)。
+    const std::size_t bytes_per_pixel = format == VK_FORMAT_R8_UNORM ? 1 : 4;
+    if (width == 0 || height == 0 ||
+        pixels.size() < static_cast<std::size_t>(width) * height * bytes_per_pixel) {
         error = "图片像素数据无效";
         return false;
     }
@@ -2098,7 +2711,7 @@ bool Renderer::upload_pixels(std::uint32_t width, std::uint32_t height,
     VkImageCreateInfo image{};
     image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image.imageType = VK_IMAGE_TYPE_2D;
-    image.format = VK_FORMAT_R8G8B8A8_SRGB;
+    image.format = format;
     image.extent = {width, height, 1};
     image.mipLevels = 1;
     image.arrayLayers = 1;
@@ -2167,7 +2780,7 @@ bool Renderer::upload_pixels(std::uint32_t width, std::uint32_t height,
     view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image = gpu.image;
     view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view.format = VK_FORMAT_R8G8B8A8_SRGB;
+    view.format = format;
     view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (!ok(vkCreateImageView(device_, &view, nullptr, &gpu.view), "创建图片视图", error)) {
         return false;
@@ -3163,6 +3776,7 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
         TextBatch batch;
         batch.order = order;
         batch.item.descriptor = text_.image.descriptor;
+        batch.item.coverage_only = true;
         batch.item.alpha = glyph_alpha;
         batch.item.transform.color_r = tint[0];
         batch.item.transform.color_g = tint[1];
@@ -3196,26 +3810,22 @@ void Renderer::append_text(std::vector<DrawItem>& items, const std::string& text
             const float left = x + static_cast<float>(glyph.bearing_x);
             const float top = baseline - static_cast<float>(glyph.bearing_y);
             if (outline && ui_style_.text_shadow_color[3] > 0.01F) {
-                // CSS 的 text-shadow 是带模糊的黑色阴影; 只用几层平移会得到灰色
-                // 硬边。这里把"阴影字形"在模糊半径内多点采样, 中心再压一层接近
-                // 不透明的黑色, 视觉上更接近浏览器的高斯模糊阴影。
+                // 阴影字形在进图集时就做过高斯 (见 ensure_glyph), 这里一次绘制即可;
+                // 之前用"同一个字形平移 16 次"在 1080p 上会露出一圈小方块。
                 const float dy = ui_style_.text_shadow_dy * ui_style_.text_scale * ui_style_.scale;
-                const float blur =
-                    std::clamp(ui_style_.text_shadow_blur * ui_style_.text_scale * ui_style_.scale,
-                               2.0F, 24.0F);
                 const std::array<float, 4> shadow{0.0F, 0.0F, 0.0F, 1.0F};
                 const float strength = ui_style_.text_shadow_color[3];
-                add_glyph(glyph, left, top + dy, shadow, alpha * 0.62F * strength, 0);
-                for (int ring = 0; ring < 2; ++ring) {
-                    const float radius = ring == 0 ? blur * 0.45F : blur;
-                    const float ring_alpha = ring == 0 ? 0.16F : 0.07F;
-                    for (int direction = 0; direction < 8; ++direction) {
-                        const float angle =
-                            static_cast<float>(direction) * 2.0F * 3.14159265358979323846F / 8.0F;
-                        add_glyph(glyph, left + std::cos(angle) * radius,
-                                  top + dy + std::sin(angle) * radius, shadow,
-                                  alpha * ring_alpha * strength, 0);
-                    }
+                if (glyph.shadow_width > 0) {
+                    const float shadow_x = left - static_cast<float>(glyph.shadow_pad);
+                    const float shadow_y = top + dy - static_cast<float>(glyph.shadow_pad);
+                    DrawItem& batch = batch_for(shadow, alpha * strength, 0);
+                    append_rect(batch.vertices, shadow_x, shadow_y,
+                                static_cast<float>(glyph.shadow_width),
+                                static_cast<float>(glyph.shadow_height), glyph.su0, glyph.sv0,
+                                glyph.su1, glyph.sv1);
+                } else {
+                    // 图集放不下阴影字形时退化成单个硬边阴影, 至少不要凭空消失。
+                    add_glyph(glyph, left, top + dy, shadow, alpha * 0.7F * strength, 0);
                 }
             }
             if (bold > 0.0F) {
@@ -3307,25 +3917,15 @@ std::vector<std::string> Renderer::wrap_text(const std::string& text, int size, 
 
 void Renderer::push_constants(const job::Transform& transform, float alpha, bool use_mask,
                               const float* multiply, const float* screen, bool inverted_mask,
-                              float radius, float width, float height, float output_mode) {
+                              float radius, float width, float height, float output_mode,
+                              bool coverage_only) {
     PushConstants constants{};
+    // tint 在这里承载两类东西: 场景元素的通道乘法 (color_r/g/b, 现在由滤镜链负责,
+    // 只对直通路径生效) 与文字/底板/选项的填充色。两者不会同时出现。
     constants.tint[0] = transform.color_r;
     constants.tint[1] = transform.color_g;
     constants.tint[2] = transform.color_b;
     constants.tint[3] = alpha;
-    constants.adjust[0] = transform.brightness;
-    constants.adjust[1] = transform.contrast;
-    constants.adjust[2] = transform.saturation;
-    constants.adjust[3] = transform.gamma;
-    constants.fx[0] = transform.blur;
-    constants.fx[1] = transform.bloom;
-    constants.fx[2] = transform.bloom_threshold;
-    constants.fx[3] = transform.bloom_brightness;
-    if (output_mode > 1.5F) {
-        // 立绘层只做普通滤镜; bloom 在整层合成时统一做, 否则会先在原位提亮一次、
-        // 合成时又加一次, 边缘会发白。
-        constants.fx[1] = 0.0F;
-    }
     constants.mask[0] = use_mask ? 1.0F : 0.0F;
     constants.mask[1] = inverted_mask ? 1.0F : 0.0F;
     constants.mask[2] = static_cast<float>(stage_w_);
@@ -3344,21 +3944,13 @@ void Renderer::push_constants(const job::Transform& transform, float alpha, bool
         constants.screen[1] = screen[1];
         constants.screen[2] = screen[2];
     }
-    if (disable_filters_) {
-        constants.adjust[0] = 1.0F;
-        constants.adjust[1] = 1.0F;
-        constants.adjust[2] = 1.0F;
-        constants.adjust[3] = 1.0F;
-        constants.fx[0] = 0.0F;
-        constants.fx[1] = 0.0F;
-        constants.fx[2] = 0.0F;
-        constants.fx[3] = 1.0F;
-    }
     constants.shape[0] = radius;
     constants.shape[1] = width;
     constants.shape[2] = height;
-    // 0 = 普通, 2 = 渲染到立绘层 (输出预乘 alpha); 倒角合成用 push_constants_layer。
+    // 0 = 普通直通; 2 = 渲染到立绘层 (输出预乘 alpha, 颜色调整交给滤镜链)。
     constants.mask_transform[3] = output_mode;
+    // R8 覆盖率贴图 (文字图集): 颜色由 tint 给, alpha 只取贴图的 R 通道。
+    constants.adjust[0] = coverage_only ? 1.0F : 0.0F;
     vkCmdPushConstants(command_, pipeline_layout_,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(constants), &constants);
@@ -3372,10 +3964,6 @@ void Renderer::push_constants_mask(const job::Transform& transform, float min_u,
     constants.tint[1] = 1.0F;
     constants.tint[2] = 1.0F;
     constants.tint[3] = -1.0F;
-    constants.adjust[0] = 1.0F;
-    constants.adjust[1] = 1.0F;
-    constants.adjust[2] = 1.0F;
-    constants.adjust[3] = 1.0F;
     constants.mask_transform[0] = min_u;
     constants.mask_transform[1] = min_v;
     constants.mask_transform[2] = size_u;
@@ -3389,35 +3977,262 @@ void Renderer::push_constants_mask(const job::Transform& transform, float min_u,
                        sizeof(constants), &constants);
 }
 
-void Renderer::push_constants_layer(const job::Transform& transform, float alpha,
-                                    bool allow_bloom) {
-    PushConstants constants{};
-    constants.tint[0] = 1.0F;
-    constants.tint[1] = 1.0F;
-    constants.tint[2] = 1.0F;
-    constants.tint[3] = alpha;
-    constants.adjust[0] = 1.0F;
-    constants.adjust[1] = 1.0F;
-    constants.adjust[2] = 1.0F;
-    constants.adjust[3] = 1.0F;
-    // mask.z/w 在普通绘制里放的是舞台尺寸, 只有立绘层合成读取;
-    // mask_transform.z 是 vertex shader 的 mask surface 开关, 必须保持 0。
-    constants.mask[2] = transform.bevel;
-    constants.mask[3] = transform.bevel_thickness;
-    constants.mask_transform[0] = transform.bevel_rotation * 3.14159265358979323846F / 180.0F;
-    constants.mask_transform[3] = 1.0F;
-    // 复用 multiply/screen/shape 的 w 分量传 lightColor (r/g/b)。
-    constants.multiply[0] = 1.0F;
-    constants.multiply[1] = 1.0F;
-    constants.multiply[2] = 1.0F;
-    constants.multiply[3] = transform.bevel_r;
-    constants.screen[3] = transform.bevel_g;
-    constants.shape[3] = transform.bevel_b;
-    // fx 在立绘层合成里改存 bloom: 强度 / 模糊半径(px) / 阈值 / 亮度。
-    constants.fx[0] = allow_bloom ? transform.bloom : 0.0F;
-    constants.fx[1] = transform.bloom_blur;
-    constants.fx[2] = transform.bloom_threshold;
-    constants.fx[3] = transform.bloom_brightness;
+std::vector<FilterStep> Renderer::build_filter_chain(const job::Transform& transform,
+                                                     std::uint64_t t_us) const {
+    std::vector<FilterStep> steps;
+    if (disable_filters_) {
+        return steps;
+    }
+    // 引擎的参数都以**输出**像素为单位; SSAA 时渲染尺寸是两倍, 像素量要一起放大,
+    // 否则同一个 blur=8 在 2x 画布上只剩一半视觉半径。
+    const float scale = static_cast<float>(render_scale_);
+
+    // ---- 颜色调整 (pixi-filters AdjustmentFilter) ----
+    const bool adjust = transform.brightness != 1.0F || transform.contrast != 1.0F ||
+                        transform.saturation != 1.0F || transform.gamma != 1.0F ||
+                        transform.color_r != 1.0F || transform.color_g != 1.0F ||
+                        transform.color_b != 1.0F;
+    if (adjust) {
+        FilterStep step;
+        step.kind = FilterKind::Adjustment;
+        step.params[0] = transform.gamma;
+        step.params[1] = transform.contrast;
+        step.params[2] = transform.saturation;
+        step.params[3] = transform.brightness;
+        step.params2[0] = transform.color_r;
+        step.params2[1] = transform.color_g;
+        step.params2[2] = transform.color_b;
+        // AdjustmentFilter 自己的 alpha 参数; WebGAL 不暴露, 恒为 1。
+        step.params2[3] = 1.0F;
+        steps.push_back(step);
+    }
+
+    // ---- 倒角 (WebGAL 自定义 BevelFilter) ----
+    // 引擎把 shadowAlpha 显式设成 0, 所以只有 light 通道可见; 公式里仍保留 shadow,
+    // 以后要对齐时只要把 alpha 填进来。
+    if (transform.bevel > 0.001F && transform.bevel_thickness > 0.001F) {
+        FilterStep step;
+        step.kind = FilterKind::Bevel;
+        constexpr float kPi = 3.14159265358979323846F;
+        const float radians = transform.bevel_rotation * kPi / 180.0F;
+        // 偏移量按**输出**像素给, 乘上渲染倍率后再由 shader 换算成 uv。
+        const float thickness = transform.bevel_thickness * static_cast<float>(render_scale_);
+        step.params[0] = std::cos(radians) * thickness;
+        step.params[1] = std::sin(radians) * thickness;
+        step.params2[0] = transform.bevel_r;
+        step.params2[1] = transform.bevel_g;
+        step.params2[2] = transform.bevel_b;
+        step.params2[3] = transform.bevel;
+        step.params3[0] = 0.0F;
+        step.params3[1] = 0.0F;
+        step.params3[2] = 0.0F;
+        step.params3[3] = 0.0F;
+        steps.push_back(step);
+    }
+
+    // ---- 泛光 (pixi-filters AdvancedBloomFilter) ----
+    // 结构: 亮度提取 → Kawase 多级模糊 → 原图 * brightness + 泛光 * bloomScale。
+    if (transform.bloom > 0.001F) {
+        FilterStep extract;
+        extract.kind = FilterKind::Extract;
+        extract.params[0] = transform.bloom_threshold;
+        steps.push_back(extract);
+
+        // AdvancedBloomFilter 的 quality 默认 4; kernels 从 blur 递减到 blur/quality。
+        constexpr int kQuality = 4;
+        const float blur = std::max(transform.bloom_blur, 0.0F);
+        if (blur <= 0.0F) {
+            // blur 为 0 时 pixi 只做一次 4 tap、偏移 0.5px 的抽样。
+            FilterStep kawase;
+            kawase.kind = FilterKind::Kawase;
+            kawase.params[0] = 0.5F * scale / static_cast<float>(render_w_);
+            kawase.params[1] = 0.5F * scale / static_cast<float>(render_h_);
+            steps.push_back(kawase);
+        } else {
+            const float step_size = blur / static_cast<float>(kQuality);
+            float kernel = blur;
+            for (int index = 0; index < kQuality; ++index) {
+                if (index > 0) {
+                    kernel -= step_size;
+                }
+                FilterStep kawase;
+                kawase.kind = FilterKind::Kawase;
+                kawase.params[0] = (kernel + 0.5F) * scale / static_cast<float>(render_w_);
+                kawase.params[1] = (kernel + 0.5F) * scale / static_cast<float>(render_h_);
+                steps.push_back(kawase);
+            }
+        }
+
+        FilterStep bloom;
+        bloom.kind = FilterKind::Bloom;
+        bloom.params[0] = transform.bloom_brightness;
+        bloom.params[1] = transform.bloom;
+        steps.push_back(bloom);
+    }
+
+    // ---- film 类 (pixi-filters): 顺序与引擎的滤镜优先级一致, 棕褐 → 网点 → 通道偏移 ----
+    if (transform.film_old) {
+        // OldFilmFilter 的默认参数; 引擎用 `new OldFilmFilter()` 且不刷新 seed, 所以种子恒为 0,
+        // 导出结果天然可复现 (不需要按帧号播种)。
+        FilterStep step;
+        step.kind = FilterKind::OldFilm;
+        step.params[0] = 0.3F;  // sepia
+        step.params[1] = 0.3F;  // noise
+        step.params[2] = 1.0F;  // noiseSize
+        step.params[3] = 0.5F;  // scratch
+        step.params2[0] = 0.3F; // scratchDensity
+        step.params2[1] = 1.0F; // scratchWidth
+        step.params2[2] = 0.3F; // vignetting
+        step.params2[3] = 1.0F; // vignettingAlpha
+        step.params3[0] = 0.3F; // vignettingBlur
+        step.params3[1] = 0.0F; // seed
+        step.params4[0] = static_cast<float>(render_w_);
+        step.params4[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+    if (transform.film_dot) {
+        // DotFilter 的默认参数 (scale = 1, angle = 5 弧度)。
+        FilterStep step;
+        step.kind = FilterKind::DotFilm;
+        step.params[0] = 5.0F;
+        step.params[1] = 1.0F;
+        step.params2[0] = static_cast<float>(render_w_);
+        step.params2[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+    if (transform.film_rgb) {
+        // RGBSplitFilter 的默认偏移: 红 (-10, 0)、绿 (0, 10)、蓝 (0, 0), 单位是输出像素。
+        FilterStep step;
+        step.kind = FilterKind::RgbSplit;
+        step.params[0] = -10.0F * scale;
+        step.params[1] = 0.0F;
+        step.params[2] = 0.0F;
+        step.params[3] = 10.0F * scale;
+        step.params2[0] = 0.0F;
+        step.params2[1] = 0.0F;
+        step.params2[2] = static_cast<float>(render_w_);
+        step.params2[3] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+
+    if (transform.film_reflection) {
+        // ReflectionFilter 的默认参数: mirror=true, boundary=0.5, amplitude=[0,20],
+        // waveLength=[30,100], alpha=[1,1], time=0。
+        FilterStep step;
+        step.kind = FilterKind::Reflection;
+        step.params[0] = 1.0F;
+        step.params[1] = 0.5F;
+        step.params2[0] = 0.0F;
+        step.params2[1] = 20.0F;
+        step.params2[2] = 30.0F;
+        step.params2[3] = 100.0F;
+        step.params3[0] = 1.0F;
+        step.params3[1] = 1.0F;
+        step.params3[2] = 0.0F;
+        step.params4[0] = static_cast<float>(render_w_);
+        step.params4[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+
+    if (transform.radius_alpha > 0.001F) {
+        // 引擎的默认中心是 (0.5, 0.5); 半径 0 表示"不启用", 所以只处理正值。
+        FilterStep step;
+        step.kind = FilterKind::RadiusAlpha;
+        step.params[0] = transform.radius_alpha;
+        step.params[1] = 0.5F;
+        step.params[2] = 0.5F;
+        steps.push_back(step);
+    }
+
+    if (transform.shockwave > 0.001F) {
+        // ShockwaveFilter 的默认参数: center=(0.5,0.5) (引擎是 2560 坐标系里的 1280,720),
+        // amplitude=30, wavelength=160, speed=500, radius=-1, brightness=1。
+        // 脚本给的是 time, 引擎不自动推进它, 所以导出里也是静态的。
+        FilterStep step;
+        step.kind = FilterKind::Shockwave;
+        step.params[0] = 0.5F;
+        step.params[1] = 0.5F;
+        step.params[2] = transform.shockwave;
+        step.params2[0] = 30.0F;
+        step.params2[1] = 160.0F;
+        step.params2[2] = 500.0F;
+        step.params2[3] = -1.0F;
+        step.params3[0] = 1.0F;
+        step.params4[0] = static_cast<float>(render_w_);
+        step.params4[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+
+    if (transform.film_godray) {
+        // GodrayFilter 的默认参数: angle=30 (parallel 模式下的 (cos, sin)), gain=0.5,
+        // lacunarity=2.5, time=0, parallel=true, alpha=1。
+        constexpr float kDegToRad = 3.14159265358979323846F / 180.0F;
+        FilterStep step;
+        step.kind = FilterKind::Godray;
+        step.params[0] = 1.0F;
+        step.params[1] = std::cos(30.0F * kDegToRad);
+        step.params[2] = std::sin(30.0F * kDegToRad);
+        step.params[3] = static_cast<float>(render_w_) / static_cast<float>(render_h_);
+        step.params2[0] = 0.0F; // time
+        step.params2[1] = 0.5F; // gain
+        step.params2[2] = 2.5F; // lacunarity
+        step.params2[3] = 1.0F; // alpha
+        step.params4[0] = static_cast<float>(render_w_);
+        step.params4[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+
+    if (transform.film_glitch) {
+        // GlitchFilter 的默认参数: slices=5, offset=100, direction=0, seed 由帧号派生
+        // (引擎用随机 seed; 导出必须可复现, 所以同一帧永远得到同一个结果)。
+        FilterStep step;
+        step.kind = FilterKind::Glitch;
+        step.params[0] = 5.0F;
+        step.params[1] = 100.0F;
+        step.params[2] = 0.0F;
+        step.params[3] = static_cast<float>(t_us % 1000003ULL) / 1000003.0F;
+        step.params4[0] = static_cast<float>(render_w_);
+        step.params4[1] = static_cast<float>(render_h_);
+        steps.push_back(step);
+    }
+
+    // ---- 模糊 (@pixi/filter-blur BlurFilter) ----
+    // 默认 quality 4、kernel 5, 于是每个方向 4 个 pass, 每个 pass 5 个抽样。
+    // 每个 pass 的步长是 blur / passes, 单位是画面像素。
+    if (transform.blur > 0.001F) {
+        constexpr int kPasses = 4;
+        const float step_x =
+            transform.blur * scale / static_cast<float>(kPasses) / static_cast<float>(render_w_);
+        const float step_y =
+            transform.blur * scale / static_cast<float>(kPasses) / static_cast<float>(render_h_);
+        for (int index = 0; index < kPasses; ++index) {
+            FilterStep step;
+            step.kind = FilterKind::Blur;
+            step.params[0] = step_x;
+            steps.push_back(step);
+        }
+        for (int index = 0; index < kPasses; ++index) {
+            FilterStep step;
+            step.kind = FilterKind::Blur;
+            step.params[1] = step_y;
+            steps.push_back(step);
+        }
+    }
+
+    return steps;
+}
+
+void Renderer::push_filter_constants(const FilterStep& step) {
+    struct FilterPush {
+        float params[4];
+        float params2[4];
+        float params3[4];
+        float params4[4];
+    } constants{};
+    std::memcpy(constants.params, step.params, sizeof(step.params));
+    std::memcpy(constants.params2, step.params2, sizeof(step.params2));
+    std::memcpy(constants.params3, step.params3, sizeof(step.params3));
+    std::memcpy(constants.params4, step.params4, sizeof(step.params4));
     vkCmdPushConstants(command_, pipeline_layout_,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(constants), &constants);
@@ -3483,7 +4298,6 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         item.descriptor = image->descriptor;
         item.transform = layer.transform;
         item.alpha = layer.alpha;
-        item.is_background = true;
         build_quad(*image, item.transform, true, "bg-main", plan.stage_w, plan.stage_h,
                    item.vertices);
         items.push_back(std::move(item));
@@ -3760,7 +4574,8 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         std::size_t last = 0;
         std::size_t quad_index = 0;
         job::Transform transform;
-        bool layer_effects = false;
+        /// 非空时整层先画进离屏目标, 再跑滤镜链。
+        std::vector<FilterStep> chain;
     };
     std::vector<MeshGroup> mesh_groups;
     mesh_groups.reserve(mesh_draws.size());
@@ -3773,18 +4588,15 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
             group.first = index;
             group.last = index + 1;
             group.transform = draw.transform;
-            group.layer_effects =
-                !disable_filters_ &&
-                ((draw.transform.bevel > 0.001F && draw.transform.bevel_thickness > 0.001F) ||
-                 draw.transform.bloom > 0.001F);
-            mesh_groups.push_back(group);
+            group.chain = build_filter_chain(draw.transform, t_us);
+            mesh_groups.push_back(std::move(group));
         } else {
             mesh_groups.back().last = index + 1;
         }
     }
     for (auto& group : mesh_groups) {
-        if (group.layer_effects) {
-            // 倒角/泛光层: 模型先画到透明纹理, 再用整帧四边形合成 (alpha 也在这里乘)。
+        if (!group.chain.empty()) {
+            // 滤镜层: 模型先按 1.0 alpha 画到透明纹理, 滤镜跑完再按层 alpha 合成。
             DrawItem quad;
             quad.descriptor = layer_descriptor_;
             quad.alpha = group.alpha;
@@ -3820,14 +4632,15 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
                1.0F, 1.0F, stage_overlay.vertices);
     items.push_back(std::move(stage_overlay));
 
-    // 图片立绘/背景的倒角合成四边形; 不在任何绘制区间里, 只在倒角路径单独引用。
-    const std::size_t bevel_quad_index = items.size();
-    DrawItem bevel_quad;
-    bevel_quad.descriptor = layer_descriptor_;
-    bevel_quad.transform = job::Transform{};
+    // 整帧四边形: 滤镜链的每个 pass 与最终 FXAA 都复用它 (uv 覆盖 0..1)。
+    // 它不在任何绘制区间里, 只在离屏 pass 里单独引用。
+    const std::size_t fullscreen_quad_index = items.size();
+    DrawItem fullscreen_quad;
+    fullscreen_quad.descriptor = layer_descriptor_;
+    fullscreen_quad.transform = job::Transform{};
     build_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
-               1.0F, 1.0F, bevel_quad.vertices);
-    items.push_back(std::move(bevel_quad));
+               1.0F, 1.0F, fullscreen_quad.vertices);
+    items.push_back(std::move(fullscreen_quad));
 
     // 视频覆盖背景、立绘与 UI：先铺黑底，再按 contain 居中绘制当前视频帧。
     // 电影模式下黑底与视频只占中间 76% 高度，上下露出舞台。
@@ -4038,6 +4851,15 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         stencil_attachment.clearValue.depthStencil.depth = 1.0F;
         stencil_attachment.clearValue.depthStencil.stencil = 0;
 
+        if (msaa_) {
+            // 多采样附件不能直接回读/采样: 每个 pass 结束时 resolve 到输出尺寸的目标,
+            // 最后一帧结束时的那次 resolve 就是最终画面。
+            // resolveMode 必须显式写 AVERAGE: 结构体清零时它是 VK_RESOLVE_MODE_NONE,
+            // 表现是"画面正确但边缘一点没变", 很容易误判成 MSAA 没生效。
+            color.resolveImageView = output_target_.view;
+            color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        }
         VkRenderingInfo rendering{};
         rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
         rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
@@ -4097,10 +4919,17 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
                    previous_access, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, previous_stage,
                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
         layer_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        if (msaa_ && layer_msaa_layout_ == VK_IMAGE_LAYOUT_UNDEFINED) {
+            transition(layer_msaa_image_, VK_IMAGE_LAYOUT_UNDEFINED,
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            layer_msaa_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
 
         VkRenderingAttachmentInfo color{};
         color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        color.imageView = layer_view_;
+        color.imageView = msaa_ ? layer_msaa_view_ : layer_view_;
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -4108,6 +4937,12 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         color.clearValue.color.float32[1] = 0.0F;
         color.clearValue.color.float32[2] = 0.0F;
         color.clearValue.color.float32[3] = 0.0F;
+        if (msaa_) {
+            // 滤镜链按 1x 采样, 所以层画完要 resolve 回 `layer_image_`。
+            color.resolveImageView = layer_view_;
+            color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        }
 
         VkRenderingAttachmentInfo stencil_attachment{};
         stencil_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -4149,12 +4984,45 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     const auto render_item_layer = [&](std::size_t index) {
         begin_layer_pass();
         vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
-        push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
+        // 层里保持 1.0 alpha: 引擎把容器 alpha 放在滤镜链最后, 泛光不该被淡入淡出压暗。
+        push_constants(items[index].transform, 1.0F, false, nullptr, nullptr, false,
                        items[index].radius, items[index].width, items[index].height, 2.0F);
         draw_item(index);
         end_layer_pass();
     };
     const auto snapshot_target = [&]() {
+        if (msaa_) {
+            // 多采样图不能 copy, 用它自己开一个 load/store 都不变的 pass: 结束时 resolve
+            // 到快照图上, 4x 内容原样保留, 后面的 pass 可以继续往上画。
+            transition(snapshot_image_, snapshot_layout_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       0, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            snapshot_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            VkRenderingAttachmentInfo color{};
+            color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            color.imageView = target_view_;
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            color.resolveImageView = snapshot_view_;
+            color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            VkRenderingInfo rendering{};
+            rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
+            rendering.layerCount = 1;
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachments = &color;
+            vkCmdBeginRendering(command_, &rendering);
+            vkCmdEndRendering(command_);
+            transition(snapshot_image_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            snapshot_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            return;
+        }
         transition(target_, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -4181,39 +5049,228 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         snapshot_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     };
 
+    // ---- 滤镜链 ----
+    // 每个 pass 都是一次全屏 draw, 把上一步结果画进复用池里的目标。泛光需要同时持有
+    // "原图 / 亮部 / 输出", 所以池子给 4 张整帧目标。
+    const VkDeviceSize filter_quad_offset = items[fullscreen_quad_index].vertex_offset;
+    const auto filter_quad_vertices =
+        static_cast<std::uint32_t>(items[fullscreen_quad_index].vertices.size());
+    const auto run_filter_chain = [&](const std::vector<FilterStep>& steps, float alpha) -> bool {
+        if (steps.empty()) {
+            return true;
+        }
+        if (!create_filter_targets(error)) {
+            return false;
+        }
+        std::array<bool, 4> used{};
+        const auto acquire = [&]() -> int {
+            for (int slot = 0; slot < 4; ++slot) {
+                if (!used[slot]) {
+                    used[slot] = true;
+                    return slot;
+                }
+            }
+            return -1;
+        };
+        const auto release = [&](int slot) {
+            if (slot >= 0) {
+                used[slot] = false;
+            }
+        };
+        // slot < 0 表示立绘层本身, 也就是滤镜链的初始输入。
+        const auto image_of = [&](int slot) -> VkImage {
+            return slot < 0 ? layer_image_ : filter_targets_[slot].image;
+        };
+        const auto view_of = [&](int slot) -> VkImageView {
+            return slot < 0 ? layer_view_ : filter_targets_[slot].view;
+        };
+        const auto layout_of = [&](int slot) -> VkImageLayout& {
+            return slot < 0 ? layer_layout_ : filter_targets_[slot].layout;
+        };
+        const auto draw_pass = [&](const FilterStep& step, int source, int second,
+                                   int destination) -> bool {
+            VkImageLayout& layout = layout_of(destination);
+            const VkAccessFlags previous_access =
+                layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT
+                : layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL   ? VK_ACCESS_TRANSFER_READ_BIT
+                                                                   : 0;
+            const VkPipelineStageFlags previous_stage =
+                layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                    ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                : layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                    ? VK_PIPELINE_STAGE_TRANSFER_BIT
+                    : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            transition(image_of(destination), layout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       previous_access, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, previous_stage,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkRenderingAttachmentInfo color{};
+            color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            color.imageView = view_of(destination);
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo rendering{};
+            rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
+            rendering.layerCount = 1;
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachments = &color;
+            vkCmdBeginRendering(command_, &rendering);
+            vkCmdSetViewport(command_, 0, 1, &viewport);
+            vkCmdSetScissor(command_, 0, 1, &scissor);
+            const VkPipeline pipeline = filter_pipelines_[static_cast<std::size_t>(step.kind)];
+            if (pipeline == VK_NULL_HANDLE) {
+                // Composite / Fxaa 有自己的 pipeline, 不该出现在滤镜链里。
+                vkCmdEndRendering(command_);
+                error = "滤镜链里出现了不支持的 pass";
+                return false;
+            }
+            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            push_filter_constants(step);
+            const VkDescriptorSet descriptor =
+                filter_descriptor(view_of(source), view_of(second), error);
+            if (descriptor != VK_NULL_HANDLE) {
+                vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_,
+                                        0, 1, &descriptor, 0, nullptr);
+                vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &filter_quad_offset);
+                vkCmdDraw(command_, filter_quad_vertices, 1, 0, 0);
+            }
+            vkCmdEndRendering(command_);
+            if (descriptor == VK_NULL_HANDLE) {
+                return false;
+            }
+            transition(image_of(destination), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            return true;
+        };
+
+        // 泛光是一条子链: 提取亮部 → 多级 Kawase 模糊 → 原图 + 模糊亮部。
+        // 所以要多记一个"原图"槽位 —— 子链的输入是提取结果, 而合成时第一张输入必须回到原图,
+        // 否则整个画面会被当成亮部一起模糊掉 (表现为"开了泛光整层都发虚")。
+        int source = -1;
+        int original = -1;
+        for (const auto& step : steps) {
+            if (step.kind == FilterKind::Extract) {
+                const int destination = acquire();
+                if (destination < 0) {
+                    error = "滤镜链的离屏目标不足";
+                    return false;
+                }
+                if (!draw_pass(step, source, source, destination)) {
+                    return false;
+                }
+                original = source;
+                source = destination;
+                continue;
+            }
+            const int destination = acquire();
+            if (destination < 0) {
+                error = "滤镜链的离屏目标不足";
+                return false;
+            }
+            if (step.kind == FilterKind::Bloom) {
+                // in_texture = 原图 (乘 brightness), in_second = 模糊后的亮部。
+                const bool ok_draw = draw_pass(step, original, source, destination);
+                release(source);
+                release(original);
+                source = destination;
+                original = -1;
+                if (!ok_draw) {
+                    return false;
+                }
+                continue;
+            }
+            if (!draw_pass(step, source, source, destination)) {
+                return false;
+            }
+            release(source);
+            source = destination;
+        }
+
+        // 最后按层 alpha 混回舞台: 预乘 (rgb * a, a) + ONE/ONE_MINUS_SRC_ALPHA。
+        end_pass();
+        VkRenderingAttachmentInfo color{};
+        color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        color.imageView = target_view_;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{};
+        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        vkCmdBeginRendering(command_, &rendering);
+        vkCmdSetViewport(command_, 0, 1, &viewport);
+        vkCmdSetScissor(command_, 0, 1, &scissor);
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_filter_composite_);
+        FilterStep composite;
+        composite.kind = FilterKind::Composite;
+        composite.params[0] = alpha;
+        push_filter_constants(composite);
+        const VkDescriptorSet descriptor =
+            filter_descriptor(view_of(source), view_of(source), error);
+        if (descriptor != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0,
+                                    1, &descriptor, 0, nullptr);
+            vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &filter_quad_offset);
+            vkCmdDraw(command_, filter_quad_vertices, 1, 0, 0);
+        }
+        vkCmdEndRendering(command_);
+        release(source);
+        return descriptor != VK_NULL_HANDLE;
+    };
+
+    if (msaa_) {
+        // 每个 pass 结束时都 resolve 到输出目标, 所以它必须在场景 pass 之前就绪。
+        if (!create_output_target(error)) {
+            return false;
+        }
+        if (output_target_.layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+            transition(output_target_.image, output_target_.layout,
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            output_target_.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+    }
+
     begin_pass(VK_ATTACHMENT_LOAD_OP_CLEAR);
     for (std::size_t index = 0; index < scene_item_count; ++index) {
         const auto& item = items[index];
-        const bool bevel_effect =
-            item.transform.bevel > 0.001F && item.transform.bevel_thickness > 0.001F;
-        const bool layer_effects =
-            !disable_filters_ &&
-            (bevel_effect || (!item.is_background && item.transform.bloom > 0.001F));
-        if (layer_effects) {
-            render_item_layer(index);
-            begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
-            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
-            push_constants_layer(item.transform, item.alpha, !item.is_background);
-            draw_item(bevel_quad_index);
-            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+        const auto chain = build_filter_chain(item.transform, t_us);
+        if (chain.empty()) {
+            push_constants(item.transform, item.alpha, false, nullptr, nullptr, false, item.radius,
+                           item.width, item.height);
+            draw_item(index);
             continue;
         }
-        push_constants(item.transform, item.alpha, false, nullptr, nullptr, false, item.radius,
-                       item.width, item.height);
-        draw_item(index);
+        // 有滤镜: 先画进离屏层, 滤镜链跑完再按层 alpha 混回来。
+        end_pass();
+        render_item_layer(index);
+        if (!run_filter_chain(chain, item.alpha)) {
+            return false;
+        }
+        begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
     }
 
     for (const auto& group : mesh_groups) {
-        if (group.layer_effects) {
-            // 倒角/泛光: 模型完整画进透明层, 再按像素公式合成。
-            // 这样 alpha 也是整模型乘一次, 手指等细部不会出现重影。
+        if (!group.chain.empty()) {
+            // 滤镜层: 模型完整画进透明层, 滤镜跑完再按层 alpha 合成;
+            // 这样 alpha 是整模型乘一次, 手指等细部不会出现重影。
+            end_pass();
             render_mesh_layer(group);
+            if (!run_filter_chain(group.chain, group.alpha)) {
+                return false;
+            }
             begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
-            const DrawItem& quad = items[group.quad_index];
-            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
-            push_constants_layer(group.transform, quad.alpha);
-            draw_item(group.quad_index);
-            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
             continue;
         }
         if (group.alpha >= 0.999F) {
@@ -4245,28 +5302,254 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         draw_item(stage_overlay_index);
     }
 
-    if (!pass_open) {
-        begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
-    }
-    for (std::size_t index = scene_item_count; index < ui_end; ++index) {
-        push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
-                       items[index].radius, items[index].width, items[index].height);
-        draw_item(index);
-    }
-    for (std::size_t index = video_quad_index; index < items.size(); ++index) {
-        push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr, false,
-                       items[index].radius, items[index].width, items[index].height);
-        draw_item(index);
+    // UI 与视频叠层不参与抗锯齿: 文字本来就用 alpha coverage 抗过锯齿, 再跑一遍 FXAA 只会把
+    // 笔画边缘糊开, 小字尤其明显; SSAA 下也按原生分辨率画, 与浏览器里看到的完全一致。
+    // 所以 AA 关闭时直接画在舞台目标上, 开了 AA 就等 AA 收尾之后再画到输出目标上。
+    const auto draw_overlays = [&]() {
+        for (std::size_t index = scene_item_count; index < ui_end; ++index) {
+            push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr,
+                           false, items[index].radius, items[index].width, items[index].height,
+                           0.0F, items[index].coverage_only);
+            draw_item(index);
+        }
+        for (std::size_t index = video_quad_index; index < items.size(); ++index) {
+            push_constants(items[index].transform, items[index].alpha, false, nullptr, nullptr,
+                           false, items[index].radius, items[index].width, items[index].height,
+                           0.0F, items[index].coverage_only);
+            draw_item(index);
+        }
+    };
+
+    const bool antialias_after_scene = render_scale_ > 1 || !no_fxaa;
+    if (!antialias_after_scene) {
+        if (!pass_open) {
+            begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
+        }
+        draw_overlays();
     }
     end_pass();
 
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {render_w_, render_h_, 1};
+    copy.imageExtent = {output_w_, output_h_, 1};
 
-    // 最终 FXAA: 先把完成帧拷进快照, 再渲染到空出来的立绘层, 最后回读。
-    // 这样文字/UI 的几何边、Live2D 轮廓和倒角/泛光边缘都会得到抗锯齿。
-    if (no_fxaa) {
+    // 收尾: SSAA 先降采样到输出尺寸, MSAA 已经在每个 pass 结束时 resolve 到输出尺寸;
+    // 这两种档位都要在输出目标上按原生分辨率再叠 UI/视频。FXAA 与关闭 AA 则在舞台目标上处理。
+    const VkViewport output_viewport{
+        0.0F, 0.0F, static_cast<float>(output_w_), static_cast<float>(output_h_), 0.0F, 1.0F};
+    const VkRect2D output_scissor{{0, 0}, {output_w_, output_h_}};
+
+    // 输出尺寸的叠层 pass: 颜色附件是 `output_target_`, UI 用的是带 stencil 测试的 `pipeline_`,
+    // 所以要准备一份输出尺寸的 depth/stencil。
+    const auto draw_overlays_on_output = [&]() {
+        transition(output_stencil_image_, output_stencil_layout_,
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0,
+                   VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
+        output_stencil_layout_ = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkRenderingAttachmentInfo overlay_color{};
+        overlay_color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        overlay_color.imageView = output_target_.view;
+        overlay_color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        overlay_color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        overlay_color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo overlay_stencil{};
+        overlay_stencil.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        overlay_stencil.imageView = output_stencil_view_;
+        overlay_stencil.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        overlay_stencil.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        overlay_stencil.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        overlay_stencil.clearValue.depthStencil.depth = 1.0F;
+        overlay_stencil.clearValue.depthStencil.stencil = 0;
+        VkRenderingInfo overlay_rendering{};
+        overlay_rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        overlay_rendering.renderArea = {{0, 0}, {output_w_, output_h_}};
+        overlay_rendering.layerCount = 1;
+        overlay_rendering.colorAttachmentCount = 1;
+        overlay_rendering.pColorAttachments = &overlay_color;
+        overlay_rendering.pDepthAttachment = &overlay_stencil;
+        overlay_rendering.pStencilAttachment = &overlay_stencil;
+        vkCmdBeginRendering(command_, &overlay_rendering);
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_overlay_);
+        vkCmdSetViewport(command_, 0, 1, &output_viewport);
+        vkCmdSetScissor(command_, 0, 1, &output_scissor);
+        draw_overlays();
+        vkCmdEndRendering(command_);
+    };
+
+    const auto readback_output = [&]() {
+        transition(output_target_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_PIPELINE_STAGE_TRANSFER_BIT);
+        output_target_.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        vkCmdCopyImageToBuffer(command_, output_target_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               readback, 1, &copy);
+        // MSAA 下一次 resolve 要求它在颜色附件布局, 所以回读后就还原; SSAA 的降采样自己会
+        // transition, 还原过去也无害。
+        transition(output_target_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        output_target_.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    };
+
+    if (render_scale_ > 1) {
+        if (!create_output_target(error)) {
+            return false;
+        }
+        transition(target_, target_layout_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        transition(output_target_.image, output_target_.layout,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        output_target_.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkRenderingAttachmentInfo color{};
+        color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        color.imageView = output_target_.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{};
+        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering.renderArea = {{0, 0}, {output_w_, output_h_}};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        vkCmdBeginRendering(command_, &rendering);
+        vkCmdSetViewport(command_, 0, 1, &output_viewport);
+        vkCmdSetScissor(command_, 0, 1, &output_scissor);
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          filter_pipelines_[static_cast<std::size_t>(FilterKind::Downsample)]);
+        FilterStep downsample;
+        downsample.kind = FilterKind::Downsample;
+        push_filter_constants(downsample);
+        const VkDescriptorSet descriptor = filter_descriptor(target_view_, target_view_, error);
+        if (descriptor == VK_NULL_HANDLE) {
+            vkCmdEndRendering(command_);
+            return false;
+        }
+        vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                                &descriptor, 0, nullptr);
+        vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &filter_quad_offset);
+        vkCmdDraw(command_, filter_quad_vertices, 1, 0, 0);
+        vkCmdEndRendering(command_);
+
+        draw_overlays_on_output();
+        readback_output();
+    } else if (msaa_) {
+        // 场景已经在最后一个 pass 结束时 resolve 到输出目标, 这里只叠 UI/视频再回读。
+        if (!output_target_ready_) {
+            error = "MSAA 的输出目标未创建";
+            return false;
+        }
+        draw_overlays_on_output();
+        readback_output();
+    } else if (smaa_) {
+        // SMAA 1x: 边缘检测 → 混合权重 → 邻域混合。三步都作用于整帧, 所以放在收尾而不是滤镜链里。
+        if (!create_filter_targets(error)) {
+            return false;
+        }
+        FilterTarget& edges_target = filter_targets_[0];
+        FilterTarget& weights_target = filter_targets_[1];
+        snapshot_target();
+
+        // 三个 pass 的形状一样: 开一个无 depth/stencil 的整帧 pass, 写入 destination。
+        const auto draw_smaa_pass = [&](FilterKind kind, VkImageView destination,
+                                        VkImage& destination_image,
+                                        VkImageLayout& destination_layout, VkImageView source,
+                                        VkImageView second, VkAttachmentLoadOp load) -> bool {
+            transition(destination_image, destination_layout,
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            destination_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkRenderingAttachmentInfo color{};
+            color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            color.imageView = destination;
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = load;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo rendering{};
+            rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
+            rendering.layerCount = 1;
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachments = &color;
+            vkCmdBeginRendering(command_, &rendering);
+            vkCmdSetViewport(command_, 0, 1, &viewport);
+            vkCmdSetScissor(command_, 0, 1, &scissor);
+            vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              filter_pipelines_[static_cast<std::size_t>(kind)]);
+            FilterStep step;
+            step.kind = kind;
+            // params.xy = 一个像素的 uv 步长, 三个 SMAA pass 都需要。
+            step.params[0] = 1.0F / static_cast<float>(render_w_);
+            step.params[1] = 1.0F / static_cast<float>(render_h_);
+            push_filter_constants(step);
+            const VkDescriptorSet descriptor = filter_descriptor(source, second, error);
+            if (descriptor == VK_NULL_HANDLE) {
+                vkCmdEndRendering(command_);
+                return false;
+            }
+            vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0,
+                                    1, &descriptor, 0, nullptr);
+            vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &filter_quad_offset);
+            vkCmdDraw(command_, filter_quad_vertices, 1, 0, 0);
+            vkCmdEndRendering(command_);
+            return true;
+        };
+
+        if (!draw_smaa_pass(FilterKind::SmaaEdge, edges_target.view, edges_target.image,
+                            edges_target.layout, snapshot_view_, snapshot_view_,
+                            VK_ATTACHMENT_LOAD_OP_DONT_CARE)) {
+            return false;
+        }
+        transition(edges_target.image, edges_target.layout,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        edges_target.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        if (!draw_smaa_pass(FilterKind::SmaaWeights, weights_target.view, weights_target.image,
+                            weights_target.layout, edges_target.view, edges_target.view,
+                            VK_ATTACHMENT_LOAD_OP_DONT_CARE)) {
+            return false;
+        }
+        transition(weights_target.image, weights_target.layout,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        weights_target.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        // 混合写回舞台目标 (整帧覆盖): in_texture = 原图, in_second = 权重图。
+        if (!draw_smaa_pass(FilterKind::SmaaBlend, target_view_, target_, target_layout_,
+                            snapshot_view_, weights_target.view, VK_ATTACHMENT_LOAD_OP_DONT_CARE)) {
+            return false;
+        }
+
+        begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
+        draw_overlays();
+        end_pass();
+
+        transition(target_, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        vkCmdCopyImageToBuffer(command_, target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1,
+                               &copy);
+        transition(target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if (no_fxaa) {
         transition(target_, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -4280,23 +5563,51 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         target_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     } else {
         snapshot_target();
-        begin_layer_pass();
+        // FXAA 读快照、写回舞台目标 (快照就是为了避开同一张图同时读写), 之后再把 UI/视频
+        // 按原生分辨率叠上去, 免得文字被二次模糊。
+        VkRenderingAttachmentInfo color{};
+        color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        color.imageView = target_view_;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{};
+        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering.renderArea = {{0, 0}, {render_w_, render_h_}};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        vkCmdBeginRendering(command_, &rendering);
+        vkCmdSetViewport(command_, 0, 1, &viewport);
+        vkCmdSetScissor(command_, 0, 1, &scissor);
         vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          fast_fxaa ? pipeline_fxaa_fast_ : pipeline_);
-        push_constants(job::Transform{}, 1.0F, false, nullptr, nullptr, false, 0.0F, 0.0F, 0.0F,
-                       3.0F);
-        draw_quad(items[bevel_quad_index].vertex_offset,
-                  static_cast<std::uint32_t>(items[bevel_quad_index].vertices.size()),
-                  snapshot_descriptor_);
-        end_layer_pass();
+                          fast_fxaa ? pipeline_fxaa_fast_ : filter_pipelines_[6]);
+        FilterStep fxaa;
+        fxaa.kind = FilterKind::Fxaa;
+        // 对齐 pixi 的 FXAAFilter: 不做混回原图的比例削减。
+        fxaa.params[0] = 1.0F;
+        push_filter_constants(fxaa);
+        vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                                &snapshot_descriptor_, 0, nullptr);
+        vkCmdBindVertexBuffers(command_, 0, 1, &vertex_buffer_, &filter_quad_offset);
+        vkCmdDraw(command_, filter_quad_vertices, 1, 0, 0);
+        vkCmdEndRendering(command_);
 
-        transition(layer_image_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                   VK_PIPELINE_STAGE_TRANSFER_BIT);
-        layer_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        vkCmdCopyImageToBuffer(command_, layer_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               readback, 1, &copy);
+        begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
+        draw_overlays();
+        end_pass();
+
+        transition(target_, target_layout_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        vkCmdCopyImageToBuffer(command_, target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1,
+                               &copy);
+        transition(target_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        target_layout_ = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
     if (!submit_only(error)) {
         return false;
@@ -4347,7 +5658,7 @@ bool Renderer::read_frame(std::vector<std::uint8_t>& pixels, std::string& error)
     const auto readback_started = std::chrono::steady_clock::now();
     const VkDeviceMemory memory = pending_readback_ == 0 ? readback_memory_ : readback_memory_alt_;
     void* mapped = nullptr;
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(render_w_) * render_h_ * 4;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(output_w_) * output_h_ * 4;
     if (!ok(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "映射回读缓冲", error)) {
         return false;
     }
@@ -4393,7 +5704,7 @@ bool Renderer::draw(const job::Plan& plan, std::uint64_t t_us, const std::filesy
             return false;
         }
     }
-    return media::write_png(output, render_w_, render_h_, pixels, error);
+    return media::write_png(output, output_w_, output_h_, pixels, error);
 }
 
 void Renderer::destroy() {
@@ -4448,9 +5759,59 @@ void Renderer::destroy() {
         if (pipeline_layer_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_layer_, nullptr);
         }
+        if (pipeline_overlay_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, pipeline_overlay_, nullptr);
+        }
         if (pipeline_fxaa_fast_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_fxaa_fast_, nullptr);
         }
+        if (pipeline_filter_composite_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, pipeline_filter_composite_, nullptr);
+        }
+        for (auto& pipeline : filter_pipelines_) {
+            if (pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+        if (output_target_.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, output_target_.view, nullptr);
+        }
+        if (output_target_.image != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, output_target_.image, nullptr);
+        }
+        if (output_target_.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, output_target_.memory, nullptr);
+        }
+        output_target_ = {};
+        output_target_ready_ = false;
+        if (output_stencil_view_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, output_stencil_view_, nullptr);
+        }
+        if (output_stencil_image_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, output_stencil_image_, nullptr);
+        }
+        if (output_stencil_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, output_stencil_memory_, nullptr);
+        }
+        output_stencil_view_ = VK_NULL_HANDLE;
+        output_stencil_image_ = VK_NULL_HANDLE;
+        output_stencil_memory_ = VK_NULL_HANDLE;
+        output_stencil_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+        filter_descriptors_.clear();
+        for (auto& target : filter_targets_) {
+            if (target.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(device_, target.view, nullptr);
+            }
+            if (target.image != VK_NULL_HANDLE) {
+                vkDestroyImage(device_, target.image, nullptr);
+            }
+            if (target.memory != VK_NULL_HANDLE) {
+                vkFreeMemory(device_, target.memory, nullptr);
+            }
+            target = {};
+        }
+        filter_targets_ready_ = false;
         if (pipeline_stencil_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_stencil_, nullptr);
         }
@@ -4514,6 +5875,19 @@ void Renderer::destroy() {
         if (snapshot_memory_ != VK_NULL_HANDLE) {
             vkFreeMemory(device_, snapshot_memory_, nullptr);
         }
+        if (layer_msaa_view_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, layer_msaa_view_, nullptr);
+        }
+        if (layer_msaa_image_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, layer_msaa_image_, nullptr);
+        }
+        if (layer_msaa_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, layer_msaa_memory_, nullptr);
+        }
+        layer_msaa_view_ = VK_NULL_HANDLE;
+        layer_msaa_image_ = VK_NULL_HANDLE;
+        layer_msaa_memory_ = VK_NULL_HANDLE;
+        layer_msaa_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
         if (layer_view_ != VK_NULL_HANDLE) {
             vkDestroyImageView(device_, layer_view_, nullptr);
         }
@@ -4595,7 +5969,7 @@ bool render_frames(const job::Plan& plan, std::uint64_t start_us, std::uint64_t 
     }
 
     Renderer renderer;
-    if (!renderer.init(plan, error)) {
+    if (!renderer.init(plan, context.fxaa_mode, error)) {
         return false;
     }
     if (!renderer.prepare(plan, context, error)) {
@@ -4634,7 +6008,7 @@ bool render_sequence(const job::Plan& plan, std::uint64_t start_us, std::uint64_
     const auto clock_now = [] { return std::chrono::steady_clock::now(); };
     const auto setup_started = clock_now();
     Renderer renderer;
-    if (!renderer.init(plan, error)) {
+    if (!renderer.init(plan, context.fxaa_mode, error)) {
         return false;
     }
     if (!renderer.prepare(plan, context, error)) {

@@ -8,6 +8,8 @@
 #include <wincodec.h>
 #include <windows.h>
 
+#include <stb_image.h>
+
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -38,6 +40,31 @@ std::string hresult_message(HRESULT result) {
 }
 
 } // namespace
+
+bool decode_image_bytes(const std::uint8_t* data, std::size_t size, Image& image,
+                        std::string& error) {
+    if (data == nullptr || size == 0) {
+        error = "图片数据为空";
+        return false;
+    }
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_uc* pixels = stbi_load_from_memory(data, static_cast<int>(size), &width, &height,
+                                            &channels, STBI_rgb_alpha);
+    if (pixels == nullptr || width <= 0 || height <= 0) {
+        error = "解码内嵌图片失败";
+        if (pixels != nullptr) {
+            stbi_image_free(pixels);
+        }
+        return false;
+    }
+    image.width = static_cast<std::uint32_t>(width);
+    image.height = static_cast<std::uint32_t>(height);
+    image.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+    stbi_image_free(pixels);
+    return true;
+}
 
 bool decode_image(const std::filesystem::path& path, Image& image, std::string& error) {
     if (!ensure_com(error)) {
