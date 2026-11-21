@@ -25,6 +25,8 @@
     LANGUAGE_LABELS,
     PARAM_TICKS,
     TEST_SAMPLE_STEPS,
+    historyForLine,
+    preferredReference,
     randomSeed,
     type HistoryEntry,
     type VoiceParams,
@@ -70,13 +72,11 @@
    * 不够的: `card` 重算后仍是同一个对象, 下游会被判定为"依赖没变"而永远用缓存值。令牌必须读在
    * **真正产出新值的叶子派生**上 (字符串 / 新数组 / 浅拷贝), "点生成后立刻出现任务卡"才生效。
    */
-  const selectedId = $derived.by(() => {
-    void appStore.voiceTick;
-    return card?.selectedHistoryId ?? null;
-  });
-
   /**
    * 当前选中的记录。
+   *
+   * `selectedHistoryId` 是**整张卡**共用的选中项: 切换语句后它还指着上一句的记录。必须按
+   * 当前语句过滤, 否则换了对话者仍会沿用上一句的角色与参数 (自动识别失效)。
    *
    * 返回**浅拷贝**而不是原对象: 任务状态 / 耗时是在原对象上就地改的, 直接返回它会让
    * 下游 (`running` / `canApply` / 状态行) 永远看到同一份缓存。`params` 是不可变快照,
@@ -85,9 +85,10 @@
   const selected = $derived.by<HistoryEntry | null>(() => {
     void appStore.voiceTick;
     const id = card?.selectedHistoryId ?? null;
-    const entry = card?.history.find((item) => item.id === id) ?? null;
+    const entry = historyForLine(card?.history.find((item) => item.id === id) ?? null, dialogue.line);
     return entry ? { ...entry } : null;
   });
+  const selectedId = $derived(selected?.id ?? null);
   const matchHint = $derived.by(() => {
     void appStore.voiceTick;
     return describeMatch(card?.matches.get(dialogue.line)?.reason);
@@ -205,8 +206,11 @@
       message = '请先为角色添加参考音频';
       return;
     }
-    const reference =
-      character.references.find((item) => item.hash === current.referenceHash) ?? character.references[0];
+    const reference = preferredReference(character, current.referenceHash);
+    if (!reference) {
+      message = '请先为角色添加参考音频';
+      return;
+    }
     const task = voiceController.enqueue(cardId, kind, dialogue, { ...current, referenceHash: reference.hash });
     if (task) {
       message =
@@ -304,10 +308,10 @@
   function referenceLabel(): string {
     if (!character) return '未选择角色';
     if (character.references.length === 0) return '该角色暂无参考音频';
-    const reference =
-      character.references.find((item) => item.hash === params?.referenceHash) ?? character.references[0];
+    const reference = preferredReference(character, params?.referenceHash);
+    if (!reference) return '该角色暂无参考音频';
     const preview = reference.text.length > 14 ? `${reference.text.slice(0, 14)}…` : reference.text;
-    return `${preview}（${reference.duration.toFixed(1)}s）`;
+    return `${reference.starred ? '★ ' : ''}${preview}（${reference.duration.toFixed(1)}s）`;
   }
 
   function describeMatch(reason: string | undefined): string {
@@ -354,7 +358,7 @@
               if (dialogue.speaker !== null) {
                 voiceController.assignCharacter(card?.scenePath ?? cardId, dialogue.speaker, id);
               }
-              update({ characterId: id, referenceHash: next?.references[0]?.hash ?? null });
+              update({ characterId: id, referenceHash: preferredReference(next)?.hash ?? null });
             }}
           />
         </label>

@@ -144,7 +144,7 @@ fn split_root(path: &str) -> (&str, &str) {
 }
 
 /// 整理规范 URI (形如 `root://...`) 为 `root/...`, 并编码为 UTF-8
-fn canonicalize(path: &str) -> String {
+pub fn canonicalize(path: &str) -> String {
     let path = decode_uri(path);
     let (root, path) = split_root(&path);
     join(root, path)

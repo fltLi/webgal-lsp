@@ -1,7 +1,10 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::Duration,
 };
 
@@ -25,7 +28,9 @@ use tracing::{debug, error, info, warn};
 use webgal_language_core::resource::ResourceKind;
 use webgal_language_service::{encode::*, service::*};
 
-use crate::project::{DirEntry, FileSystem, GetProjectResult, Project, Workspace, load_project};
+use crate::project::{
+    DirEntry, FileSystem, GetProjectResult, Initializations, Project, Workspace, load_project,
+};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -133,6 +138,7 @@ impl Default for BackendBuilder {
 pub struct Backend {
     client: Client,
     workspace: Arc<AsyncRwLock<Workspace>>,
+    initializations: Arc<AsyncMutex<Initializations>>, // 正在加载的项目, 按项目根挂取消标志
     open_ducuments: Arc<AsyncRwLock<HashSet<String>>>, // 编辑器活动文档
     diagnose_sender: Option<UnboundedSender<(String, Arc<RwLock<Project>>)>>, // 诊断服务通道
     /// 配置
@@ -167,6 +173,7 @@ impl Backend {
         Self {
             client,
             workspace,
+            initializations: Default::default(),
             open_ducuments: Default::default(),
             diagnose_sender,
             init_state: Default::default(),
@@ -221,6 +228,56 @@ impl Backend {
         }
     }
 
+    /// 加载并插入一个项目
+    ///
+    /// 调用方负责在进入前登记取消标志, 并在返回后移除登记.
+    async fn initialize_project(
+        &self,
+        project_path: &str,
+        cancel: &Arc<AtomicBool>,
+        errors: &mut Vec<anyhow::Error>,
+    ) -> anyhow::Result<()> {
+        let Some(project) = load_project(
+            project_path.to_string(),
+            self.client.clone(),
+            errors,
+            cancel.clone(),
+        )
+        .await
+        else {
+            debug!(project = %project_path, "Project initialization cancelled");
+            errors.clear();
+            return Ok(());
+        };
+
+        let project = {
+            let mut workspace = self.workspace.write().await;
+
+            // 检查与插入必须在同一临界区, 避免移除事件落在两者之间.
+            if cancel.load(AtomicOrdering::Acquire) {
+                // 覆盖「检查通过、尚未插入」的窗口: 取消后仍在本临界区补删一次.
+                workspace.remove_all_under(project_path);
+                debug!(project = %project_path, "Project initialization cancelled before insert");
+                errors.clear();
+                return Ok(());
+            }
+
+            // 父项目优先, 丢弃此前已扫描到的全部子项目
+            workspace.remove_all_under(project_path);
+
+            match workspace.insert(project_path, project) {
+                Ok(project) => project,
+                Err(error) => {
+                    errors.push(error);
+                    return Ok(());
+                }
+            }
+        };
+
+        self.diagnose_project(project_path, project);
+        Ok(())
+    }
+
     async fn change_file(&self, path: &str, kind: FileChangeKind) -> anyhow::Result<()> {
         debug!(%path, %kind, "Changing file");
         let config_in_existing_project = {
@@ -237,16 +294,15 @@ impl Backend {
                 info!(project = %project_path, "Loading project");
 
                 let mut errors = Vec::new();
-                let project =
-                    load_project(project_path.to_string(), self.client.clone(), &mut errors).await;
-
-                // 父项目优先, 丢弃此前已扫描到的全部子项目
-                self.workspace.write().await.remove_all_under(project_path);
-
-                match self.workspace.write().await.insert(project_path, project) {
-                    Ok(project) => self.diagnose_project(project_path, project),
-                    Err(error) => errors.push(error),
-                };
+                let cancel = self.initializations.lock().await.begin(project_path);
+                let result = self
+                    .initialize_project(project_path, &cancel, &mut errors)
+                    .await;
+                self.initializations
+                    .lock()
+                    .await
+                    .finish(project_path, &cancel);
+                result?;
 
                 if !errors.is_empty() {
                     return Err(anyhow!("创建项目出错: {errors:?}"));
@@ -621,14 +677,26 @@ impl LanguageServer for Backend {
         let WorkspaceFoldersChangeEvent { added, removed } = params.event;
         let server = self.clone();
         spawn(async move {
-            if !added.is_empty() {
-                info!(count = added.len(), "Workspace folders added");
-                server.initialize_workspace_folders(added).await;
+            // 先取消, 让正在读取资源的项目初始化尽早停手
+            for WorkspaceFolder { uri, name } in &removed {
+                let root = uri.to_string();
+                let count = server.initializations.lock().await.cancel_under(&root);
+                if count > 0 {
+                    debug!(%name, %root, count, "Cancelled project initializations");
+                }
             }
-            for WorkspaceFolder { uri, name } in removed {
+
+            // 再清掉工作区中已经插入的项目
+            for WorkspaceFolder { uri, name } in &removed {
                 let root = uri.to_string();
                 info!(%name, %root, "Workspace folder removed");
                 server.workspace.write().await.remove_all_under(&root);
+            }
+
+            // 最后初始化新增的目录, 保证新任务发生在旧状态清理之后
+            if !added.is_empty() {
+                info!(count = added.len(), "Workspace folders added");
+                server.initialize_workspace_folders(added).await;
             }
         });
     }

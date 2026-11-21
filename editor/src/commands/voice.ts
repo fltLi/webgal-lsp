@@ -130,6 +130,8 @@ export interface ReferenceAudio {
   text: string;
   language: string;
   tags: string[];
+  /** 是否收藏 (收藏的参考音频靠前, 并作为该角色的默认参考音频) */
+  starred: boolean;
   createdAt: number;
 }
 
@@ -379,6 +381,22 @@ export function voiceCreateCharacter(input: NewCharacter): Promise<Character> {
 
 export function voiceAddReference(id: string, input: ReferenceInput): Promise<Character> {
   return invoke<Character>('voice_add_reference', { id, input });
+}
+
+/** 参考音频字段修改 (只包含要改的字段) */
+export interface ReferencePatch {
+  /** 收藏: 收藏的参考音频排在前面, 并作为该角色的默认参考音频 */
+  starred?: boolean;
+}
+
+/**
+ * 按字段修改某条参考音频。
+ *
+ * 与 `voice_update_character` 同理: 只发送要改的字段, 服务端读-改-写, 避免把别的字段
+ * 回写成前端可能已经过时的快照。
+ */
+export function voiceUpdateReference(id: string, hash: string, patch: ReferencePatch): Promise<Character> {
+  return invoke<Character>('voice_update_reference', { id, hash, patch });
 }
 
 export function voiceRemoveReference(id: string, hash: string): Promise<Character> {

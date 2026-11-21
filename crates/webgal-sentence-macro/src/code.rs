@@ -243,7 +243,7 @@ fn gen_content_parse(content: &Option<ContentInfo>) -> TokenStream {
                 .unwrap_or("")
                 .parse::<#ty>()
                 .unwrap_or_else(|error| {
-                    errors.push(ContentType(::anyhow::anyhow!(error)));
+                    errors.push(ContentType(::anyhow::Error::msg(error)));
                     Default::default()
                 });
         },
@@ -332,7 +332,9 @@ fn gen_argument_parse(argument: &ArgumentInfo) -> TokenStream {
                     #argument_repeated_check
                     match value.unwrap_or("true").parse::<#ty>() {
                         Ok(value) => #variable = Some((i, value)),
-                        Err(error) => errors.push(ArgumentType(i, ::anyhow::anyhow!(error))),
+                        Err(error) => {
+                            errors.push(ArgumentType(i, ::anyhow::Error::msg(error)));
+                        }
                     }
                 }
             }

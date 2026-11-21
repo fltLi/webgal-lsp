@@ -16,7 +16,7 @@
 
   import { subscribeAudio, toggleAudio } from '../lib/audio';
   import { readImageUrl } from '../lib/localImage.svelte';
-  import Icon from './Icon.svelte';
+  import Button from './Button.svelte';
 
   let {
     /** 音频文件的绝对路径; null 表示这条记录还没有音频 */
@@ -93,18 +93,16 @@
   }
 </script>
 
-<button
-  type="button"
-  class="git-file-action"
-  class:playing={isPlaying}
-  {disabled}
+<Button
+  appearance="bare"
+  className={isPlaying ? 'audio-button playing' : 'audio-button'}
+  icon={isPlaying ? 'Stop' : 'Play'}
+  iconSize={14}
   title={error ?? hint}
-  aria-label={hint}
+  {disabled}
   onclick={(event) => {
     // 卡片/记录行本身有"选中"语义, 点试听不该顺带把它选中
     event.stopPropagation();
     void toggle();
   }}
->
-  <Icon name={isPlaying ? 'Stop' : 'Play'} size={14} />
-</button>
+/>
