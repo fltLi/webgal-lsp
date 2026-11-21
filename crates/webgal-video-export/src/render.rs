@@ -8,10 +8,14 @@
 
 use webgal_video_render_sys::{
     AudioKind, AudioSpec, BackgroundSpec, Blink, Error, FigureKeySpec, FilmSpec, Focus, Meta,
-    PlanBuilder, StageSpec, TextSpec, Transform, VideoSpec,
+    ParticleKind as SysParticleKind, ParticleSpec, PlanBuilder, StageSpec, TextSpec, Transform,
+    VideoSpec,
 };
 
-use crate::plan::{AudioKind as PlanAudioKind, Plan, TextChar, Transform as PlanTransform};
+use crate::plan::{
+    AudioKind as PlanAudioKind, ParticleKind as PlanParticleKind, Plan, TextChar,
+    Transform as PlanTransform,
+};
 
 pub use webgal_video_render_sys::{
     Callbacks, Encoder, Error as RenderError, FxaaMode, Preview, Progress, RenderOptions, Status,
@@ -176,6 +180,19 @@ pub fn from_plan(plan: &Plan) -> Result<PlanBuilder, Error> {
             loop_: event.loop_,
             fade_in_ms: event.fade_in_ms,
             fade_out_ms: event.fade_out_ms,
+        })?;
+    }
+
+    for segment in &plan.particles {
+        builder.add_particle(&ParticleSpec {
+            kind: match segment.kind {
+                PlanParticleKind::Snow => SysParticleKind::Snow,
+                PlanParticleKind::HeavySnow => SysParticleKind::HeavySnow,
+                PlanParticleKind::Rain => SysParticleKind::Rain,
+                PlanParticleKind::CherryBlossoms => SysParticleKind::CherryBlossoms,
+            },
+            start_us: segment.start_us,
+            end_us: segment.end_us,
         })?;
     }
 

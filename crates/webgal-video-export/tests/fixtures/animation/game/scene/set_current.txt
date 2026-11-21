@@ -1,0 +1,3 @@
+changeBg:bg.png -next;
+setTransform:{"alpha":0.5} -target=bg-main -duration=1 -next;
+setAnimation:shake -target=bg-main -next;

@@ -1,0 +1,2 @@
+changeBg:bg.png -next;
+setAnimation:shake -target=bg-main -parallel -next;

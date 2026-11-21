@@ -131,7 +131,7 @@ export const defaultSettings: Settings = {
     fontScale: '1.15',
     autoSpeed: '12',
     textSpeed: '24',
-    figureSide: 'legacy',
+    figureSide: 'modern',
     enableFilters: true,
     includeStage: true,
     includeUi: true,
@@ -218,7 +218,7 @@ function normalizeVideoExport(raw: unknown): VideoExportPreferences {
       typeof value.textSpeed === 'string' && /^\d+$/.test(value.textSpeed) && Number(value.textSpeed) <= 100
         ? value.textSpeed
         : defaults.textSpeed,
-    figureSide: text(value.figureSide, defaults.figureSide, ['auto', 'legacy', 'modern']),
+    figureSide: text(value.figureSide, defaults.figureSide, ['legacy', 'modern']),
     enableFilters: flag(value.enableFilters, defaults.enableFilters),
     includeStage: flag(value.includeStage, defaults.includeStage),
     includeUi: flag(value.includeUi, defaults.includeUi),

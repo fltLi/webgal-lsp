@@ -60,8 +60,6 @@ pub struct ProjectInfo {
     pub stage_width: u32,
     /// 舞台高度 (`game/config.txt` 的 `Stage_Height`, 缺省 1440).
     pub stage_height: u32,
-    /// 项目声明的 WebGAL 版本 (`webgal-engine.json`); 用于选择立绘切换口径.
-    pub webgal_version: Option<String>,
 }
 
 /// 单个场景的统计。
@@ -404,7 +402,6 @@ pub fn inspect(project: &Project) -> Inspection {
             scene_count: stats.scenes,
             stage_width,
             stage_height,
-            webgal_version: project.webgal_version(),
         },
         scenes: reports,
         stats,

@@ -7255,6 +7255,40 @@ body.path-dragging * {
   padding-left: 18px;
 }
 
+/* 编译期警告: 与错误同一块版式, 但用警示色 (琥珀) 与"提示"语义 */
+.video-warnings {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--app-hover);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #9a6700;
+}
+
+[data-theme='dark'] .video-warnings {
+  color: #e0b252;
+}
+
+.video-warnings-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.video-warnings ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.video-warnings li {
+  line-height: 1.5;
+}
+
+.video-warning-location {
+  opacity: 0.75;
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 开关也走同一套网格: 每格只放一个复选框, 与输入框对齐 */
 /* 开关行: 从左往右排, 换行后仍与标题左对齐 (不放进参数网格, 否则每格居中) */
 .video-switches {

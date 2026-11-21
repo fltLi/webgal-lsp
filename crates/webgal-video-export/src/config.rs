@@ -88,48 +88,19 @@ impl Default for VideoConfig {
 
 /// `changeFigure` 的立绘身份判定口径。
 ///
-/// WebGAL 4.6.4 把 `-left` / `-right` / 默认 `center` 也纳入“立绘是否变化”的判断：
-/// 同一个自由立绘 `-id` 再声明时若不重复写位置，会被当作换了一个基准位置的新立绘，
-/// 清掉旧 effect 并从默认变换重新开始。4.6.3 及以前只比较图片地址，未写位置时沿用旧基准。
+/// 两种口径只在“同一个自由立绘 `-id` 再次声明、但没重复写位置”时不同：`Modern` 把位置
+/// （含默认 `center`）也算进身份，于是视为换了一个基准位置的新立绘，清掉旧 effect 并从
+/// 默认变换重新开始；`Legacy` 只比较图片/模型地址，位置缺省时沿用旧基准。
+///
+/// 导出不做 WebGAL 版本检测，按 Ink 自己的口径固定，默认 [`FigureSideMode::Modern`]。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FigureSideMode {
-    /// 按项目 `webgal-engine.json` 的 `webgalVersion` 自动选择；读不到时按旧版。
-    #[default]
-    Auto,
-    /// 4.6.3 及以前：只有图片/Live2D 模型变化才算换立绘，位置缺省沿用旧基准。
+    /// 只有图片/Live2D 模型变化才算换立绘，位置缺省沿用旧基准。
     Legacy,
-    /// 4.6.4 及以后：位置（含默认 center）参与身份判定。
+    /// 位置（含默认 center）参与身份判定。
+    #[default]
     Modern,
-}
-
-impl FigureSideMode {
-    /// 把 `auto` 解析成实际口径。
-    pub fn resolve(self, engine_version: Option<&str>) -> Self {
-        match self {
-            Self::Auto => {
-                if engine_version.is_some_and(at_least_4_6_4) {
-                    Self::Modern
-                } else {
-                    Self::Legacy
-                }
-            }
-            other => other,
-        }
-    }
-}
-
-/// `4.6.4` 及以上的版本号比较；只取前三段数字，后缀忽略。
-fn at_least_4_6_4(version: &str) -> bool {
-    let mut parts = version
-        .trim()
-        .trim_start_matches('v')
-        .split(['.', '-', '+'])
-        .map(|part| part.parse::<u32>().unwrap_or(0));
-    let major = parts.next().unwrap_or(0);
-    let minor = parts.next().unwrap_or(0);
-    let patch = parts.next().unwrap_or(0);
-    (major, minor, patch) >= (4, 6, 4)
 }
 
 /// 文本/演出时间参数，单位毫秒。
@@ -213,26 +184,6 @@ mod tests {
     use super::{ExportConfig, FigureSideMode};
 
     #[test]
-    fn auto_follows_webgal_4_6_4() {
-        assert_eq!(
-            FigureSideMode::Auto.resolve(Some("4.5.19")),
-            FigureSideMode::Legacy
-        );
-        assert_eq!(
-            FigureSideMode::Auto.resolve(Some("4.6.3")),
-            FigureSideMode::Legacy
-        );
-        assert_eq!(
-            FigureSideMode::Auto.resolve(Some("4.6.4")),
-            FigureSideMode::Modern
-        );
-        assert_eq!(
-            FigureSideMode::Auto.resolve(Some("v4.7.0-beta")),
-            FigureSideMode::Modern
-        );
-    }
-
-    #[test]
     fn defaults_are_export_ready() {
         let config = ExportConfig::default();
         assert!(config.include_audio);
@@ -240,21 +191,10 @@ mod tests {
         assert_eq!(config.vocal_volume, 100);
         assert!((config.font_scale - 1.0).abs() < f32::EPSILON);
         assert!((config.playback_speed - 1.0).abs() < f32::EPSILON);
+        assert_eq!(config.figure_side, FigureSideMode::Modern);
         assert!(config.layers.background && config.layers.figures && config.layers.ui);
         assert_eq!(config.video.width, 1920);
         assert_eq!(config.video.height, 1080);
         assert_eq!(config.video.fps, 30);
-    }
-
-    #[test]
-    fn explicit_mode_wins() {
-        assert_eq!(
-            FigureSideMode::Legacy.resolve(Some("4.6.4")),
-            FigureSideMode::Legacy
-        );
-        assert_eq!(
-            FigureSideMode::Modern.resolve(Some("4.5.19")),
-            FigureSideMode::Modern
-        );
     }
 }

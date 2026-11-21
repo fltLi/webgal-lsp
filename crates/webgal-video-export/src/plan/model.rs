@@ -31,6 +31,9 @@ pub struct Plan {
     pub intros: Vec<IntroSegment>,
     pub videos: Vec<VideoSegment>,
     pub audio: Vec<AudioEvent>,
+    /// 屏幕特效 (`pixiPerform` 的雪/雨/樱), 与 `pixiInit` 的清理语义对应。
+    #[serde(default)]
+    pub particles: Vec<ParticleSegment>,
     pub warnings: Vec<Warning>,
 }
 
@@ -360,6 +363,48 @@ pub enum AudioKind {
     Effect,
     /// 视频文件自带的音轨；时间与 `videos` 段一致。
     Video,
+}
+
+/// 屏幕特效类型 (`pixiPerform` 的参数)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ParticleKind {
+    Snow,
+    HeavySnow,
+    Rain,
+    CherryBlossoms,
+}
+
+impl ParticleKind {
+    /// 从脚本里的 `pixiPerform:<名字>` 解析; 不支持的名字返回 `None`。
+    pub fn from_perform(name: &str) -> Option<Self> {
+        match name {
+            "snow" => Some(Self::Snow),
+            "heavySnow" => Some(Self::HeavySnow),
+            "rain" => Some(Self::Rain),
+            "cherryBlossoms" => Some(Self::CherryBlossoms),
+            _ => None,
+        }
+    }
+
+    /// C ABI 里的整数编码; 与 `webgal-video-render.h` 保持一致。
+    pub fn code(self) -> i32 {
+        match self {
+            Self::Snow => 0,
+            Self::HeavySnow => 1,
+            Self::Rain => 2,
+            Self::CherryBlossoms => 3,
+        }
+    }
+}
+
+/// 一段屏幕特效; `end_us` 为 `None` 表示一直持续到片尾。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticleSegment {
+    pub kind: ParticleKind,
+    pub start_us: u64,
+    pub end_us: Option<u64>,
 }
 
 /// 非致命警告。

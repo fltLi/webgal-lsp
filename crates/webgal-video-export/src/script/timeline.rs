@@ -10,12 +10,14 @@ use std::path::Path;
 
 use expression::{EmptyEvaluationContext, Expression};
 use webgal_language_core::{
-    element::{FigureSide, Forward, Live2dBlink, Live2dFocus, Transform},
+    element::{FigureSide, Forward, Live2dBlink, Live2dFocus, ObjectId, Transform, TransformFrom},
     resource::FigureKind,
     sentence::{
         BgmSentence, CallSceneSentence, ChangeBackgroundSentence, ChangeFigureSentence,
-        ChangeSceneSentence, ChooseSentence, FilmModeSentence, IntroSentence, PlayEffectSentence,
-        PlayVideoSentence, SaySentence, Sentence, SentenceExt, SetTransformSentence, WaitSentence,
+        ChangeSceneSentence, ChooseSentence, FilmModeSentence, IntroSentence, PixiPerformSentence,
+        PlayEffectSentence, PlayVideoSentence, SaySentence, Sentence, SentenceExt,
+        SetAnimationSentence, SetComplexAnimationSentence, SetTempAnimationSentence,
+        SetTransformSentence, SetTransitionSentence, WaitSentence,
     },
 };
 
@@ -25,11 +27,16 @@ use crate::{
     plan::{
         AssetInfo, AssetKind, AudioEvent, AudioKind, BackgroundKey, BlendMode, BlinkConfig,
         ChoiceOption, ChoiceSegment, FORMAT_VERSION, FigureKey, FigurePose, FigureTrack, FilmKey,
-        FocusConfig, IntroSegment, Meta, Plan, StageKey, TextChar, TextLine, TextSegment,
-        VideoSegment, Warning,
+        FocusConfig, IntroSegment, Meta, ParticleKind, ParticleSegment, Plan, StageKey, TextChar,
+        TextLine, TextSegment, VideoSegment, Warning,
     },
     project::Project,
-    script::{decision::ChoicePolicy, live2d::is_moc3, timing::Timing},
+    script::{
+        animation::{AnimationFrame, AnimationLibrary},
+        decision::ChoicePolicy,
+        live2d::is_moc3,
+        timing::Timing,
+    },
     util::{looks_like_audio, path_string},
 };
 
@@ -68,6 +75,23 @@ struct FigureState {
     focus: FocusConfig,
     side: FigureSide,
     transform: Transform,
+}
+
+/// `setTransition` 登记、由下一次换图/换立绘消费的进出场动画 (一次性)。
+#[derive(Debug, Clone, Default)]
+struct TransitionNames {
+    enter: Option<String>,
+    exit: Option<String>,
+}
+
+/// 展开立绘动画关键帧时需要的静态字段。
+struct FigureVisual<'a> {
+    asset: Option<&'a String>,
+    live2d: Option<&'a String>,
+    side: FigureSide,
+    visible: bool,
+    exit_ms: u32,
+    figure_switch: bool,
 }
 
 /// 导出起点; 默认是 `start.txt`.
@@ -128,13 +152,15 @@ struct Compiler<'a> {
     config: &'a ExportConfig,
     timing: Timing,
     policy: &'a ChoicePolicy,
-    /// 已解析的 `changeFigure` 身份口径 (auto 在这里变成 legacy/modern)。
-    figure_side: FigureSideMode,
     plan: Plan,
     background: Option<BackgroundState>,
     /// 整舞台变换 (只用 alpha); 供 `setTransform -target=stage-main` 累积。
     stage_transform: Transform,
     figures: BTreeMap<String, FigureState>,
+    /// `game/animation` 里的自定义动画。
+    animations: AnimationLibrary,
+    /// `setTransition` 登记的进出场动画, 由下一次换图/换立绘消费 (一次性)。
+    transitions: HashMap<String, TransitionNames>,
     mini_avatar: Option<String>,
     scene: String,
     line: usize,
@@ -162,15 +188,11 @@ impl<'a> Compiler<'a> {
     ) -> Self {
         let (stage_w, _) = project.stage_size();
         let coordinate_scale = config.video.width as f32 / stage_w as f32;
-        let figure_side = config
-            .figure_side
-            .resolve(project.webgal_version().as_deref());
         Self {
             project,
             config,
             timing: Timing::new(&config.timing),
             policy,
-            figure_side,
             plan: Plan {
                 meta: Meta {
                     project_root: path_string(project.root()),
@@ -189,6 +211,8 @@ impl<'a> Compiler<'a> {
             background: None,
             stage_transform: Transform::default(),
             figures: BTreeMap::new(),
+            animations: AnimationLibrary::load(project),
+            transitions: HashMap::new(),
             mini_avatar: None,
             scene: start,
             line: 0,
@@ -252,11 +276,11 @@ impl<'a> Compiler<'a> {
                     self.line += 1;
                 }
                 Sentence::ChangeBackground(sentence) => {
-                    self.change_background(sentence)?;
+                    self.change_background(sentence, line)?;
                     self.line += 1;
                 }
                 Sentence::ChangeFigure(sentence) => {
-                    self.change_figure(sentence)?;
+                    self.change_figure(sentence, line)?;
                     self.line += 1;
                 }
                 Sentence::Bgm(sentence) => {
@@ -272,7 +296,7 @@ impl<'a> Compiler<'a> {
                     self.line += 1;
                 }
                 Sentence::Intro(sentence) => {
-                    self.intro(sentence)?;
+                    self.intro(sentence, line)?;
                     self.line += 1;
                 }
                 Sentence::Wait(sentence) => {
@@ -321,18 +345,32 @@ impl<'a> Compiler<'a> {
                     self.film_mode(sentence);
                     self.line += 1;
                 }
-                Sentence::PixiInit(_) | Sentence::PixiPerform(_) => {
-                    self.warn("WG_UNSUPPORTED_EFFECT", "Pixi 特效不参与导出", line);
+                Sentence::PixiInit(_) => {
+                    // `pixiInit` 清掉所有粒子演出, 不碰滤镜与变换。
+                    self.close_particles();
+                    self.line += 1;
+                }
+                Sentence::PixiPerform(sentence) => {
+                    self.pixi_perform(sentence, line);
                     self.line += 1;
                 }
                 Sentence::UnlockCg(_) | Sentence::UnlockBgm(_) | Sentence::CallSteam(_) => {
                     self.line += 1;
                 }
-                Sentence::SetAnimation(_)
-                | Sentence::SetComplexAnimation(_)
-                | Sentence::SetTempAnimation(_)
-                | Sentence::SetTransition(_) => {
-                    self.warn("WG_UNSUPPORTED_ANIMATION", "动画语句暂不生成关键帧", line);
+                Sentence::SetAnimation(sentence) => {
+                    self.set_animation(sentence, line)?;
+                    self.line += 1;
+                }
+                Sentence::SetTempAnimation(sentence) => {
+                    self.set_temp_animation(sentence, line)?;
+                    self.line += 1;
+                }
+                Sentence::SetComplexAnimation(sentence) => {
+                    self.set_complex_animation(sentence, line)?;
+                    self.line += 1;
+                }
+                Sentence::SetTransition(sentence) => {
+                    self.set_transition(sentence);
                     self.line += 1;
                 }
                 Sentence::ApplyStyle(_) => {
@@ -366,6 +404,13 @@ impl<'a> Compiler<'a> {
         self.plan.meta.format_version = FORMAT_VERSION;
         self.plan.meta.duration_us =
             (self.time_us + Timing::ms(self.config.timing.end_tail_ms)).min(MAX_DURATION_US);
+        // 一直开着的粒子演出持续到片尾。
+        let duration = self.plan.meta.duration_us;
+        for segment in &mut self.plan.particles {
+            if segment.end_us.is_none() {
+                segment.end_us = Some(duration);
+            }
+        }
         self.plan
     }
 
@@ -453,7 +498,11 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn change_background(&mut self, sentence: &ChangeBackgroundSentence) -> Result<()> {
+    fn change_background(
+        &mut self,
+        sentence: &ChangeBackgroundSentence,
+        line: usize,
+    ) -> Result<()> {
         let asset = sentence
             .background
             .as_deref()
@@ -475,24 +524,77 @@ impl<'a> Compiler<'a> {
         let exit_ms = sentence.exit_duration.unwrap_or(1500);
         // 换图时引擎会先移除旧 effect, 新图的变换直接生效, 只有透明度过渡。
         let same_asset = asset.is_some() && previous_asset == asset;
-        self.plan.background.push(BackgroundKey {
-            t_us: self.time_us,
-            asset: asset.clone(),
-            transform: scale_transform(&transform, self.coordinate_scale),
-            alpha: transform.alpha.unwrap_or(1.0),
-            enter_ms,
-            exit_ms,
-            ease: sentence.ease.to_string(),
-            snap_transform: !same_asset,
-        });
-        self.background = asset.map(|asset| BackgroundState { asset, transform });
+        // `setTransition` 登记的进出场动画由这一次换图消费 (引擎里这些设定是一次性的)。
+        // 没换图时不消费: 引擎的设定会留到下一次真正换图。
+        let pending = if same_asset {
+            self.transitions.get("bg-main").cloned().unwrap_or_default()
+        } else {
+            self.transitions.remove("bg-main").unwrap_or_default()
+        };
+        let enter_animation = sentence
+            .enter
+            .clone()
+            .or(pending.enter)
+            .filter(|_| !same_asset && asset.is_some())
+            .and_then(|name| self.animation_frames(&name, line));
+        // 退场动画作用在"正在消失的旧图"上, 只取时长 (见 `exit_animation_ms`)。
+        let exit_animation = sentence
+            .exit
+            .clone()
+            .or(pending.exit)
+            .filter(|_| !same_asset)
+            .and_then(|name| self.exit_animation_ms(&name, line));
+        if !same_asset && let Some(previous) = self.plan.background.last_mut() {
+            // 引擎在每次 changeBg 都重写 exitDuration, 所以这里的默认值是 1500ms,
+            // 而不是上一张背景当初记下的值。
+            previous.exit_ms = exit_animation.unwrap_or(sentence.exit_duration.unwrap_or(1500));
+        }
+
+        let mut advance_ms = enter_ms;
+        if let Some(frames) = enter_animation {
+            // 命名入场动画的终态就是新图的效果状态 (`applyAnimationEndState`),
+            // 所以 `-transform` 在这种情况下不再生效; 起点沿用旧状态, 逐帧覆盖。
+            let start = self
+                .background
+                .as_ref()
+                .map(|state| state.transform.clone())
+                .unwrap_or_default();
+            let (keys, state) = self.background_animation_keys(
+                asset.as_ref(),
+                exit_ms,
+                &start,
+                &frames,
+                self.time_us,
+            );
+            self.plan.background.extend(keys);
+            self.background = asset.map(|asset| BackgroundState {
+                asset,
+                transform: state,
+            });
+            advance_ms = AnimationFrame::total_ms(&frames);
+        } else {
+            self.plan.background.push(BackgroundKey {
+                t_us: self.time_us,
+                asset: asset.clone(),
+                transform: scale_transform(&transform, self.coordinate_scale),
+                alpha: transform.alpha.unwrap_or(1.0),
+                enter_ms,
+                exit_ms,
+                ease: sentence.ease.to_string(),
+                snap_transform: !same_asset,
+            });
+            self.background = asset.map(|asset| BackgroundState { asset, transform });
+        }
         if sentence.forward == Forward::Wait {
-            self.time_us = self.time_us.saturating_add(Timing::ms(enter_ms));
+            // 引擎把 perform 的时长改成退场动画的时长 (`changeBg` 的顺序如此),
+            // 自动播放会等这么久。
+            let advance_ms = exit_animation.unwrap_or(advance_ms);
+            self.time_us = self.time_us.saturating_add(Timing::ms(advance_ms));
         }
         Ok(())
     }
 
-    fn change_figure(&mut self, sentence: &ChangeFigureSentence) -> Result<()> {
+    fn change_figure(&mut self, sentence: &ChangeFigureSentence, line: usize) -> Result<()> {
         let id = sentence.get_id().to_string();
         let raw = sentence.figure.as_deref();
         let mut is_live2d = false;
@@ -531,10 +633,13 @@ impl<'a> Compiler<'a> {
         } else {
             (None, None)
         };
-        let previous = self.figures.get(&id);
-        let modern = self.figure_side == FigureSideMode::Modern;
-        // 4.6.3 及以前: 未写 `-left/-right` 时沿用旧基准 (自由立绘不会因为省略位置
-        // 而重置)。4.6.4 起: 省略位置等于 `center`, 位置参与身份判定。
+        // 先克隆状态: 下面要读取动画表与 transitions (需要 `&mut self`), 不能一直被
+        // `self.figures` 借住。
+        let previous_state = self.figures.get(&id).cloned();
+        let previous = previous_state.as_ref();
+        let modern = self.config.figure_side == FigureSideMode::Modern;
+        // `Modern`: 未写 `-left/-right` 等于 `center`, 位置参与身份判定 (省略位置会
+        // 重建立绘)。`Legacy`: 位置缺省时沿用旧基准 (自由立绘不会因为省略位置而重置)。
         let effective_side = if !modern && sentence.side == FigureSide::Center {
             previous
                 .map(|state| state.side)
@@ -559,7 +664,7 @@ impl<'a> Compiler<'a> {
         } else {
             &default_transform
         };
-        let transform = merge_transform(base, sentence.transform.as_ref());
+        let mut transform = merge_transform(base, sentence.transform.as_ref());
         // `-transform position.x` 是相对立绘基准位置的偏移 (引擎里 container.x 相对 baseX);
         // 基准位置由 `-left/-right/...` 决定。基准值在写关键帧时加进去, 状态里仍存相对值,
         // 这样 setTransform 的增量语义不会被破坏。
@@ -588,29 +693,77 @@ impl<'a> Compiler<'a> {
         let visible = asset.is_some() || live2d.is_some();
         // 旧版显式改基准时不会新建立绘, 但基准变了; 需要落一个关键帧把世界坐标挪过去。
         let legacy_side_jump = !modern && side_changed && same_figure;
+        // 只有身份变化才播入场动画 (引擎的 `isEntering`); 与 `snap_transform` 同一判据。
+        let identity_switch = previous.is_none() || !same_figure || side_changed;
+        // `setTransition` 登记的设定由这一次换立绘消费 (引擎里是一次性的);
+        // 身份没变时保留, 等下一次真正换立绘。
+        let pending = if identity_switch {
+            self.transitions.remove(&id).unwrap_or_default()
+        } else {
+            self.transitions.get(&id).cloned().unwrap_or_default()
+        };
+        let enter_animation = sentence
+            .enter
+            .clone()
+            .or(pending.enter)
+            .filter(|_| identity_switch)
+            .and_then(|name| self.animation_frames(&name, line));
+        // 退场动画作用在"正在消失的旧立绘"上, 只取时长 (见 `exit_animation_ms`)。
+        let exit_animation = sentence
+            .exit
+            .clone()
+            .or(pending.exit)
+            .filter(|_| identity_switch)
+            .and_then(|name| self.exit_animation_ms(&name, line));
+        if identity_switch && let Some(previous_key) = self.plan.figures[track].keys.last_mut() {
+            previous_key.exit_ms = exit_animation.unwrap_or(sentence.exit_duration.unwrap_or(450));
+        }
         if !identity_same || transform_changed || !visible || legacy_side_jump {
-            // 换立绘(身份变化)时引擎会先移除旧 effect, 新立绘直接落在目标变换上,
-            // 入场动画只做 alpha 0 → 1; 同一立绘只改 transform 时才插值。
-            // 基准位置变化本身没有过渡, 旧版也要直接落到新基准, 否则会滑过去。
-            let snap_transform = previous.is_none() || !same_figure || side_changed;
-            self.plan.figures[track].keys.push(FigureKey {
-                t_us: self.time_us,
-                asset: asset.clone(),
-                live2d: live2d.clone(),
-                expression: None,
-                motion: None,
-                transform: scale_transform(&with_base(&transform, base_x), self.coordinate_scale),
-                alpha: transform.alpha.unwrap_or(1.0),
+            let visual = FigureVisual {
+                asset: asset.as_ref(),
+                live2d: live2d.as_ref(),
+                side: effective_side,
                 visible,
-                // 旧版改基准是瞬间落位, 不应顺带淡入。
-                enter_ms: if legacy_side_jump { 0 } else { enter_ms },
                 exit_ms,
                 figure_switch: modern && side_changed,
-                ease: sentence.ease.to_string(),
-                snap_transform,
-            });
+            };
+            let mut advance_ms = enter_ms;
+            if let Some(frames) = enter_animation {
+                // 命名入场动画的终态就是新立绘的效果状态, 起点沿用旧状态逐帧覆盖;
+                // 与背景一样, 这种情况下 `-transform` 不再生效。
+                let (keys, state) =
+                    self.figure_animation_keys(&visual, base, &frames, self.time_us);
+                self.plan.figures[track].keys.extend(keys);
+                transform = state;
+                advance_ms = AnimationFrame::total_ms(&frames);
+            } else {
+                // 换立绘(身份变化)时引擎会先移除旧 effect, 新立绘直接落在目标变换上,
+                // 入场动画只做 alpha 0 → 1; 同一立绘只改 transform 时才插值。
+                // 基准位置变化本身没有过渡, 旧版也要直接落到新基准, 否则会滑过去。
+                self.plan.figures[track].keys.push(FigureKey {
+                    t_us: self.time_us,
+                    asset: asset.clone(),
+                    live2d: live2d.clone(),
+                    expression: None,
+                    motion: None,
+                    transform: scale_transform(
+                        &with_base(&transform, base_x),
+                        self.coordinate_scale,
+                    ),
+                    alpha: transform.alpha.unwrap_or(1.0),
+                    visible,
+                    // 旧版改基准是瞬间落位, 不应顺带淡入。
+                    enter_ms: if legacy_side_jump { 0 } else { enter_ms },
+                    exit_ms,
+                    figure_switch: modern && side_changed,
+                    ease: sentence.ease.to_string(),
+                    snap_transform: identity_switch,
+                });
+            }
             if sentence.forward == Forward::Wait {
-                self.time_us = self.time_us.saturating_add(Timing::ms(enter_ms));
+                // 引擎把 perform 时长改成退场动画时长, 自动播放会等这么久。
+                let advance_ms = exit_animation.unwrap_or(advance_ms);
+                self.time_us = self.time_us.saturating_add(Timing::ms(advance_ms));
             }
         }
         let requested_expression = sentence
@@ -737,9 +890,21 @@ impl<'a> Compiler<'a> {
             .map(ToString::to_string)
             .unwrap_or_else(|| "stage-main".to_owned());
 
+        // `-transformFrom=default` (旧 `-writeDefault`) 表示从默认变换起算而不是当前状态:
+        // 没写到的字段回到默认值, 写到的字段仍然生效。
+        // 有意偏差: 引擎会在语句开始时把容器瞬间重置成默认值再动画 (`setStartState`),
+        // 这里让没写到的字段在 `-duration` 内过渡过去; 只在跨帧重置那一下看得出区别。
+        let base = |current: &Transform| {
+            if sentence.transform_from == TransformFrom::Default {
+                Transform::default()
+            } else {
+                current.clone()
+            }
+        };
+
         if target == "bg-main" {
             if let Some(state) = &self.background {
-                let transform = merge_transform(&state.transform, Some(&sentence.transform));
+                let transform = merge_transform(&base(&state.transform), Some(&sentence.transform));
                 self.plan.background.push(BackgroundKey {
                     t_us: at,
                     asset: Some(state.asset.clone()),
@@ -764,7 +929,8 @@ impl<'a> Compiler<'a> {
         } else if target == "stage-main" {
             // 整舞台只处理 alpha: 渲染器把 scene 画完后用黑场叠加 (1-alpha),
             // 文本/选项不受影响 —— 与引擎的 stage-main 容器语义一致。
-            let transform = merge_transform(&self.stage_transform, Some(&sentence.transform));
+            let transform =
+                merge_transform(&base(&self.stage_transform), Some(&sentence.transform));
             self.plan.stage.push(StageKey {
                 t_us: at,
                 alpha: transform.alpha.unwrap_or(1.0),
@@ -774,7 +940,7 @@ impl<'a> Compiler<'a> {
             self.stage_transform = transform;
         } else if let Some(state) = self.figures.get(&target).cloned() {
             let track = state.track;
-            let transform = merge_transform(&state.transform, Some(&sentence.transform));
+            let transform = merge_transform(&base(&state.transform), Some(&sentence.transform));
             self.plan.figures[track].keys.push(FigureKey {
                 t_us: at,
                 asset: state.asset.clone(),
@@ -807,6 +973,458 @@ impl<'a> Compiler<'a> {
             self.time_us = self.time_us.saturating_add(Timing::ms(duration_ms));
         }
         Ok(())
+    }
+
+    /// 取动画关键帧; 名字不可用时记一条 warning, 调用方回退到默认淡入。
+    fn animation_frames(&mut self, name: &str, line: usize) -> Option<Vec<AnimationFrame>> {
+        if let Some(frames) = self.animations.frames(name) {
+            return Some(frames.to_vec());
+        }
+        let problem = self
+            .animations
+            .problem(name)
+            .map(|problem| (problem.code, problem.message.clone()));
+        let (code, message) = problem.unwrap_or_else(|| {
+            (
+                "WG_ANIMATION_MISSING",
+                format!("动画 {name} 未出现在 animationTable.json 里"),
+            )
+        });
+        self.warn(code, &message, line);
+        None
+    }
+
+    /// 退场动画的时长。
+    ///
+    /// 退场动画作用在"正在消失的旧图层"上, 我们只把上一关键帧的剩余时长改成它的
+    /// 总时长; 位移/缩放/滤镜这些内容没法作用到 ghost 层, 遇到了就明确报出来。
+    fn exit_animation_ms(&mut self, name: &str, line: usize) -> Option<u32> {
+        let frames = self.animation_frames(name, line)?;
+        let mut has_transform = false;
+        for frame in &frames {
+            let mut rest = frame.transform.clone();
+            rest.alpha = None;
+            if rest != Transform::default() {
+                has_transform = true;
+            }
+        }
+        if has_transform {
+            self.warn(
+                "WG_EXIT_ANIMATION",
+                &format!("退场动画 {name} 含位移/缩放/滤镜, 导出只应用它的时长与透明度"),
+                line,
+            );
+        }
+        Some(AnimationFrame::total_ms(&frames))
+    }
+
+    /// 把动画关键帧展开成背景关键帧。
+    ///
+    /// 引擎每帧都以"目标当前状态"为底, 再覆盖本帧写出的字段 (`getAnimationTimeline`),
+    /// 所以这里也逐帧累积; 第一帧是起点状态, 引擎的 `setStartState` 会立刻应用它,
+    /// 因此第一帧的时长不参与等待。
+    fn background_animation_keys(
+        &self,
+        asset: Option<&String>,
+        exit_ms: u32,
+        start: &Transform,
+        frames: &[AnimationFrame],
+        t0: u64,
+    ) -> (Vec<BackgroundKey>, Transform) {
+        let mut state = start.clone();
+        let mut keys = Vec::with_capacity(frames.len());
+        let mut segment_start = t0;
+        for (index, frame) in frames.iter().enumerate() {
+            state = merge_transform(&state, Some(&frame.transform));
+            // 关键帧的时间是"这一段的开始", `enter_ms` 是到达本帧还要往前走多久
+            // (渲染器 `key_progress` 的语义), 所以第 i 帧落在第 i-1 段结束处。
+            // 第一帧是起点状态 (`setStartState`), 立刻生效、时长不参与等待。
+            keys.push(BackgroundKey {
+                t_us: segment_start,
+                asset: asset.cloned(),
+                transform: scale_transform(&state, self.coordinate_scale),
+                alpha: state.alpha.unwrap_or(1.0),
+                enter_ms: if index == 0 { 0 } else { frame.duration_ms },
+                exit_ms,
+                ease: frame.ease.clone(),
+                snap_transform: index == 0,
+            });
+            if index > 0 {
+                segment_start = segment_start.saturating_add(Timing::ms(frame.duration_ms));
+            }
+        }
+        (keys, state)
+    }
+
+    /// 把动画关键帧展开成立绘关键帧; 状态里保存的仍是相对基准的变换。
+    fn figure_animation_keys(
+        &self,
+        visual: &FigureVisual<'_>,
+        start: &Transform,
+        frames: &[AnimationFrame],
+        t0: u64,
+    ) -> (Vec<FigureKey>, Transform) {
+        let base_x = side_base(visual.side);
+        let mut state = start.clone();
+        let mut keys = Vec::with_capacity(frames.len());
+        let mut segment_start = t0;
+        for (index, frame) in frames.iter().enumerate() {
+            state = merge_transform(&state, Some(&frame.transform));
+            keys.push(FigureKey {
+                t_us: segment_start,
+                asset: visual.asset.cloned(),
+                live2d: visual.live2d.cloned(),
+                expression: None,
+                motion: None,
+                transform: scale_transform(&with_base(&state, base_x), self.coordinate_scale),
+                alpha: state.alpha.unwrap_or(1.0),
+                visible: visual.visible,
+                enter_ms: if index == 0 { 0 } else { frame.duration_ms },
+                exit_ms: visual.exit_ms,
+                figure_switch: visual.figure_switch && index == 0,
+                ease: frame.ease.clone(),
+                snap_transform: index == 0,
+            });
+            if index > 0 {
+                segment_start = segment_start.saturating_add(Timing::ms(frame.duration_ms));
+            }
+        }
+        (keys, state)
+    }
+
+    /// 把一段动画写进某个目标 (背景 / 立绘 / 整舞台), 返回总时长。
+    fn animate_target(
+        &mut self,
+        target: &str,
+        frames: &[AnimationFrame],
+        from: TransformFrom,
+        line: usize,
+    ) -> Option<u32> {
+        let start_state = |current: &Transform| {
+            if from == TransformFrom::Default {
+                Transform::default()
+            } else {
+                current.clone()
+            }
+        };
+        match target {
+            "bg-main" => {
+                let Some(state) = self.background.clone() else {
+                    self.warn("WG_ANIMATION_TARGET", "背景尚未出现, 动画忽略", line);
+                    return None;
+                };
+                let start = start_state(&state.transform);
+                let (keys, final_state) = self.background_animation_keys(
+                    Some(&state.asset),
+                    1500,
+                    &start,
+                    frames,
+                    self.time_us,
+                );
+                self.plan.background.extend(keys);
+                self.background = Some(BackgroundState {
+                    asset: state.asset,
+                    transform: final_state,
+                });
+                Some(AnimationFrame::total_ms(frames))
+            }
+            "stage-main" => {
+                let mut alpha = self.stage_transform.alpha.unwrap_or(1.0);
+                let mut at = self.time_us;
+                for (index, frame) in frames.iter().enumerate() {
+                    if index > 0 {
+                        at = at.saturating_add(Timing::ms(frame.duration_ms));
+                    }
+                    let mut rest = frame.transform.clone();
+                    let next_alpha = rest.alpha.unwrap_or(alpha);
+                    rest.alpha = None;
+                    if rest != Transform::default() {
+                        self.warn(
+                            "WG_STAGE_ANIMATION",
+                            "stage-main 的动画只支持透明度, 其余字段被忽略",
+                            line,
+                        );
+                    }
+                    self.plan.stage.push(StageKey {
+                        t_us: at,
+                        alpha: next_alpha,
+                        enter_ms: if index == 0 { 0 } else { frame.duration_ms },
+                        ease: frame.ease.clone(),
+                    });
+                    alpha = next_alpha;
+                }
+                self.stage_transform.alpha = Some(alpha);
+                Some(AnimationFrame::total_ms(frames))
+            }
+            _ => {
+                let Some(state) = self.figures.get(target).cloned() else {
+                    self.warn(
+                        "WG_ANIMATION_TARGET",
+                        &format!("动画目标不存在: {target}"),
+                        line,
+                    );
+                    return None;
+                };
+                let start = start_state(&state.transform);
+                let visual = FigureVisual {
+                    asset: state.asset.as_ref(),
+                    live2d: state.live2d.as_ref(),
+                    side: state.side,
+                    visible: true,
+                    exit_ms: 450,
+                    figure_switch: false,
+                };
+                let (keys, final_state) =
+                    self.figure_animation_keys(&visual, &start, frames, self.time_us);
+                self.plan.figures[state.track].keys.extend(keys);
+                self.figures.insert(
+                    target.to_owned(),
+                    FigureState {
+                        transform: final_state,
+                        ..state
+                    },
+                );
+                Some(AnimationFrame::total_ms(frames))
+            }
+        }
+    }
+
+    /// 目标当前的 alpha; 目标不存在时返回 `None`。
+    fn target_alpha(&self, target: &str) -> Option<f32> {
+        match target {
+            "bg-main" => self
+                .background
+                .as_ref()
+                .map(|state| state.transform.alpha.unwrap_or(1.0)),
+            "stage-main" => Some(self.stage_transform.alpha.unwrap_or(1.0)),
+            _ => self
+                .figures
+                .get(target)
+                .map(|state| state.transform.alpha.unwrap_or(1.0)),
+        }
+    }
+
+    /// 给目标落一个只改 alpha 的关键帧 (`setComplexAnimation` 用)。
+    fn push_alpha_key(
+        &mut self,
+        target: &str,
+        t_us: u64,
+        alpha: f32,
+        enter_ms: u32,
+        ease: &str,
+        line: usize,
+    ) {
+        match target {
+            "bg-main" => {
+                let Some(mut state) = self.background.clone() else {
+                    self.warn("WG_ANIMATION_TARGET", "背景尚未出现, 动画忽略", line);
+                    return;
+                };
+                state.transform.alpha = Some(alpha);
+                self.plan.background.push(BackgroundKey {
+                    t_us,
+                    asset: Some(state.asset.clone()),
+                    transform: scale_transform(&state.transform, self.coordinate_scale),
+                    alpha,
+                    enter_ms,
+                    exit_ms: 1500,
+                    ease: ease.to_owned(),
+                    snap_transform: false,
+                });
+                self.background = Some(state);
+            }
+            "stage-main" => {
+                self.plan.stage.push(StageKey {
+                    t_us,
+                    alpha,
+                    enter_ms,
+                    ease: ease.to_owned(),
+                });
+                self.stage_transform.alpha = Some(alpha);
+            }
+            _ => {
+                let Some(mut state) = self.figures.get(target).cloned() else {
+                    self.warn(
+                        "WG_ANIMATION_TARGET",
+                        &format!("动画目标不存在: {target}"),
+                        line,
+                    );
+                    return;
+                };
+                state.transform.alpha = Some(alpha);
+                self.plan.figures[state.track].keys.push(FigureKey {
+                    t_us,
+                    asset: state.asset.clone(),
+                    live2d: state.live2d.clone(),
+                    expression: None,
+                    motion: None,
+                    transform: scale_transform(
+                        &with_base(&state.transform, side_base(state.side)),
+                        self.coordinate_scale,
+                    ),
+                    alpha,
+                    visible: true,
+                    enter_ms,
+                    exit_ms: 450,
+                    figure_switch: false,
+                    ease: ease.to_owned(),
+                    snap_transform: false,
+                });
+                self.figures.insert(target.to_owned(), state);
+            }
+        }
+    }
+
+    fn set_animation(&mut self, sentence: &SetAnimationSentence, line: usize) -> Result<()> {
+        let target = animation_target(sentence.target.as_ref());
+        let Some(frames) = self.animation_frames(&sentence.animation, line) else {
+            return Ok(());
+        };
+        if sentence.parallel {
+            self.warn(
+                "WG_ANIMATION_PARALLEL",
+                "-parallel 的同目标动画叠加暂不支持, 关键帧按顺序覆盖",
+                line,
+            );
+        }
+        let Some(total) = self.animate_target(&target, &frames, sentence.transform_from, line)
+        else {
+            return Ok(());
+        };
+        if sentence.forward == Forward::Wait {
+            self.time_us = self.time_us.saturating_add(Timing::ms(total));
+        }
+        Ok(())
+    }
+
+    fn set_temp_animation(
+        &mut self,
+        sentence: &SetTempAnimationSentence,
+        line: usize,
+    ) -> Result<()> {
+        let target = animation_target(sentence.target.as_ref());
+        let frames: Vec<AnimationFrame> = sentence
+            .animation
+            .iter()
+            .map(|animation| AnimationFrame {
+                duration_ms: animation.duration,
+                ease: animation
+                    .ease
+                    .map(|ease| ease.to_string())
+                    .unwrap_or_default(),
+                transform: animation.transform.clone(),
+            })
+            .collect();
+        if frames.is_empty() {
+            return Ok(());
+        }
+        if sentence.parallel {
+            self.warn(
+                "WG_ANIMATION_PARALLEL",
+                "-parallel 的同目标动画叠加暂不支持, 关键帧按顺序覆盖",
+                line,
+            );
+        }
+        let Some(total) = self.animate_target(&target, &frames, sentence.transform_from, line)
+        else {
+            return Ok(());
+        };
+        if sentence.forward == Forward::Wait {
+            self.time_us = self.time_us.saturating_add(Timing::ms(total));
+        }
+        Ok(())
+    }
+
+    /// `setComplexAnimation` 只有两个内置动画, 都是纯 alpha 的缓动曲线
+    /// (`universalSoftIn` 用 `1-(1-p)^3`, `universalSoftOff` 用 `p^3`)。
+    ///
+    /// 引擎里没有 `universalSoftOut` —— 文档与补全里的这个名字写错了, 写了等于空操作。
+    fn set_complex_animation(
+        &mut self,
+        sentence: &SetComplexAnimationSentence,
+        line: usize,
+    ) -> Result<()> {
+        let target = animation_target(sentence.target.as_ref());
+        let duration = sentence.duration.unwrap_or(0);
+        let (alpha, ease) = match sentence.animation.trim() {
+            "universalSoftIn" => (1.0, "cubicOut"),
+            "universalSoftOff" => (0.0, "cubicIn"),
+            other => {
+                self.warn(
+                    "WG_COMPLEX_ANIMATION",
+                    &format!("setComplexAnimation 不支持的动画: {other}"),
+                    line,
+                );
+                return Ok(());
+            }
+        };
+        if self.target_alpha(&target).is_none() {
+            self.warn(
+                "WG_ANIMATION_TARGET",
+                &format!("动画目标不存在: {target}"),
+                line,
+            );
+            return Ok(());
+        }
+        // 关键帧时间是这段过渡的开始, `enter_ms` 是往前走多久到达终态;
+        // 所以这里只落一个终态关键帧, 起点由上一个关键帧提供。
+        self.push_alpha_key(&target, self.time_us, alpha, duration, ease, line);
+        if sentence.forward == Forward::Wait {
+            self.time_us = self.time_us.saturating_add(Timing::ms(duration));
+        }
+        Ok(())
+    }
+
+    /// `pixiPerform:<名字>` 登记一段屏幕特效。
+    ///
+    /// 引擎里同名演出按 performName 去重后重建 (`snow` 重复写只会重来一次),
+    /// 不同名字可以叠加; `pixiInit` 与切场景会把它们一起清掉。
+    fn pixi_perform(&mut self, sentence: &PixiPerformSentence, line: usize) {
+        let name = sentence.effect.trim();
+        let Some(kind) = ParticleKind::from_perform(name) else {
+            self.warn(
+                "WG_PERFORM_NAME",
+                &format!("pixiPerform 不支持的演出: {name}"),
+                line,
+            );
+            return;
+        };
+        self.start_particle(kind);
+    }
+
+    fn start_particle(&mut self, kind: ParticleKind) {
+        for segment in &mut self.plan.particles {
+            if segment.kind == kind && segment.end_us.is_none() {
+                segment.end_us = Some(self.time_us);
+            }
+        }
+        self.plan.particles.push(ParticleSegment {
+            kind,
+            start_us: self.time_us,
+            end_us: None,
+        });
+    }
+
+    /// 关掉所有还开着的粒子演出 (`pixiInit` / 切场景)。
+    fn close_particles(&mut self) {
+        for segment in &mut self.plan.particles {
+            if segment.end_us.is_none() {
+                segment.end_us = Some(self.time_us);
+            }
+        }
+    }
+
+    /// `setTransition` 只登记动画名, 由下一次换图/换立绘读取 (与引擎的
+    /// `animationSettings` 一致, 用完即弃)。
+    fn set_transition(&mut self, sentence: &SetTransitionSentence) {
+        let target = animation_target(sentence.target.as_ref());
+        let entry = self.transitions.entry(target).or_default();
+        if let Some(enter) = &sentence.enter {
+            entry.enter = Some(enter.clone());
+        }
+        if let Some(exit) = &sentence.exit {
+            entry.exit = Some(exit.clone());
+        }
     }
 
     fn bgm(&mut self, sentence: &BgmSentence) -> Result<()> {
@@ -888,7 +1506,15 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn intro(&mut self, sentence: &IntroSentence) -> Result<()> {
+    fn intro(&mut self, sentence: &IntroSentence, line: usize) -> Result<()> {
+        // 渲染器画的是白字黑底: 五种 `animation` 都已实现 (fadeIn / slideIn / typingEffect /
+        // pixelateEffect / revealAnimation), 配色与背景图还没有对应实现, 只对后者报警。
+        if sentence.font_color.is_some()
+            || sentence.background_color.is_some()
+            || sentence.background_image.is_some()
+        {
+            self.warn("WG_INTRO_STYLE", "intro 的文字颜色/背景暂不参与导出", line);
+        }
         let lines = sentence
             .content
             .join("|")
@@ -1013,6 +1639,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn change_scene_name(&mut self, target: &str) {
+        // 切场景会销毁所有屏幕特效 (引擎的 `stopAllPerform`)。
+        self.close_particles();
         self.scene = self
             .project
             .scene(target)
@@ -1177,6 +1805,14 @@ fn evaluate_condition(expression: &Expression) -> Result<bool> {
         .evaluate(&EmptyEvaluationContext)
         .map_err(|error| Error::Unsupported(format!("when 求值失败: {error}")))?;
     Ok(value.is_truthy())
+}
+
+/// 动画语句的 `-target`。引擎在缺省时用的是 `default_id` / `'0'` 这类不存在的 key,
+/// 行为等于"没有效果"; 这里照抄, 让缺省目标自然落到"目标不存在"的 warning 上。
+fn animation_target(target: Option<&ObjectId>) -> String {
+    target
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "0".to_owned())
 }
 
 fn merge_transform(base: &Transform, patch: Option<&Transform>) -> Transform {

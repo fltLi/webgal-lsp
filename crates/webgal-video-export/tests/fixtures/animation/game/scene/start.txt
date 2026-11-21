@@ -1,0 +1,2 @@
+intro:模糊测试|第二行文字 -animation=pixelateEffect;
+end;

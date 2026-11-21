@@ -17,7 +17,8 @@
 
   导出开始后对话框**不关闭、也不回到表单**: 左列实时显示渲染器推来的预览帧与进度,
   右列保留本次导出的参数摘要; 底部按钮变成"取消"。完成/失败后仍停在这一屏;
-  完成后预览位置换成成片播放器 (WAV 用 audio 控件)。
+  完成后预览位置换成成片播放器 (WAV 用 audio 控件), 底部多一个"删除文件"
+  (移到系统回收站, 删完退回设置页), 方便删掉参数不对的产物重导。
 
   组件相关 (Live2D Core 导入) **不在这里**: 它是全局设置, 放在「设置 → 渲染 → 视频导出」。
 
@@ -41,10 +42,15 @@
     type VideoExportProgress,
     type VideoExportPreview,
     type VideoExportStatus,
+    type VideoExportWarning,
+    type VideoExportWarnings,
   } from '../commands/videoExport';
+  import { moveToTrash } from '../commands/server';
+  import { requestConfirm } from '../confirm';
   import { fs } from '../lib/fs';
   import { browserRelativePath, joinPath } from '../lib/paths';
   import { numberedOutputName, outputNameForScene } from '../lib/video-output';
+  import { summarizeWarnings, warningLocation } from '../lib/videoExportWarnings';
   import { actions, appStore } from '../state/store.svelte';
   import { presetWidth, resolutionOptions } from '../lib/video-preset';
   import AppDialog from './AppDialog.svelte';
@@ -88,8 +94,8 @@
   /**
    * `changeFigure` 的立绘身份判定。
    *
-   * 不勾选 = 4.6.3 及以前（只看图片地址，省略位置沿用旧基准）；
-   * 勾选 = 4.6.4+（位置也参与判定，省略位置 = center）。
+   * 勾选 = 位置（含默认居中）也参与身份判定，省略位置等于换了一个基准；
+   * 不勾选 = 只看图片/模型地址，省略位置沿用上一次的方位。
    */
 
   /** 导出内容用一个下拉表达, 取代原来的两个独立勾选框。 */
@@ -114,6 +120,9 @@
   let selected = $state<Record<string, number>>({});
   let phase = $state<'idle' | 'working' | 'done' | 'failed'>('idle');
   let errors = $state<string[]>([]);
+  /** 编译期警告 (暂不支持的演出等); 导出开始前由后端推来。 */
+  let warnings = $state<VideoExportWarning[]>([]);
+  const warningSummary = $derived(summarizeWarnings(warnings, 5));
   let notice = $state('');
 
   let outputDirectory = $state('');
@@ -145,7 +154,7 @@
   let vocalVolumeText = $state(stored.vocalVolume);
   let autoSpeedText = $state(stored.autoSpeed);
   let textSpeedText = $state(stored.textSpeed);
-  /* 勾选 = 4.6.4+ 的立绘方位判定; 不勾选 = 4.6.3 及以前。 */
+  /* 勾选 = 位置参与立绘身份判定; 不勾选 = 只看图片/模型变化。 */
   let figureSideModern = $state(stored.figureSide === 'modern');
 
   /* 输出内容: 一个下拉同时决定视频轨、音频轨和产物扩展名。 */
@@ -309,6 +318,12 @@
       listen<string>('video-export:encoder', (event) => {
         if (phase !== 'working') return;
         actualEncoder = event.payload;
+      })
+    );
+    void keep(
+      listen<VideoExportWarnings>('video-export:warnings', (event) => {
+        if (phase !== 'working') return;
+        warnings = event.payload.warnings;
       })
     );
 
@@ -480,6 +495,7 @@
 
     phase = 'working';
     errors = [];
+    warnings = [];
     notice = '';
     previewUrl = '';
     progressCurrent = 0;
@@ -513,6 +529,8 @@
       });
       resultPath = result.output;
       if (result.encoder) actualEncoder = result.encoder;
+      // 事件可能比完成先到也可能漏掉, 以返回值再兜一次底。
+      if (result.warnings?.length) warnings = result.warnings;
       progressCurrent = progressTotal;
       finishedAt = Date.now();
       phase = 'done';
@@ -541,6 +559,49 @@
     } catch (error) {
       errors = [...errors, String(error)];
     }
+  }
+
+  /**
+   * 删除刚导出的产物 (移到系统回收站, 可恢复)。
+   *
+   * 只在完成页给这个入口: 用户发现参数不对时, 不用退出对话框再去文件管理器里翻。
+   * 删掉后退回设置页 —— "删了重导"是最自然的下一步, 而不是关窗。
+   */
+  function deleteOutput(): void {
+    const target = resultPath || output.trim();
+    if (!target) return;
+    requestConfirm({
+      title: '删除导出的文件？',
+      description: `${target}\n文件会移到系统回收站，之后可以再恢复。`,
+      confirmLabel: '删除',
+      danger: true,
+      action: () => void removeOutput(target),
+    });
+  }
+
+  async function removeOutput(target: string): Promise<void> {
+    // 文件可能已经被用户挪走/删掉: 这时不该弹一个删除失败的报错。
+    if (!(await fs.exists(target)).exists) {
+      afterDelete('文件已不存在，没有删除任何内容。');
+      return;
+    }
+    try {
+      await moveToTrash(target);
+      afterDelete('已删除导出的文件（在系统回收站里可以恢复）。');
+    } catch (error) {
+      errors = [...errors, String(error)];
+    }
+  }
+
+  /** 删除之后回到设置页, 并刷新"同名文件已存在"的提示。 */
+  function afterDelete(message: string): void {
+    resultPath = '';
+    previewUrl = '';
+    startedAt = 0;
+    finishedAt = 0;
+    phase = 'idle';
+    notice = message;
+    void checkOutputName(false);
   }
 
   async function cancel(): Promise<void> {
@@ -762,7 +823,7 @@
           <Checkbox
             checked={figureSideModern}
             label="依据立绘方位判定切换"
-            title="勾选 = WebGAL 4.6.4+（位置也参与立绘身份判定）；不勾选 = 4.6.3 及以前"
+            title="勾选 = 位置也参与立绘身份判定（省略位置等于居中）；不勾选 = 只看图片/模型变化，省略位置沿用上一次方位"
             onchange={(checked) => (figureSideModern = checked)}
           />
         </div>
@@ -828,6 +889,27 @@
           {/if}
         </div>
 
+        {#if warnings.length > 0}
+          <div class="video-warnings">
+            <p class="video-warnings-title">
+              本片含 {warningSummary.total} 处暂未完整支持的演出，导出会继续。
+            </p>
+            <ul>
+              {#each warningSummary.shown as warning, index (index)}
+                <li>
+                  {#if warningLocation(warning)}
+                    <span class="video-warning-location">{warningLocation(warning)}</span>
+                  {/if}
+                  {warning.message}
+                </li>
+              {/each}
+              {#if warningSummary.hidden > 0}
+                <li>另有 {warningSummary.hidden} 处，详见导出日志。</li>
+              {/if}
+            </ul>
+          </div>
+        {/if}
+
         {#if errors.length > 0}
           <div class="video-errors">
             <ul>
@@ -873,6 +955,7 @@
         {cancelRequested ? '正在取消…' : '取消'}
       </Button>
     {:else if phase === 'done'}
+      <Button icon="Delete" appearance="danger-outline" onclick={deleteOutput}>删除文件</Button>
       <Button icon="FolderOpen" onclick={() => void openOutputFolder()}>打开所在目录</Button>
       <Button appearance="primary" onclick={onClose}>完成</Button>
     {:else if phase === 'failed'}

@@ -1,0 +1,1 @@
+changeFigure:fig.png -left -enter=enter-from-left -next;

@@ -140,6 +140,12 @@ TEST_CASE("plan builder records the fields the renderer consumes") {
                                   0, 0) == WEBGAL_STATUS_OK);
     REQUIRE(webgal_plan_add_audio(raw, 0, 2'000'000, 1, "video/clip.mp4", WEBGAL_AUDIO_VIDEO, 1.0F,
                                   0, 0, 0) == WEBGAL_STATUS_OK);
+
+    // 屏幕特效: 一段有结束时间, 一段持续到片尾。
+    REQUIRE(webgal_plan_add_particle(raw, WEBGAL_PARTICLE_SNOW, 0, 1, 2'000'000) ==
+            WEBGAL_STATUS_OK);
+    REQUIRE(webgal_plan_add_particle(raw, WEBGAL_PARTICLE_CHERRY_BLOSSOMS, 1'000'000, 0, 0) ==
+            WEBGAL_STATUS_OK);
 }
 
 TEST_CASE("audio only export writes a wav without touching vulkan") {

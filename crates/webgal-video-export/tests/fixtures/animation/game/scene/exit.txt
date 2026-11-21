@@ -1,0 +1,2 @@
+changeBg:bg.png;
+changeBg:bg2.png -exit=enter -next;

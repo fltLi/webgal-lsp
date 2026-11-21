@@ -166,6 +166,26 @@ impl AudioKind {
     }
 }
 
+/// 屏幕特效类型, 与 `WebgalParticleKind` 对应。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParticleKind {
+    Snow,
+    HeavySnow,
+    Rain,
+    CherryBlossoms,
+}
+
+impl ParticleKind {
+    fn code(self) -> c_int {
+        match self {
+            Self::Snow => 0,
+            Self::HeavySnow => 1,
+            Self::Rain => 2,
+            Self::CherryBlossoms => 3,
+        }
+    }
+}
+
 /// 编码后端, 与 `WebgalEncoder` 对应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Encoder {
@@ -511,6 +531,13 @@ unsafe extern "C" {
         fade_in_ms: u32,
         fade_out_ms: u32,
     ) -> c_int;
+    fn webgal_plan_add_particle(
+        plan: *mut WebgalPlan,
+        kind: c_int,
+        start_us: u64,
+        has_end: c_int,
+        end_us: u64,
+    ) -> c_int;
     fn webgal_render_run(
         plan: *const WebgalPlan,
         options: *const WebgalRenderOptions,
@@ -611,6 +638,14 @@ pub struct AudioSpec<'a> {
     pub loop_: bool,
     pub fade_in_ms: u32,
     pub fade_out_ms: u32,
+}
+
+/// 一段屏幕特效。
+#[derive(Debug, Clone, Copy)]
+pub struct ParticleSpec {
+    pub kind: ParticleKind,
+    pub start_us: u64,
+    pub end_us: Option<u64>,
 }
 
 /// 一次导出的计划; `Drop` 时释放 C++ 侧内存。
@@ -860,6 +895,19 @@ impl PlanBuilder {
                 flag(spec.loop_),
                 spec.fade_in_ms,
                 spec.fade_out_ms,
+            )
+        })
+    }
+
+    /// 追加一段屏幕特效 (`pixiPerform` 的雪/雨/樱)。
+    pub fn add_particle(&mut self, spec: &ParticleSpec) -> Result<(), Error> {
+        check(unsafe {
+            webgal_plan_add_particle(
+                self.raw,
+                spec.kind.code(),
+                spec.start_us,
+                flag(spec.end_us.is_some()),
+                spec.end_us.unwrap_or(0),
             )
         })
     }
@@ -1173,6 +1221,15 @@ mod tests {
         assert_eq!(FxaaMode::Ssaa2.code(), 3);
         assert_eq!(FxaaMode::Msaa4.code(), 4);
         assert_eq!(FxaaMode::Smaa.code(), 5);
+    }
+
+    #[test]
+    fn particle_kinds_map_to_the_header() {
+        // 与 `webgal-video-render.h` 的 `WebgalParticleKind` 一一对应。
+        assert_eq!(ParticleKind::Snow.code(), 0);
+        assert_eq!(ParticleKind::HeavySnow.code(), 1);
+        assert_eq!(ParticleKind::Rain.code(), 2);
+        assert_eq!(ParticleKind::CherryBlossoms.code(), 3);
     }
 
     #[test]

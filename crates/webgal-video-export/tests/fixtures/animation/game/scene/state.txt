@@ -1,0 +1,2 @@
+changeBg:bg.png -enter=enter-from-left -next;
+setTransform:{"position":{"x":100,"y":0}} -target=bg-main -duration=200 -next;

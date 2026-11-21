@@ -84,6 +84,39 @@ pub struct VideoExportResult {
     pub output: String,
     /// 实际使用的编码后端; 音频导出或未回调时为 `None`。
     pub encoder: Option<String>,
+    /// 编译期发现的非致命问题 (暂不支持的演出等); 导出前会先用事件推一遍。
+    pub warnings: Vec<VideoExportWarning>,
+}
+
+/// 编译期警告: 某条语句/某个动画在导出里不会完全生效。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoExportWarning {
+    pub code: String,
+    pub message: String,
+    /// 场景名 (`start.txt` 这类); 与语言服务的 `Issue` 同一套口径。
+    pub scene: Option<String>,
+    /// 1 起始的行号。
+    pub line: Option<usize>,
+}
+
+impl From<&webgal_video_export::plan::Warning> for VideoExportWarning {
+    fn from(warning: &webgal_video_export::plan::Warning) -> Self {
+        Self {
+            code: warning.code.clone(),
+            message: warning.message.clone(),
+            scene: warning.scene.clone(),
+            line: warning.line,
+        }
+    }
+}
+
+/// `video-export:warnings` 的事件负载; 导出开始前推一次。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WarningsPayload {
+    warnings: Vec<VideoExportWarning>,
+    total: usize,
 }
 
 /// 当前构建能否导出视频，以及 Live2D Core 的安装状态。
@@ -302,8 +335,6 @@ pub struct VideoProjectInfo {
     /// 舞台尺寸来自 `game/config.txt`; 导出分辨率只选高度, 宽度按这个宽高比推导。
     pub stage_width: u32,
     pub stage_height: u32,
-    /// `webgal-engine.json` 里的 `webgalVersion`; 用于自动选择立绘切换口径。
-    pub webgal_version: Option<String>,
 }
 
 #[tauri::command]
@@ -322,7 +353,6 @@ pub fn video_project_info(project_path: String) -> Result<VideoProjectInfo, Stri
         scenes,
         stage_width,
         stage_height,
-        webgal_version: project.webgal_version(),
     })
 }
 
@@ -434,8 +464,7 @@ pub async fn export_video(
         if let Some(mode) = config.figure_side.as_deref() {
             export_options.config.figure_side = match mode {
                 "legacy" => webgal_video_export::config::FigureSideMode::Legacy,
-                "modern" => webgal_video_export::config::FigureSideMode::Modern,
-                _ => webgal_video_export::config::FigureSideMode::Auto,
+                _ => webgal_video_export::config::FigureSideMode::Modern,
             };
         }
         if let Some(disable) = config.disable_filters {
@@ -552,6 +581,19 @@ struct RenderJob {
 impl RenderJob {
     fn run(self) -> Result<VideoExportResult, String> {
         let plan = build_plan(&self.options).map_err(|error| error.to_string())?;
+        let warnings: Vec<VideoExportWarning> = plan.warnings.iter().map(Into::into).collect();
+        // 在开始渲染之前推给前端: 这些是"本片有些演出不会完全生效", 属于提示不是错误。
+        if !warnings.is_empty() {
+            if let Some(app) = &self.app {
+                let _ = app.emit(
+                    "video-export:warnings",
+                    WarningsPayload {
+                        total: warnings.len(),
+                        warnings: warnings.clone(),
+                    },
+                );
+            }
+        }
         export_plan(&plan, &self)?;
         let encoder = self
             .encoder_name
@@ -561,6 +603,7 @@ impl RenderJob {
         Ok(VideoExportResult {
             output: self.output.to_string_lossy().to_string(),
             encoder,
+            warnings,
         })
     }
 }

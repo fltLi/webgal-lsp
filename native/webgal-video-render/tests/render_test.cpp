@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -362,7 +363,144 @@ void require_channel_range(const Frame& frame, std::uint32_t x, std::uint32_t y,
     REQUIRE(int(actual[0]) <= high);
 }
 
+/// 归一化后的「接近最亮」与「中间灰度」像素占比。
+///
+/// 用来判断文字有没有被模糊: 模糊把接近最亮的笔画摊成中间灰度, 所以前者的比例下降、
+/// 后者上升。按帧内最大亮度归一化, 这样同一动画在不同时刻的 alpha 差异不影响比较。
+std::array<double, 2> softness_ratios(const Frame& frame) {
+    int maximum = 0;
+    for (std::uint32_t y = 0; y < frame.height; ++y) {
+        for (std::uint32_t x = 0; x < frame.width; ++x) {
+            maximum = std::max(maximum, static_cast<int>(frame.at(x, y)[0]));
+        }
+    }
+    std::array<double, 2> ratios{0.0, 0.0};
+    if (maximum <= 0) {
+        return ratios;
+    }
+    std::size_t bright = 0;
+    std::size_t mid = 0;
+    for (std::uint32_t y = 0; y < frame.height; ++y) {
+        for (std::uint32_t x = 0; x < frame.width; ++x) {
+            const double value = static_cast<double>(frame.at(x, y)[0]) / maximum;
+            if (value >= 0.85) {
+                ++bright;
+            } else if (value >= 0.15) {
+                ++mid;
+            }
+        }
+    }
+    const double total = static_cast<double>(frame.width) * frame.height;
+    ratios[0] = static_cast<double>(bright) / total;
+    ratios[1] = static_cast<double>(mid) / total;
+    return ratios;
+}
+
 } // namespace
+
+TEST_CASE("background keyframes start their transition at the key time") {
+    // 关键帧的 `t_us` 是这段过渡的开始, `enter_ms` 是到达本帧值还要往前走的时长
+    // (`key_progress`)。导出的动画关键帧 (enter/-exit/setAnimation) 都按这个口径写,
+    // 所以这里钉住"中点插值"这件事。
+    auto plan = make_plan();
+    job::BackgroundKey first;
+    first.t_us = 0;
+    first.asset = std::string("bg");
+    first.alpha = 1.0F;
+    plan.background.push_back(first);
+    job::BackgroundKey second;
+    second.t_us = 0;
+    second.asset = std::string("bg");
+    second.alpha = 0.25F;
+    second.enter_ms = 400;
+    second.ease = "linear";
+    plan.background.push_back(second);
+
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{128, 128, 128, 255}));
+    const auto at_start = render_one(plan, 0);
+    if (at_start.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << at_start.error);
+    }
+    REQUIRE(at_start.status == RenderStatus::Ok);
+    require_pixel(at_start.frame, kWidth / 2, kHeight / 2, Rgba{128, 128, 128, 255});
+
+    // 中点: alpha 1 → 0.25 的线性插值 = 0.625, 128 * 0.625 = 80。
+    const auto middle = render_one(plan, 200'000);
+    REQUIRE(middle.status == RenderStatus::Ok);
+    require_pixel(middle.frame, kWidth / 2, kHeight / 2, Rgba{80, 80, 80, 255});
+
+    // 到达终点: 0.25 * 128 = 32。
+    const auto end = render_one(plan, 400'000);
+    REQUIRE(end.status == RenderStatus::Ok);
+    require_pixel(end.frame, kWidth / 2, kHeight / 2, Rgba{32, 32, 32, 255});
+}
+
+TEST_CASE("keyframe ease bends the interpolation") {
+    // 同样的两个关键帧, `easeIn` 在中点比 `linear` 更接近起点 (alpha 更大)。
+    auto plan = make_plan();
+    job::BackgroundKey first;
+    first.t_us = 0;
+    first.asset = std::string("bg");
+    first.alpha = 1.0F;
+    plan.background.push_back(first);
+    job::BackgroundKey second;
+    second.t_us = 0;
+    second.asset = std::string("bg");
+    second.alpha = 0.25F;
+    second.enter_ms = 400;
+    second.ease = "easeIn";
+    plan.background.push_back(second);
+
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{128, 128, 128, 255}));
+    const auto middle = render_one(plan, 200'000);
+    if (middle.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << middle.error);
+    }
+    REQUIRE(middle.status == RenderStatus::Ok);
+    // cubic-bezier(0.42, 0, 1, 1) 在 0.5 处约 0.315 → alpha ≈ 0.764 → 98。
+    require_pixel(middle.frame, kWidth / 2, kHeight / 2, Rgba{98, 98, 98, 255}, 3);
+}
+
+TEST_CASE("enter animation keeps the outgoing background fading") {
+    // 命名入场动画会把新背景写成多个关键帧; 旧背景的 ghost 仍应按 exit_ms 淡出,
+    // 不能因为"上一帧已经是新图"就变成硬切。
+    auto plan = make_plan();
+    plan.assets["bg2"] = "background/bg2.png";
+    job::BackgroundKey old_bg;
+    old_bg.t_us = 0;
+    old_bg.asset = std::string("bg");
+    old_bg.alpha = 1.0F;
+    old_bg.exit_ms = 1500;
+    plan.background.push_back(old_bg);
+
+    // 新背景: 入场动画的第一帧 (alpha 0) 与第二帧 (400ms 内淡到 1), 时间相同。
+    job::BackgroundKey new_start;
+    new_start.t_us = 500'000;
+    new_start.asset = std::string("bg2");
+    new_start.alpha = 0.0F;
+    plan.background.push_back(new_start);
+    job::BackgroundKey new_end;
+    new_end.t_us = 500'000;
+    new_end.asset = std::string("bg2");
+    new_end.alpha = 1.0F;
+    new_end.enter_ms = 400;
+    new_end.ease = "linear";
+    plan.background.push_back(new_end);
+
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{128, 128, 128, 255}));
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg2.png", 8, 8,
+                            Rgba{255, 255, 255, 255}));
+    const auto outcome = render_one(plan, 700'000);
+    if (outcome.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << outcome.error);
+    }
+    REQUIRE(outcome.status == RenderStatus::Ok);
+    // 旧背景 alpha = 1 - 200/1500 ≈ 0.867 → 111; 新背景 alpha 0.5 → 111*0.5 + 255*0.5 ≈ 183。
+    require_pixel(outcome.frame, kWidth / 2, kHeight / 2, Rgba{183, 183, 183, 255}, 4);
+}
 
 TEST_CASE("background keeps its source color") {
     auto plan = make_plan();
@@ -925,4 +1063,160 @@ TEST_CASE("pixi parity scenes render") {
     const auto bevel_off = render_one(bevel_off_plan, 0, 0);
     REQUIRE(bevel_off.status == RenderStatus::Ok);
     REQUIRE(count_differences(bevel_off.frame, beveled.frame, 0, height) > 100);
+}
+
+TEST_CASE("particles render deterministically and move over time") {
+    // 粒子的随机量只由 (类型, 层, 序号) 决定, 位置是时间的解析函数, 所以同一时刻
+    // 两次渲染必须逐像素一致; 换个时刻粒子应当已经移动。
+    auto plan = make_plan();
+    job::ParticleSegment segment;
+    segment.kind = job::ParticleKind::Snow;
+    segment.start_us = 0;
+    segment.end_us = 1'000'000;
+    plan.particles.push_back(segment);
+
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{64, 64, 64, 255}));
+    add_background(plan);
+
+    const auto first = render_one(plan, 300'000);
+    if (first.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << first.error);
+    }
+    REQUIRE(first.status == RenderStatus::Ok);
+    const auto again = render_one(plan, 300'000);
+    REQUIRE(again.status == RenderStatus::Ok);
+    REQUIRE(first.frame.bgra == again.frame.bgra);
+
+    const auto later = render_one(plan, 600'000);
+    REQUIRE(later.status == RenderStatus::Ok);
+    REQUIRE(count_differences(first.frame, later.frame, 0, kHeight) > 0);
+
+    // 雪花是白的, 画面上一定出现比背景 (64) 亮的像素。
+    std::size_t brighter = 0;
+    for (std::uint32_t y = 0; y < kHeight; ++y) {
+        for (std::uint32_t x = 0; x < kWidth; ++x) {
+            if (later.frame.at(x, y)[0] > 100) {
+                ++brighter;
+            }
+        }
+    }
+    // 160×90 下雪花只有 1–2 px, 几十个像素变亮就足以说明粒子真的画上去了。
+    REQUIRE(brighter > 20);
+}
+
+TEST_CASE("foreground particles draw above figures") {
+    // 红色立绘铺满画面: 背景粒子会被它盖住, 只有前景粒子能在它上面留下痕迹。
+    auto plan = make_plan();
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{0, 0, 0, 255}));
+    REQUIRE(write_solid_png(project_root() / "game" / "figure" / "fig.png", 32, 32,
+                            Rgba{255, 0, 0, 255}));
+    add_background(plan);
+    job::Transform figure_transform;
+    figure_transform.scale = {4.0F, 4.0F};
+    add_figure(plan, figure_transform);
+
+    job::ParticleSegment segment;
+    segment.kind = job::ParticleKind::Snow;
+    segment.start_us = 0;
+    segment.end_us = 1'000'000;
+    plan.particles.push_back(segment);
+
+    const auto outcome = render_one(plan, 500'000);
+    if (outcome.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << outcome.error);
+    }
+    REQUIRE(outcome.status == RenderStatus::Ok);
+    // 立绘仍以红色为主 (没有被粒子整片盖住), 但确实有被粒子提亮的像素。
+    std::size_t red = 0;
+    std::size_t lighter = 0;
+    for (std::uint32_t y = 0; y < kHeight; ++y) {
+        for (std::uint32_t x = 0; x < kWidth; ++x) {
+            const auto pixel = outcome.frame.at(x, y);
+            if (pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 0) {
+                ++red;
+            } else if (pixel[0] > 200 && pixel[1] > 40) {
+                ++lighter;
+            }
+        }
+    }
+    REQUIRE(red > static_cast<std::size_t>(kWidth) * kHeight / 2);
+    REQUIRE(lighter > 5);
+}
+
+TEST_CASE("pixelate intro blurs the text in the middle of the animation") {
+    // 引擎的 `pixelateEffect` 其实是 3s 的 CSS 动画: opacity 0→1 线性, `filter: blur`
+    // 0→5px→0 (50% 处最模糊)。这里钉住"中间比结尾软": 归一化后接近最亮的像素更少,
+    // 中间灰度更多。
+    constexpr std::uint32_t width = 1280;
+    constexpr std::uint32_t height = 720;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.lines = {std::string("Abc Efg 123")};
+    intro.font_size = "medium";
+    intro.animation = "pixelateEffect";
+    plan.intros.push_back(std::move(intro));
+
+    const auto peak = render_one(plan, 1'500'000, 0);
+    if (peak.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << peak.error);
+    }
+    if (peak.status == RenderStatus::Failed && peak.error.find("字体") != std::string::npos) {
+        SKIP("本机没有可用字体, 无法验证文字: " << peak.error);
+    }
+    REQUIRE(peak.status == RenderStatus::Ok);
+    const auto sharp = render_one(plan, 2'900'000, 0);
+    REQUIRE(sharp.status == RenderStatus::Ok);
+
+    const auto peak_ratios = softness_ratios(peak.frame);
+    const auto sharp_ratios = softness_ratios(sharp.frame);
+    INFO("峰值 (接近最亮 " << peak_ratios[0] << ", 中间灰度 " << peak_ratios[1] << ") vs 结尾 ("
+                           << sharp_ratios[0] << ", " << sharp_ratios[1] << ")");
+    // 两种时刻都要真的画出字来, 否则下面的比较没有意义。
+    REQUIRE(peak_ratios[1] > 0.0);
+    REQUIRE(sharp_ratios[0] > 0.0);
+    CHECK(peak_ratios[0] < sharp_ratios[0]);
+    CHECK(peak_ratios[1] > sharp_ratios[1]);
+}
+
+TEST_CASE("pixelate intro covers the stage and the textbox") {
+    // 像素化 intro 在场景 pass 里画 (要跑模糊滤镜链), 所以它必须自己压掉背景、立绘与
+    // 文本框; 引擎里它就是盖在舞台上的全屏演出。
+    constexpr std::uint32_t width = 640;
+    constexpr std::uint32_t height = 360;
+    auto plan = make_plan(width, height);
+    plan.ui_enabled = true;
+    REQUIRE(write_solid_png(project_root() / "game" / "background" / "bg.png", 8, 8,
+                            Rgba{200, 200, 200, 255}));
+    add_background(plan);
+    add_text(plan);
+    job::IntroSegment intro;
+    intro.start_us = 0;
+    intro.end_us = 4'000'000;
+    intro.lines = {std::string("Abc Efg 123")};
+    intro.font_size = "medium";
+    intro.animation = "pixelateEffect";
+    plan.intros.push_back(std::move(intro));
+
+    const auto covered = render_one(plan, 200'000, 1);
+    if (covered.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << covered.error);
+    }
+    if (covered.status == RenderStatus::Failed && covered.error.find("字体") != std::string::npos) {
+        SKIP("本机没有可用字体, 无法验证文字: " << covered.error);
+    }
+    REQUIRE(covered.status == RenderStatus::Ok);
+    // 200ms 时 opacity 只有 0.067, 文字几乎看不见; 背景与文本框都必须被纯黑底盖住。
+    require_channel_range(covered.frame, width / 2, height / 2, 0, 4);
+
+    // 去掉 intro 后同一时刻能看到亮背景 —— 证明上面的黑色来自 intro。
+    auto without = plan;
+    without.intros.clear();
+    const auto visible = render_one(without, 200'000, 1);
+    REQUIRE(visible.status == RenderStatus::Ok);
+    require_channel_range(visible.frame, width / 2, height / 2, 180, 220);
 }

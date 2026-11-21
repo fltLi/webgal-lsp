@@ -48,6 +48,14 @@ typedef enum WebgalAudioKind {
     WEBGAL_AUDIO_VIDEO = 3
 } WebgalAudioKind;
 
+/* 屏幕特效类型 (对应脚本 `pixiPerform` 的参数)。 */
+typedef enum WebgalParticleKind {
+    WEBGAL_PARTICLE_SNOW = 0,
+    WEBGAL_PARTICLE_HEAVY_SNOW = 1,
+    WEBGAL_PARTICLE_RAIN = 2,
+    WEBGAL_PARTICLE_CHERRY_BLOSSOMS = 3
+} WebgalParticleKind;
+
 /* 与 webgal-language-core 的 Transform 渲染子集对应; 缺省值见 webgal_transform_default。 */
 typedef struct WebgalTransform {
     float x;
@@ -216,6 +224,10 @@ int webgal_probe_audio_duration(const char* path, uint64_t* duration_us, char* e
 int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, int has_end,
                           const char* path, int kind, float volume, int loop, uint32_t fade_in_ms,
                           uint32_t fade_out_ms);
+
+/* 屏幕特效段 (雪/雨/樱); has_end 为 0 时持续到片尾。kind 见 WebgalParticleKind。 */
+int webgal_plan_add_particle(WebgalPlan* plan, int kind, uint64_t start_us, int has_end,
+                             uint64_t end_us);
 
 /* ---------------- 执行导出 ---------------- */
 

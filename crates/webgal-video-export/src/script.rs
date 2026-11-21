@@ -2,11 +2,13 @@
 
 //! 脚本检查与时间线编译。
 
+pub use animation::{AnimationFrame, AnimationLibrary};
 pub use decision::ChoicePolicy;
 pub use timeline::{StartOptions, compile, compile_with};
 pub use timing::Timing;
 pub use validate::{Inspection, Issue, ProjectInfo, SceneReport, Severity, Stats, inspect};
 
+mod animation;
 mod decision;
 mod live2d;
 mod timeline;

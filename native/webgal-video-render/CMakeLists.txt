@@ -33,7 +33,7 @@ endif()
 
 # ---- shader: glslc -> .spv -> 构建期生成的 C++ 字节数组 ----
 
-set(WEBGAL_SHADER_NAMES quad.vert quad.frag filter.frag)
+set(WEBGAL_SHADER_NAMES quad.vert quad.frag filter.frag particle.vert particle.frag)
 set(WEBGAL_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 set(WEBGAL_SHADER_OUTPUTS)
 foreach(shader IN LISTS WEBGAL_SHADER_NAMES)

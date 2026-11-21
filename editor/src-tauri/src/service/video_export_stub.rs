@@ -35,7 +35,6 @@ pub struct VideoProjectInfo {
     pub start_scene: String,
     pub stage_width: u32,
     pub stage_height: u32,
-    pub webgal_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -93,10 +93,141 @@ struct Vertex {
     float mask_v;
 };
 
+/// 屏幕特效顶点: 位置 (NDC) + uv + 该颗粒子的 alpha。
+struct ParticleVertex {
+    float x;
+    float y;
+    float u;
+    float v;
+    float alpha;
+};
+
+/// 一层粒子的参数; 数据来自引擎 `gameScripts/pixi/performs/*` 的 `registerPerform`。
+struct ParticleLayer {
+    std::uint32_t count = 0;
+    float speed = 1.0F;
+    /// 横向摆动幅度 (樱花) 或固定 0。
+    float horizontal = 0.0F;
+    float scale = 1.0F;
+    /// 整个粒子容器的旋转角 (度)。
+    float angle_deg = 0.0F;
+    float alpha_min = 1.0F;
+    float alpha_max = 1.0F;
+};
+
+/// 一种屏幕特效: 前景/背景两层 + 贴图信息。
+struct ParticleStyle {
+    ParticleLayer foreground;
+    ParticleLayer background;
+    /// 贴图里的帧数 (横向排列), 每帧 `frame_w` × `frame_h`。
+    int frames = 1;
+    int frame_w = 1;
+    int frame_h = 1;
+    const int* weights = nullptr;
+    int weight_count = 0;
+};
+
+constexpr int kSnowWeights[] = {10, 2, 2, 2, 1, 1, 1, 2, 2, 2};
+constexpr int kRainWeights[] = {10, 5, 2, 2, 1};
+
+/// 与 `job::ParticleKind` 一一对应; 数值取自引擎的四个 `registerPerform`。
+const ParticleStyle kParticleStyles[] = {
+    // snow: fg 250 / 3 / 0.4 / 0°, bg 750 / 1 / 0.2 / 0°
+    {{250, 3.0F, 0.0F, 0.4F, 0.0F, 0.8F, 1.0F},
+     {750, 1.0F, 0.0F, 0.2F, 0.0F, 0.8F, 1.0F},
+     10,
+     128,
+     128,
+     kSnowWeights,
+     10},
+    // heavySnow: fg 1000 / 20 / 0.6 / -75°, bg 2000 / 10 / 0.3 / -80°
+    {{1000, 20.0F, 0.0F, 0.6F, -75.0F, 0.8F, 1.0F},
+     {2000, 10.0F, 0.0F, 0.3F, -80.0F, 0.8F, 1.0F},
+     10,
+     128,
+     128,
+     kSnowWeights,
+     10},
+    // rain: fg 50 / 30 / 0.4 / 1°, bg 150 / 20 / 0.3 / 1°
+    {{50, 30.0F, 0.0F, 0.4F, 1.0F, 0.5F, 1.0F},
+     {150, 20.0F, 0.0F, 0.3F, 1.0F, 0.5F, 1.0F},
+     5,
+     128,
+     640,
+     kRainWeights,
+     5},
+    // cherryBlossoms: fg 100 / 2 / 3 / 0.05 / 0°, bg 300 / 1 / 2 / 0.025 / 0°
+    {{100, 2.0F, 3.0F, 0.05F, 0.0F, 1.0F, 1.0F},
+     {300, 1.0F, 2.0F, 0.025F, 0.0F, 1.0F, 1.0F},
+     1,
+     529,
+     678,
+     nullptr,
+     0},
+};
+
+/// 引擎舞台的设计尺寸: 粒子参数全部按这个坐标系书写 (`SCREEN_CONSTANTS`)。
+constexpr float kDesignWidth = 2560.0F;
+constexpr float kDesignHeight = 1440.0F;
+
+/// splitmix64: 导出必须可复现, 所以每颗粒子的随机量都由 (kind, layer, index) 决定,
+/// 不用 `std::random_device` / 时间。
+std::uint64_t particle_hash(std::uint64_t state) {
+    state += 0x9E3779B97F4A7C15ULL;
+    std::uint64_t value = state;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    return value ^ (value >> 31);
+}
+
+float particle_unit(std::uint64_t& state) {
+    state = particle_hash(state);
+    return static_cast<float>(state >> 40) / 16777216.0F;
+}
+
+float particle_range(std::uint64_t& state, float low, float high) {
+    return low + particle_unit(state) * (high - low);
+}
+
+int particle_frame(std::uint64_t& state, const ParticleStyle& style) {
+    if (style.frames <= 1 || style.weights == nullptr || style.weight_count <= 0) {
+        return 0;
+    }
+    int total = 0;
+    for (int index = 0; index < style.weight_count; ++index) {
+        total += style.weights[index];
+    }
+    if (total <= 0) {
+        return 0;
+    }
+    float pick = particle_unit(state) * static_cast<float>(total);
+    for (int index = 0; index < style.weight_count; ++index) {
+        pick -= static_cast<float>(style.weights[index]);
+        if (pick < 0.0F) {
+            return index;
+        }
+    }
+    return style.weight_count - 1;
+}
+
+/// 把值绕回 [low, low + span) ; span <= 0 时原样返回。
+float particle_wrap(float value, float low, float span) {
+    if (span <= 0.0F) {
+        return value;
+    }
+    float offset = std::fmod(value - low, span);
+    if (offset < 0.0F) {
+        offset += span;
+    }
+    return low + offset;
+}
+
 struct DrawItem {
     VkDescriptorSet descriptor = VK_NULL_HANDLE;
     /// 贴图是单通道覆盖率 (文字图集) 时置位, 片元着色器据此只取 R 通道当 alpha。
     bool coverage_only = false;
+    /// `true` 时无视"关闭舞台滤镜"开关照跑滤镜链: intro 的模糊属于演出本身, 不是舞台滤镜。
+    bool force_blur = false;
     /// 一个批次可以包含多个 quad; 文字按样式合并后 items 从数千降到几个。
     std::vector<Vertex> vertices;
     /// 上传到顶点缓冲后的起始偏移（字节），避免再假设固定 6 个顶点。
@@ -850,6 +981,13 @@ class Renderer {
     bool upload_pixels(std::uint32_t width, std::uint32_t height,
                        const std::vector<std::uint8_t>& pixels, GpuImage& gpu, std::string& error,
                        VkFormat format = VK_FORMAT_R8G8B8A8_UNORM);
+    /// 内嵌的雪花/雨滴/樱花贴图。
+    bool create_particle_textures(std::string& error);
+    /// 按需扩大粒子顶点缓冲 (host visible, 长期映射)。
+    bool ensure_particle_buffer(VkDeviceSize bytes, std::string& error);
+    /// 画一层粒子; `foreground` 决定用前景还是背景参数。
+    bool draw_particles(const job::Plan& plan, std::uint64_t t_us, bool foreground,
+                        std::string& error);
     bool update_video_pixels(std::uint32_t width, std::uint32_t height,
                              const std::vector<std::uint8_t>& pixels, std::string& error);
 
@@ -921,8 +1059,9 @@ class Renderer {
     void push_constants_mask(const job::Transform& transform, float min_u, float min_v,
                              float size_u, float size_v);
     /// 由变换里的滤镜字段生成 pass 列表; 顺序与 WebGAL 的滤镜优先级一致。
-    std::vector<FilterStep> build_filter_chain(const job::Transform& transform,
-                                               std::uint64_t t_us) const;
+    /// `force` 用于演出自带的模糊 (intro `pixelateEffect`): 它不该被"关闭舞台滤镜"关掉。
+    std::vector<FilterStep> build_filter_chain(const job::Transform& transform, std::uint64_t t_us,
+                                               bool force = false) const;
     /// 写入一个滤镜 pass 的 push constants; 与 `PushConstants` 共用 128 字节。
     void push_filter_constants(const FilterStep& step);
     void draw_quad(VkDeviceSize offset, std::uint32_t vertex_count, VkDescriptorSet descriptor);
@@ -1048,6 +1187,18 @@ class Renderer {
     /// 构建期内嵌的 SMAA LUT: area 160×560 (双通道) 与 search 66×33 (单通道)。
     GpuImage smaa_area_;
     GpuImage smaa_search_;
+    /// 屏幕特效 (`pixiPerform`): 三张贴图 + 专用管道与顶点缓冲。
+    VkPipeline pipeline_particles_ = VK_NULL_HANDLE;
+    GpuImage particle_snow_;
+    GpuImage particle_rain_;
+    GpuImage particle_cherry_;
+    std::vector<ParticleVertex> particle_vertices_;
+    VkBuffer particle_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory particle_memory_ = VK_NULL_HANDLE;
+    void* particle_mapped_ = nullptr;
+    VkDeviceSize particle_capacity_ = 0;
+    /// 本帧 `items_` 里背景四边形的数量 (粒子插在背景与立绘之间)。
+    std::size_t background_item_count_ = 0;
     VkShaderModule vertex_shader_ = VK_NULL_HANDLE;
     VkShaderModule fragment_shader_ = VK_NULL_HANDLE;
 
@@ -2192,6 +2343,212 @@ bool Renderer::create_smaa_luts(std::string& error) {
     return true;
 }
 
+bool Renderer::create_particle_textures(std::string& error) {
+    // 贴图来自 WebGAL 引擎的 `src/assets/tex/` (MPL-2.0), 构建期内嵌;
+    // 樱花原图是 webp, stb_image 不解 webp, 所以开发期转成了 PNG (见 assets/ 目录)。
+    struct Spec {
+        const char* name;
+        GpuImage* image;
+    };
+    const Spec specs[] = {
+        {"particle_snow.png", &particle_snow_},
+        {"particle_rain.png", &particle_rain_},
+        {"particle_cherry.png", &particle_cherry_},
+    };
+    for (const auto& spec : specs) {
+        const assets::EmbeddedAsset* asset = assets::find(spec.name);
+        if (asset == nullptr) {
+            error = std::string("缺少内嵌素材: ") + spec.name;
+            return false;
+        }
+        media::Image decoded;
+        if (!media::decode_image_bytes(asset->data, asset->size, decoded, error)) {
+            return false;
+        }
+        if (!upload_pixels(decoded.width, decoded.height, decoded.pixels, *spec.image, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Renderer::ensure_particle_buffer(VkDeviceSize bytes, std::string& error) {
+    if (particle_buffer_ != VK_NULL_HANDLE && particle_capacity_ >= bytes) {
+        return true;
+    }
+    if (particle_mapped_ != nullptr) {
+        vkUnmapMemory(device_, particle_memory_);
+        particle_mapped_ = nullptr;
+    }
+    if (particle_buffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, particle_buffer_, nullptr);
+        particle_buffer_ = VK_NULL_HANDLE;
+    }
+    if (particle_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, particle_memory_, nullptr);
+        particle_memory_ = VK_NULL_HANDLE;
+    }
+    particle_capacity_ = 0;
+    // 一次分配够几千颗粒子, 之后只在爆炸式增长时重建。
+    const VkDeviceSize capacity = std::max<VkDeviceSize>(bytes, 512 * 1024);
+    if (!create_buffer(capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       particle_buffer_, particle_memory_, error)) {
+        return false;
+    }
+    if (!ok(vkMapMemory(device_, particle_memory_, 0, capacity, 0, &particle_mapped_),
+            "映射粒子顶点缓冲", error)) {
+        return false;
+    }
+    particle_capacity_ = capacity;
+    return true;
+}
+
+bool Renderer::draw_particles(const job::Plan& plan, std::uint64_t t_us, bool foreground,
+                              std::string& error) {
+    if (plan.particles.empty() || pipeline_particles_ == VK_NULL_HANDLE) {
+        return true;
+    }
+    struct Batch {
+        std::size_t first = 0;
+        std::size_t count = 0;
+        VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    };
+    std::vector<Batch> batches;
+    particle_vertices_.clear();
+    constexpr float kTau = 6.28318530718F;
+
+    for (const auto& segment : plan.particles) {
+        if (t_us < segment.start_us) {
+            continue;
+        }
+        if (segment.end_us && t_us >= *segment.end_us) {
+            continue;
+        }
+        const auto kind = static_cast<std::size_t>(segment.kind);
+        if (kind >= std::size(kParticleStyles)) {
+            continue;
+        }
+        const ParticleStyle& style = kParticleStyles[kind];
+        const ParticleLayer& layer = foreground ? style.foreground : style.background;
+        GpuImage* texture = &particle_snow_;
+        if (segment.kind == job::ParticleKind::Rain) {
+            texture = &particle_rain_;
+        } else if (segment.kind == job::ParticleKind::CherryBlossoms) {
+            texture = &particle_cherry_;
+        }
+        if (texture->descriptor == VK_NULL_HANDLE || layer.count == 0) {
+            continue;
+        }
+
+        const float elapsed = static_cast<float>(t_us - segment.start_us) / 1000000.0F;
+        // 引擎的 ticker 以 60fps 为基准, 速度按"帧"累加。
+        const float delta = elapsed * 60.0F;
+        const float angle = layer.angle_deg * kTau / 360.0F;
+        const float cos_angle = std::cos(angle);
+        const float sin_angle = std::sin(angle);
+        const float texture_w = static_cast<float>(texture->width);
+        const float frame_w = static_cast<float>(style.frame_w);
+        const float frame_h = static_cast<float>(style.frame_h);
+        const float span_x = kDesignWidth + 2.0F * frame_w;
+        const float span_y = kDesignHeight + 2.0F * frame_h;
+        const bool cherry = segment.kind == job::ParticleKind::CherryBlossoms;
+
+        Batch batch;
+        batch.first = particle_vertices_.size();
+        batch.descriptor = texture->descriptor;
+        for (std::uint32_t index = 0; index < layer.count; ++index) {
+            // 每颗粒子的随机量只由 (类型, 层, 序号) 决定: 同一帧永远渲染出同一结果。
+            std::uint64_t rng = 0x5EED0000ULL ^ (static_cast<std::uint64_t>(kind) * 7919ULL +
+                                                 (foreground ? 1ULL : 2ULL) * 104729ULL + index);
+            const float scale = layer.scale * particle_range(rng, 0.5F, 1.0F);
+            const float start_x = particle_unit(rng) * kDesignWidth;
+            const float start_y = particle_unit(rng) * kDesignHeight;
+            const float alpha = particle_range(rng, layer.alpha_min, layer.alpha_max);
+            const float vy = particle_range(rng, 0.8F, 1.2F) * layer.speed;
+            const float vx = (particle_unit(rng) - 0.5F) * 0.25F * layer.speed;
+            const float spin = (particle_unit(rng) - 0.5F) * 0.005F;
+            const float rotation = particle_unit(rng) * kTau + spin * delta;
+            const int frame = particle_frame(rng, style);
+
+            float center_x = start_x;
+            float center_y = start_y;
+            float half_w = 0.5F * frame_w * scale;
+            float half_h = 0.5F * frame_h * scale;
+            if (cherry) {
+                // 樱花瓣: 绝对时间驱动的横向摆动 + 非等比缩放 (翻转), 与引擎的
+                // `Math.sin(Date.now()/1000 + phase)` 同构, 只是用视频时间代替墙钟。
+                const float phase = particle_unit(rng) * kTau;
+                const float scale_phase = particle_unit(rng) * kTau;
+                const float fall =
+                    (particle_range(rng, 0.5F, 2.0F) + particle_range(rng, 0.1F, 1.0F)) *
+                    layer.speed;
+                center_y = particle_wrap(start_y + fall * delta, -frame_h, span_y);
+                center_x = start_x + layer.horizontal * 20.0F * std::sin(elapsed + phase);
+                half_w = 0.5F * frame_w * std::cos(elapsed + scale_phase) * layer.scale;
+                half_h = 0.5F * frame_h * std::sin(elapsed + scale_phase) * layer.scale;
+            } else {
+                center_y = particle_wrap(start_y + vy * delta, -frame_h, span_y);
+                center_x = particle_wrap(start_x + vx * delta, -frame_w, span_x);
+            }
+
+            // 整个粒子容器绕舞台中心旋转 (引擎用 `container.angle` + pivot 居中)。
+            const float local_x = center_x - kDesignWidth * 0.5F;
+            const float local_y = center_y - kDesignHeight * 0.5F;
+            const float placed_x = local_x * cos_angle - local_y * sin_angle + kDesignWidth * 0.5F;
+            const float placed_y = local_x * sin_angle + local_y * cos_angle + kDesignHeight * 0.5F;
+
+            const float cos_rot = std::cos(rotation);
+            const float sin_rot = std::sin(rotation);
+            const float u0 = static_cast<float>(frame) * frame_w / texture_w;
+            const float u1 = static_cast<float>(frame + 1) * frame_w / texture_w;
+            const float corner_x[4] = {-half_w, half_w, half_w, -half_w};
+            const float corner_y[4] = {-half_h, -half_h, half_h, half_h};
+            const float corner_u[4] = {u0, u1, u1, u0};
+            const float corner_v[4] = {0.0F, 0.0F, 1.0F, 1.0F};
+            ParticleVertex quad[4];
+            for (int corner = 0; corner < 4; ++corner) {
+                const float x = corner_x[corner] * cos_rot - corner_y[corner] * sin_rot;
+                const float y = corner_x[corner] * sin_rot + corner_y[corner] * cos_rot;
+                const float stage_x = placed_x + x;
+                const float stage_y = placed_y + y;
+                quad[corner].x = stage_x / kDesignWidth * 2.0F - 1.0F;
+                quad[corner].y = 1.0F - stage_y / kDesignHeight * 2.0F;
+                quad[corner].u = corner_u[corner];
+                quad[corner].v = corner_v[corner];
+                quad[corner].alpha = alpha;
+            }
+            const int order[6] = {0, 1, 2, 0, 2, 3};
+            for (const int corner : order) {
+                particle_vertices_.push_back(quad[corner]);
+            }
+        }
+        batch.count = particle_vertices_.size() - batch.first;
+        if (batch.count > 0) {
+            batches.push_back(batch);
+        }
+    }
+    if (batches.empty()) {
+        return true;
+    }
+
+    const VkDeviceSize bytes =
+        static_cast<VkDeviceSize>(particle_vertices_.size()) * sizeof(ParticleVertex);
+    if (!ensure_particle_buffer(bytes, error)) {
+        return false;
+    }
+    std::memcpy(particle_mapped_, particle_vertices_.data(), static_cast<std::size_t>(bytes));
+    for (const auto& batch : batches) {
+        const VkDeviceSize offset = static_cast<VkDeviceSize>(batch.first) * sizeof(ParticleVertex);
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_particles_);
+        vkCmdBindDescriptorSets(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                                &batch.descriptor, 0, nullptr);
+        vkCmdBindVertexBuffers(command_, 0, 1, &particle_buffer_, &offset);
+        vkCmdDraw(command_, static_cast<std::uint32_t>(batch.count), 1, 0, 0);
+    }
+    return true;
+}
+
 void Renderer::write_input_descriptors(VkDescriptorSet set, VkImageView first, VkImageView second) {
     VkDescriptorImageInfo infos[4]{};
     const VkImageView views[4] = {first, second, smaa_area_.view, smaa_search_.view};
@@ -2268,6 +2625,9 @@ bool Renderer::create_descriptors(std::string& error) {
         return false;
     }
     if (!create_smaa_luts(error)) {
+        return false;
+    }
+    if (!create_particle_textures(error)) {
         return false;
     }
 
@@ -2508,6 +2868,72 @@ bool Renderer::create_pipeline(std::string& error) {
                                       &pipeline_overlay_),
             "创建叠层 pipeline", error)) {
         return false;
+    }
+
+    // ---- 屏幕特效 (粒子): 每颗粒子自带 alpha, 单独一套顶点格式 ----
+    {
+        const auto* particle_vertex_code = shaders::find("particle.vert");
+        const auto* particle_fragment_code = shaders::find("particle.frag");
+        if (particle_vertex_code == nullptr || particle_fragment_code == nullptr) {
+            error = "缺少内嵌 shader: particle.vert / particle.frag";
+            return false;
+        }
+        VkShaderModule particle_vertex = VK_NULL_HANDLE;
+        VkShaderModule particle_fragment = VK_NULL_HANDLE;
+        VkShaderModuleCreateInfo particle_module{};
+        particle_module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        particle_module.codeSize = particle_vertex_code->size;
+        particle_module.pCode = reinterpret_cast<const std::uint32_t*>(particle_vertex_code->data);
+        if (!ok(vkCreateShaderModule(device_, &particle_module, nullptr, &particle_vertex),
+                "创建粒子 vertex shader", error)) {
+            return false;
+        }
+        particle_module.codeSize = particle_fragment_code->size;
+        particle_module.pCode =
+            reinterpret_cast<const std::uint32_t*>(particle_fragment_code->data);
+        if (!ok(vkCreateShaderModule(device_, &particle_module, nullptr, &particle_fragment),
+                "创建粒子 fragment shader", error)) {
+            vkDestroyShaderModule(device_, particle_vertex, nullptr);
+            return false;
+        }
+        VkPipelineShaderStageCreateInfo particle_stages[2] = {
+            shader_stage(particle_vertex, VK_SHADER_STAGE_VERTEX_BIT),
+            shader_stage(particle_fragment, VK_SHADER_STAGE_FRAGMENT_BIT),
+        };
+        VkVertexInputBindingDescription particle_binding{};
+        particle_binding.binding = 0;
+        particle_binding.stride = sizeof(ParticleVertex);
+        particle_binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        VkVertexInputAttributeDescription particle_attributes[3]{};
+        particle_attributes[0].location = 0;
+        particle_attributes[0].binding = 0;
+        particle_attributes[0].format = VK_FORMAT_R32G32_SFLOAT;
+        particle_attributes[0].offset = offsetof(ParticleVertex, x);
+        particle_attributes[1].location = 1;
+        particle_attributes[1].binding = 0;
+        particle_attributes[1].format = VK_FORMAT_R32G32_SFLOAT;
+        particle_attributes[1].offset = offsetof(ParticleVertex, u);
+        particle_attributes[2].location = 2;
+        particle_attributes[2].binding = 0;
+        particle_attributes[2].format = VK_FORMAT_R32_SFLOAT;
+        particle_attributes[2].offset = offsetof(ParticleVertex, alpha);
+        VkPipelineVertexInputStateCreateInfo particle_input = vertex_input;
+        particle_input.pVertexBindingDescriptions = &particle_binding;
+        particle_input.pVertexAttributeDescriptions = particle_attributes;
+        VkGraphicsPipelineCreateInfo particle_info = info;
+        particle_info.pStages = particle_stages;
+        particle_info.pVertexInputState = &particle_input;
+        particle_info.pDepthStencilState = &normal_depth;
+        particle_info.pColorBlendState = &color_blend;
+        if (!ok(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &particle_info, nullptr,
+                                          &pipeline_particles_),
+                "创建粒子 pipeline", error)) {
+            vkDestroyShaderModule(device_, particle_vertex, nullptr);
+            vkDestroyShaderModule(device_, particle_fragment, nullptr);
+            return false;
+        }
+        vkDestroyShaderModule(device_, particle_vertex, nullptr);
+        vkDestroyShaderModule(device_, particle_fragment, nullptr);
     }
 
     // ---- 滤镜链: 同一个片元模块, 用 specialization constant 选 pass 类型 ----
@@ -3448,6 +3874,15 @@ float ease_progress(const std::string& name, float progress) {
                    : (std::sqrt(std::max(0.0F, 1.0F - std::pow(-2.0F * t + 2.0F, 2.0F))) + 1.0F) *
                          0.5F;
     }
+    // `setComplexAnimation` 的 universalSoftIn / universalSoftOff 用 `1-(1-p)^3` / `p^3`
+    // (引擎的 `tickerFunc`), 与脚本 `-ease` 的取值集不重叠, 只出现在程序化动画里。
+    if (name == "cubicIn") {
+        return t * t * t;
+    }
+    if (name == "cubicOut") {
+        const float inverse = 1.0F - t;
+        return 1.0F - inverse * inverse * inverse;
+    }
     constexpr float kBack = 1.70158F;
     constexpr float kBackSum = 2.70158F;
     if (name == "backIn") {
@@ -3574,13 +4009,20 @@ std::vector<job::BackgroundKey> Renderer::background_layers(const job::Plan& pla
     }
 
     const std::size_t index = key_index_at(plan.background, t_us);
+    // 一段动画会把同一张背景写成多个关键帧; 旧背景的 ghost 要从这段的第一个
+    // 关键帧算起, 否则它会被"上一帧还是同一张图"挡掉, 换图变成硬切。
+    std::size_t start = index;
+    while (start > 0 && plan.background[start - 1].asset == current->asset) {
+        --start;
+    }
     std::vector<job::BackgroundKey> layers;
-    if (index > 0) {
-        const auto& previous = plan.background[index - 1];
+    if (start > 0) {
+        const auto& previous = plan.background[start - 1];
+        const std::uint64_t switch_us = plan.background[start].t_us;
         if (previous.asset && previous.asset != current->asset &&
-            t_us < current->t_us + previous.exit_ms * 1000ULL) {
+            t_us < switch_us + previous.exit_ms * 1000ULL) {
             auto old = previous;
-            const float elapsed = static_cast<float>(t_us - current->t_us);
+            const float elapsed = static_cast<float>(t_us - switch_us);
             const float span = static_cast<float>(previous.exit_ms * 1000ULL);
             old.alpha *= std::clamp(1.0F - elapsed / std::max<float>(span, 1.0F), 0.0F, 1.0F);
             layers.push_back(old);
@@ -3597,16 +4039,28 @@ std::vector<job::FigureKey> Renderer::figure_layers(const job::FigureTrack& trac
         return {};
     }
 
-    const auto& current_key = track.keys[index];
+    // 同背景: 同一立绘的动画关键帧属于同一层, 退场 ghost 从这段的起点算起。
+    std::size_t start = index;
+    while (start > 0) {
+        const auto& key = track.keys[start];
+        const auto& previous = track.keys[start - 1];
+        if (!key.visible || !previous.visible || key.figure_switch || previous.asset != key.asset ||
+            previous.live2d != key.live2d) {
+            break;
+        }
+        --start;
+    }
     std::vector<job::FigureKey> layers;
-    if (index > 0) {
-        const auto& previous = track.keys[index - 1];
-        if ((previous.asset || previous.live2d) &&
-            (previous.asset != current_key.asset || previous.live2d != current_key.live2d ||
-             current_key.figure_switch) &&
-            t_us < current_key.t_us + previous.exit_ms * 1000ULL) {
+    if (start > 0) {
+        const auto& previous = track.keys[start - 1];
+        const auto& first = track.keys[start];
+        const std::uint64_t switch_us = first.t_us;
+        if (previous.visible && (previous.asset || previous.live2d) &&
+            (previous.asset != first.asset || previous.live2d != first.live2d ||
+             first.figure_switch) &&
+            t_us < switch_us + previous.exit_ms * 1000ULL) {
             auto old = previous;
-            const float elapsed = static_cast<float>(t_us - current_key.t_us);
+            const float elapsed = static_cast<float>(t_us - switch_us);
             const float span = static_cast<float>(previous.exit_ms * 1000ULL);
             old.alpha *= std::clamp(1.0F - elapsed / std::max<float>(span, 1.0F), 0.0F, 1.0F);
             layers.push_back(old);
@@ -3978,9 +4432,9 @@ void Renderer::push_constants_mask(const job::Transform& transform, float min_u,
 }
 
 std::vector<FilterStep> Renderer::build_filter_chain(const job::Transform& transform,
-                                                     std::uint64_t t_us) const {
+                                                     std::uint64_t t_us, bool force) const {
     std::vector<FilterStep> steps;
-    if (disable_filters_) {
+    if (disable_filters_ && !force) {
         return steps;
     }
     // 引擎的参数都以**输出**像素为单位; SSAA 时渲染尺寸是两倍, 像素量要一起放大,
@@ -4304,6 +4758,8 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     }
 
     const job::TextSegment* active_text = nullptr;
+    // 屏幕特效要插在背景与立绘之间 (引擎的层序: 背景 0 < 背景粒子 1 < 立绘 2 < 前景粒子 3)。
+    background_item_count_ = items.size();
     if (plan.ui_enabled) {
         for (const auto& segment : plan.texts) {
             if (t_us >= segment.start_us && (segment.end_us == 0 || t_us <= segment.end_us)) {
@@ -4347,7 +4803,6 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
             items.push_back(std::move(item));
         }
     }
-    const std::size_t scene_item_count = items.size();
     const auto live2d_finished = std::chrono::steady_clock::now();
 
     const auto add_rect = [&](float x, float y, float width, float height, float red, float green,
@@ -4365,8 +4820,58 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         items.push_back(std::move(item));
     };
 
+    // `pixelateEffect` 的 intro 需要跑模糊滤镜链, 而滤镜链的目标固定是舞台目标 —— UI 叠层在
+    // SSAA/MSAA 下画在输出目标上, 没法接。所以这种 intro 放在场景 pass 里 (所有舞台内容之后),
+    // 代价是它必须自己压掉文本框与选项; intro 的纯黑底本来就会盖住它们, 画面与引擎一致。
+    // 其余四种 intro 动画仍在 UI 叠层里画, 保持"文字不经过抗锯齿"。
+    const job::IntroSegment* intro_now = nullptr;
+    if (plan.ui_enabled) {
+        for (const auto& intro : plan.intros) {
+            if (t_us >= intro.start_us && (intro.end_us == 0 || t_us <= intro.end_us)) {
+                intro_now = &intro;
+                break;
+            }
+        }
+    }
+    const bool intro_covers_stage =
+        intro_now != nullptr && intro_now->animation == "pixelateEffect";
+    if (intro_covers_stage) {
+        add_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
+                 0.0F, 1.0F);
+        const float percent = intro_now->font_size == "small"
+                                  ? 280.0F
+                                  : (intro_now->font_size == "large" ? 420.0F : 350.0F);
+        const int intro_size =
+            std::max(12, static_cast<int>(std::lround(25.6F * percent / 100.0F * ui_style_.scale *
+                                                      ui_font_scale_)));
+        const float left = 4.0F * static_cast<float>(intro_size);
+        const std::array<float, 4> intro_color{1.0F, 1.0F, 1.0F, 1.0F};
+        // 引擎的 `pixelateAnimation` 是 3s: opacity 0→1 线性, filter blur 0→5px→0 (50% 峰值)。
+        const float elapsed =
+            static_cast<float>(elapsed_us(t_us, intro_now->start_us)) / 1000000.0F;
+        const float opacity = std::clamp(elapsed / 3.0F, 0.0F, 1.0F);
+        const float half = std::clamp(elapsed / 1.5F, 0.0F, 2.0F);
+        const float ramp = half < 1.0F ? half : 2.0F - half;
+        // 5 CSS px 按舞台宽度换算; 滤镜链的半径单位是输出像素, 与舞台一致。
+        const float blur = 5.0F * ui_style_.scale * ramp;
+        const std::size_t text_begin = items.size();
+        float baseline =
+            3.0F * static_cast<float>(intro_size) + 0.80F * static_cast<float>(intro_size);
+        for (const auto& line : intro_now->lines) {
+            std::size_t revealed = 0;
+            append_text(items, line, left, baseline, intro_size, opacity, revealed,
+                        std::numeric_limits<std::size_t>::max(), intro_color, false, 0.0F, false);
+            baseline += 1.2F * static_cast<float>(intro_size);
+        }
+        for (std::size_t index = text_begin; index < items.size(); ++index) {
+            items[index].transform.blur = blur;
+            items[index].force_blur = true;
+        }
+    }
+    const std::size_t scene_item_count = items.size();
+
     const auto text_started = std::chrono::steady_clock::now();
-    if (active_text != nullptr) {
+    if (active_text != nullptr && !intro_covers_stage) {
         const std::uint64_t elapsed =
             t_us >= active_text->start_us ? t_us - active_text->start_us : 0;
         const std::size_t all = std::numeric_limits<std::size_t>::max();
@@ -4496,7 +5001,7 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     }
 
     for (const auto& choice : plan.choices) {
-        if (!plan.ui_enabled || t_us < choice.start_us ||
+        if (!plan.ui_enabled || intro_covers_stage || t_us < choice.start_us ||
             (choice.end_us != 0 && t_us > choice.end_us) || choice.options.empty()) {
             continue;
         }
@@ -4541,6 +5046,10 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
             (intro.end_us != 0 && t_us > intro.end_us)) {
             continue;
         }
+        // 像素化 intro 已经在场景 pass 里画过 (见上面 intro_covers_stage)。
+        if (intro.animation == "pixelateEffect") {
+            continue;
+        }
         // 引擎的 intro: 纯黑底 + 内边距 3em/4em, 文字逐行**左对齐**; 字号是 medium 350%。
         add_rect(0.0F, 0.0F, static_cast<float>(stage_w_), static_cast<float>(stage_h_), 0.0F, 0.0F,
                  0.0F, 1.0F);
@@ -4551,12 +5060,33 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
                                                       ui_font_scale_)));
         const float left = 4.0F * static_cast<float>(intro_size);
         const std::array<float, 4> intro_color{1.0F, 1.0F, 1.0F, 1.0F};
+        // 引擎的 intro 是 DOM CSS 动画: fadeIn 1.5s ease-out 淡入, slideIn 1.5s 从左滑入。
+        // typingEffect / revealAnimation 也在这里画; pixelateEffect 在场景 pass 里另画 (要跑
+        // 模糊滤镜链), 上面已经 continue。
+        const float elapsed = static_cast<float>(elapsed_us(t_us, intro.start_us)) / 1000000.0F;
+        const float progress = std::clamp(elapsed / 1.5F, 0.0F, 1.0F);
+        float intro_alpha = 1.0F;
+        float slide = 0.0F;
+        if (intro.animation == "fadeIn") {
+            intro_alpha = progress;
+        } else if (intro.animation == "slideIn") {
+            slide = -(1.0F - progress) * static_cast<float>(stage_w_);
+        }
         float baseline =
             3.0F * static_cast<float>(intro_size) + 0.80F * static_cast<float>(intro_size);
         for (const auto& line : intro.lines) {
             std::size_t revealed = 0;
-            append_text(items, line, left, baseline, intro_size, 1.0F, revealed,
-                        std::numeric_limits<std::size_t>::max(), intro_color, false, 0.0F, false);
+            std::size_t reveal_count = std::numeric_limits<std::size_t>::max();
+            if (intro.animation == "typingEffect") {
+                // 引擎的 typingEffect 是 1.5s 逐字打出 (还带一个闪烁光标, 光标没做)。
+                reveal_count = static_cast<std::size_t>(progress * static_cast<float>(line.size()));
+            } else if (intro.animation == "revealAnimation") {
+                // 引擎是 3s 的 clip-path 从左展开; 这里按字数从左往右揭开, 观感接近。
+                const float reveal = std::clamp(elapsed / 3.0F, 0.0F, 1.0F);
+                reveal_count = static_cast<std::size_t>(reveal * static_cast<float>(line.size()));
+            }
+            append_text(items, line, left + slide, baseline, intro_size, intro_alpha, revealed,
+                        reveal_count, intro_color, false, 0.0F, false);
             baseline += 1.2F * static_cast<float>(intro_size);
         }
     }
@@ -4986,7 +5516,8 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layer_);
         // 层里保持 1.0 alpha: 引擎把容器 alpha 放在滤镜链最后, 泛光不该被淡入淡出压暗。
         push_constants(items[index].transform, 1.0F, false, nullptr, nullptr, false,
-                       items[index].radius, items[index].width, items[index].height, 2.0F);
+                       items[index].radius, items[index].width, items[index].height, 2.0F,
+                       items[index].coverage_only);
         draw_item(index);
         end_layer_pass();
     };
@@ -5243,25 +5774,47 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     }
 
     begin_pass(VK_ATTACHMENT_LOAD_OP_CLEAR);
-    for (std::size_t index = 0; index < scene_item_count; ++index) {
-        const auto& item = items[index];
-        const auto chain = build_filter_chain(item.transform, t_us);
-        if (chain.empty()) {
-            push_constants(item.transform, item.alpha, false, nullptr, nullptr, false, item.radius,
-                           item.width, item.height);
-            draw_item(index);
-            continue;
+    const auto draw_scene_items = [&](std::size_t from, std::size_t to) -> bool {
+        for (std::size_t index = from; index < to; ++index) {
+            const auto& item = items[index];
+            const auto chain = build_filter_chain(item.transform, t_us, item.force_blur);
+            if (chain.empty()) {
+                // `draw_item` 只绑描述符与顶点缓冲, 管道由调用方负责; 粒子 pass 会换管道,
+                // 所以这里每次都重新绑一次 (两次绑定可以忽略不计)。
+                vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+                push_constants(item.transform, item.alpha, false, nullptr, nullptr, false,
+                               item.radius, item.width, item.height);
+                draw_item(index);
+                continue;
+            }
+            // 有滤镜: 先画进离屏层, 滤镜链跑完再按层 alpha 混回来。
+            end_pass();
+            render_item_layer(index);
+            if (!run_filter_chain(chain, item.alpha)) {
+                return false;
+            }
+            begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
         }
-        // 有滤镜: 先画进离屏层, 滤镜链跑完再按层 alpha 混回来。
-        end_pass();
-        render_item_layer(index);
-        if (!run_filter_chain(chain, item.alpha)) {
-            return false;
-        }
-        begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
+        return true;
+    };
+    if (!draw_scene_items(0, std::min(background_item_count_, scene_item_count))) {
+        return false;
+    }
+    if (!draw_particles(plan, t_us, false, error)) {
+        return false;
+    }
+    if (!draw_scene_items(std::min(background_item_count_, scene_item_count), scene_item_count)) {
+        return false;
+    }
+    if (!intro_covers_stage && !draw_particles(plan, t_us, true, error)) {
+        return false;
     }
 
+    // Live2D 模型在场景条目之后单独画; 像素化 intro 要把它们一起盖住, 所以整段跳过。
     for (const auto& group : mesh_groups) {
+        if (intro_covers_stage) {
+            break;
+        }
         if (!group.chain.empty()) {
             // 滤镜层: 模型完整画进透明层, 滤镜跑完再按层 alpha 合成;
             // 这样 alpha 是整模型乘一次, 手指等细部不会出现重影。
@@ -5293,11 +5846,14 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
     }
 
     const float stage_alpha = std::clamp(stage_alpha_at(plan, t_us), 0.0F, 1.0F);
-    if (stage_alpha < 0.999F) {
+    // `-target=stage-main` 的 alpha 只作用于舞台; intro 是全屏演出, 在引擎里不在舞台容器内,
+    // 所以像素化 intro 期间不叠这层黑场 (否则会把它压暗)。
+    if (!intro_covers_stage && stage_alpha < 0.999F) {
         if (!pass_open) {
             begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
         }
         const DrawItem& overlay = items[stage_overlay_index];
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         push_constants(overlay.transform, 1.0F - stage_alpha, false, nullptr, nullptr, false);
         draw_item(stage_overlay_index);
     }
@@ -5325,6 +5881,8 @@ bool Renderer::submit_frame(const job::Plan& plan, std::uint64_t t_us, std::stri
         if (!pass_open) {
             begin_pass(VK_ATTACHMENT_LOAD_OP_LOAD);
         }
+        // 粒子 pass 之后管道可能是粒子那套, 这里显式切回普通四边形。
+        vkCmdBindPipeline(command_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         draw_overlays();
     }
     end_pass();
@@ -5762,6 +6320,26 @@ void Renderer::destroy() {
         if (pipeline_overlay_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_overlay_, nullptr);
         }
+        if (pipeline_particles_ != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device_, pipeline_particles_, nullptr);
+            pipeline_particles_ = VK_NULL_HANDLE;
+        }
+        if (particle_mapped_ != nullptr) {
+            vkUnmapMemory(device_, particle_memory_);
+            particle_mapped_ = nullptr;
+        }
+        if (particle_buffer_ != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, particle_buffer_, nullptr);
+            particle_buffer_ = VK_NULL_HANDLE;
+        }
+        if (particle_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, particle_memory_, nullptr);
+            particle_memory_ = VK_NULL_HANDLE;
+        }
+        particle_capacity_ = 0;
+        destroy_image(particle_snow_);
+        destroy_image(particle_rain_);
+        destroy_image(particle_cherry_);
         if (pipeline_fxaa_fast_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_fxaa_fast_, nullptr);
         }

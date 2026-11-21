@@ -701,6 +701,38 @@ int webgal_plan_add_audio(WebgalPlan* plan, uint64_t start_us, uint64_t end_us, 
     }
 }
 
+int webgal_plan_add_particle(WebgalPlan* plan, int kind, uint64_t start_us, int has_end,
+                             uint64_t end_us) {
+    if (plan == nullptr) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+    try {
+        webgal::job::ParticleSegment segment;
+        segment.start_us = start_us;
+        if (has_end != 0) {
+            segment.end_us = end_us;
+        }
+        switch (kind) {
+        case WEBGAL_PARTICLE_HEAVY_SNOW:
+            segment.kind = webgal::job::ParticleKind::HeavySnow;
+            break;
+        case WEBGAL_PARTICLE_RAIN:
+            segment.kind = webgal::job::ParticleKind::Rain;
+            break;
+        case WEBGAL_PARTICLE_CHERRY_BLOSSOMS:
+            segment.kind = webgal::job::ParticleKind::CherryBlossoms;
+            break;
+        default:
+            segment.kind = webgal::job::ParticleKind::Snow;
+            break;
+        }
+        plan->plan.particles.push_back(std::move(segment));
+        return WEBGAL_STATUS_OK;
+    } catch (...) {
+        return WEBGAL_STATUS_INVALID_ARGUMENT;
+    }
+}
+
 int webgal_render_run(const WebgalPlan* plan, const WebgalRenderOptions* options,
                       const WebgalRenderCallbacks* callbacks, char* error_buffer,
                       size_t error_buffer_len) {

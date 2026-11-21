@@ -219,19 +219,6 @@ impl Project {
         )
     }
 
-    /// 项目声明的 WebGAL 版本 (`webgal-engine.json` 的 `webgalVersion`)。
-    ///
-    /// 这是引擎包清单, 不是 MyGO 自己的 `version`; 4.6.4 起 `changeFigure` 的
-    /// 立绘身份判定变了, 导出需要据此选择时间线口径。
-    pub fn webgal_version(&self) -> Option<String> {
-        let text = fs::read_to_string(self.root.join("webgal-engine.json")).ok()?;
-        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-        value
-            .get("webgalVersion")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    }
-
     /// 模板信息.
     pub fn template(&self) -> Option<&TemplateInfo> {
         self.template.as_ref()
@@ -276,6 +263,7 @@ impl Project {
             "figure" => &["png", "jpg", "jpeg", "webp", "bmp", "gif"],
             "bgm" | "vocal" => &["mp3", "wav", "ogg", "flac"],
             "video" => &["mp4", "webm", "mkv", "ogg"],
+            "animation" => &["json"],
             _ => &[],
         };
         if candidate.extension().is_none() {

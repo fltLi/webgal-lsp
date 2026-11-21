@@ -8,6 +8,24 @@ export interface VideoExportResult {
   output: string;
   /** 实际使用的编码后端；音频导出或未回调时为 null。 */
   encoder?: string | null;
+  /** 编译期警告；导出前也会通过 `video-export:warnings` 事件推一次。 */
+  warnings?: VideoExportWarning[] | null;
+}
+
+/** 编译期警告：某条语句或某个动画在导出里不会完全生效。 */
+export interface VideoExportWarning {
+  code: string;
+  message: string;
+  /** 场景名（`start.txt` 这类）。 */
+  scene?: string | null;
+  /** 1 起始的行号。 */
+  line?: number | null;
+}
+
+/** `video-export:warnings` 的事件负载。 */
+export interface VideoExportWarnings {
+  warnings: VideoExportWarning[];
+  total: number;
 }
 
 export interface VideoExportStatus {
@@ -25,8 +43,6 @@ export interface VideoProjectInfo {
   stageWidth: number;
   /** 舞台高度（game/config.txt 的 Stage_Height）。 */
   stageHeight: number;
-  /** webgal-engine.json 声明的 WebGAL 版本；用于自动选择立绘切换口径。 */
-  webgalVersion: string | null;
 }
 
 export interface RouteNode {
@@ -62,7 +78,7 @@ export interface VideoExportOptions {
   fontScale?: number;
   textSpeed?: number;
   autoSpeed?: number;
-  /** 立绘身份判定：auto / legacy（4.6.3 及以前）/ modern（4.6.4+）。 */
+  /** 立绘身份判定：legacy（只看图片/模型变化）/ modern（位置也参与判定）。 */
   figureSide?: string;
   disableFilters?: boolean;
   /** 抗锯齿：off / standard / fast / ssaa2 / msaa4 / smaa。 */

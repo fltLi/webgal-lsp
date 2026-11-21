@@ -1,0 +1,3 @@
+changeBg:bg.png;
+setTransition: -target=bg-main -enter=enter;
+changeBg:bg2.png -next;

@@ -1,0 +1,4 @@
+pixiPerform:snow;
+:第一句;
+pixiInit:;
+pixiPerform:unknownEffect;

@@ -195,6 +195,21 @@ struct AudioEvent {
     bool loop = false;
 };
 
+/// 屏幕特效类型 (对应脚本 `pixiPerform` 的参数).
+enum class ParticleKind {
+    Snow = 0,
+    HeavySnow = 1,
+    Rain = 2,
+    CherryBlossoms = 3,
+};
+
+/// 一段屏幕特效; `end_us` 为空表示持续到片尾.
+struct ParticleSegment {
+    ParticleKind kind = ParticleKind::Snow;
+    std::uint64_t start_us = 0;
+    std::optional<std::uint64_t> end_us;
+};
+
 /// 渲染计划. 由 C ABI 的 builder 逐项填充, 不再经过 JSON.
 struct Plan {
     std::string project_root;
@@ -219,6 +234,7 @@ struct Plan {
     std::vector<IntroSegment> intros;
     std::vector<VideoSegment> videos;
     std::vector<AudioEvent> audio;
+    std::vector<ParticleSegment> particles;
 };
 
 } // namespace webgal::job
