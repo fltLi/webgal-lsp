@@ -1,0 +1,2 @@
+changeBg:bg.png -enter=enter-from-left;
+setTransform:{"alpha":1} -target=bg-main -duration=1 -next;

@@ -1,0 +1,2 @@
+intro:模糊测试|第二行文字 -animation=pixelateEffect -fontColor=rgba(255,204,204,1) -backgroundColor=rgba(0,0,64,1) -backgroundImage=bg.png;
+end;

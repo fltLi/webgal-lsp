@@ -1,0 +1,3 @@
+changeBg:bg.png -next;
+setAnimation:oldFilm -target=bg-main -next;
+setAnimation:removeFilm -target=bg-main -next;

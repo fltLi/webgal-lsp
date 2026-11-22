@@ -1,0 +1,2 @@
+changeBg:bg.png -next;
+setComplexAnimation:universalSoftOff -target=bg-main -duration=500 -next;

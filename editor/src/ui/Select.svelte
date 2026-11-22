@@ -3,8 +3,9 @@
 <!--
   下拉选择 (bits-ui)。
 
-  **不使用 portal**: 选项面板在控件附近就地渲染, 避免 Tauri WebView 里弹层的定位/渲染异常。
-  外观沿用既有类名 (`.select` / `.select-trigger` / `.select-menu`)。
+  选项面板经 `Select.Portal` 挂到 `body`: 对话框正文/设置页都是 `overflow: auto` 的滚动容器,
+  就地渲染的菜单会被祖先裁掉, 只露出半截。port 到 body 之后菜单不受任何祖先裁剪, 靠近视口边缘
+  时由 floating-ui 自动翻转。外观沿用既有类名 (`.select` / `.select-trigger` / `.select-menu`)。
 -->
 
 <script lang="ts">
@@ -46,35 +47,11 @@
     options.find((option) => option.value === value)?.label ?? (value || undefined) ?? placeholder ?? ''
   );
 
-  /** 触发按钮元素: 只用来算"菜单该在哪个盒子里翻转" (见下面的 `clippingAncestorOf`)。 */
+  /** 触发按钮元素: 只用来量宽度, 让菜单与触发器等宽。 */
   let triggerEl = $state<HTMLButtonElement | null>(null);
 
-  /**
-   * 菜单可用的"盒子": 最近的一个会裁剪或滚动的祖先。
-   *
-   * 必须显式给 `collisionBoundary`: bits-ui 拿不到它时会把 floating-ui 的 `boundary` 传成**空数组**,
-   * 于是只按**视口**判断该不该翻转 —— 对话框正文是 `overflow: auto` 的滚动容器而视口下方还有大片
-   * 空白, 菜单因此永远向下弹, 把对话框撑出滚动条、选项反而看不见。传最近的裁剪祖先之后, 盒子里
-   * 放不下时它会自己翻到上方。
-   */
-  function clippingAncestorOf(el: HTMLElement | null): Element | undefined {
-    const clips = /(auto|scroll|hidden|clip|overlay)/;
-    for (let node = el?.parentElement ?? null; node; node = node.parentElement) {
-      const style = getComputedStyle(node);
-      if (clips.test(style.overflowX) || clips.test(style.overflowY)) return node;
-    }
-    return undefined;
-  }
-
-  const collisionBoundary = $derived(clippingAncestorOf(triggerEl));
-
-  /*
-   * 菜单与触发按钮**等宽**。
-   *
-   * 菜单不是 portal (见文件头), 由 floating-ui 定位成 `position: fixed`, 所以 CSS 的 `width: 100%`
-   * 会按视口算 —— 拿不到触发器的宽度, 只能量出来写进去 (触发器是 `width: 100%`, offsetWidth 就是
-   * 这个控件的宽度)。
-   */
+  /* 菜单与触发按钮**等宽**。菜单走 portal (见模板), 由 floating-ui 定位成 `position: fixed`,
+     所以 CSS 的 `width: 100%` 会按视口算 —— 只能量出来写进去。 */
   let triggerWidth = $state(0);
 
   $effect(() => {
@@ -105,22 +82,25 @@
     </Select.Trigger>
 
     <!--
-      `collisionPadding` 留 8px: 贴着对话框边缘弹出的菜单看起来像被裁掉了。可用高度由 bits-ui 的
-      `size` 中间件挂在 `--bits-floating-available-height` 上, `.select-menu` 用它兜住最大高度;
-      `width` 与触发器等宽 (量出来的, 见脚本里)。
+      菜单挂到 `body` 上 (portal): 对话框正文与设置页都是 `overflow: auto` 的滚动容器,
+      就地渲染的菜单会被它们裁掉 (选项只露出一半, 甚至完全看不见)。portal + floating-ui 的
+      `position: fixed` 让菜单永远浮在最上层, 靠近边缘时还会自动翻转。
+      `collisionPadding` 留 8px: 贴着视口边缘弹出的菜单看起来像被裁掉了。可用高度由 bits-ui 的
+      `size` 中间件挂在 `--bits-floating-available-height` 上, `.select-menu` 用它兜住最大高度。
     -->
-    <Select.Content
-      class="select-menu"
-      sideOffset={4}
-      {collisionBoundary}
-      collisionPadding={8}
-      style={triggerWidth ? `width:${triggerWidth}px` : undefined}
-    >
-      {#each options as option (option.value)}
-        <Select.Item class="select-option" value={option.value} label={option.label}>
-          {option.label}
-        </Select.Item>
-      {/each}
-    </Select.Content>
+    <Select.Portal>
+      <Select.Content
+        class="select-menu"
+        sideOffset={4}
+        collisionPadding={8}
+        style={triggerWidth ? `width:${triggerWidth}px` : undefined}
+      >
+        {#each options as option (option.value)}
+          <Select.Item class="select-option" value={option.value} label={option.label}>
+            {option.label}
+          </Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Portal>
   </Select.Root>
 </div>

@@ -13,17 +13,11 @@
 -->
 
 <script lang="ts">
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { untrack } from 'svelte';
 
   import { createPreviewOutputSettingsMessage } from '../preview/audio-bridge';
   import { previewClient } from '../preview/client';
-  import {
-    applyPreviewFullscreenAction,
-    previewFullscreenTransition,
-    type PreviewFullscreenStatus,
-  } from '../preview/fullscreen';
   import { createId, EDITOR_PREVIEW_PROTOCOL_V1_SUBPROTOCOL, SESSION_REGISTER_PREVIEW_TYPE } from '../preview/protocol';
   import { actions, appStore } from '../state/store.svelte';
   import Button from './Button.svelte';
@@ -48,14 +42,6 @@
 
   /** 最近一次嵌入启动 id —— 与 iframe 内的引擎会话配对。 */
   let launchId = createId();
-
-  /**
-   * 进入全屏前窗口是不是最大化。
-   *
-   * 只有 `fullscreenchange` 回调读它, 因此是普通变量而不是 `$state`。
-   */
-  let windowWasMaximized = false;
-  let fullscreen: PreviewFullscreenStatus = { mirrored: false, corrected: false };
 
   const muted = $derived(appStore.settings.previewMuted);
   const ready = $derived(appStore.previewReady);
@@ -209,60 +195,8 @@
   });
 
   /*
-   * 全屏: 引擎底栏画不画"全屏"按钮取决于它页面里的 `document.fullscreenEnabled`, 授权写在 iframe 的
-   * `allow` 属性上; 这里负责授权之后的**窗口侧**处理。
-   *
-   * Windows 上 Tauri 自己会把"webview 里有全屏元素"映射成窗口全屏, 所以下面的动作大多是幂等的
-   * 重复调用; 真正要补的是"最大化窗口 + 无边框全屏"那个组合 —— tao 不清最大化状态, 底部会留下
-   * 一条任务栏高的黑边。折算与执行都在 `preview/fullscreen` 里 (纯函数, 有单测钉住顺序)。
+   * 全屏授权写在 iframe 的 `allow` 上；窗口侧的最大化补正是应用级的，见 `lib/fullscreen.ts`。
    */
-  $effect(() => {
-    const win = getCurrentWindow();
-
-    /*
-     * 只在**不在全屏**时记录窗口形态: 全屏那一次的 resize 正是我们要修的形态变化, 不能拿它当
-     * "用户想要的窗口样子"。它也可能早于 `fullscreenchange` 到达, 但那时窗口还停在最大化状态。
-     */
-    const syncWindowWasMaximized = () => {
-      if (document.fullscreenElement !== null) return;
-      void win
-        .isMaximized()
-        .then((value) => {
-          windowWasMaximized = value;
-        })
-        .catch(() => {
-          // 问不到窗口形态 (例如前端跑在浏览器里) 就当作不是最大化, 不影响预览本身
-        });
-    };
-
-    const onFullscreenChange = () => {
-      // 只管"预览 iframe 自己"成了全屏元素的情况 (顶层文档里别的元素全屏与我们无关)
-      const fullscreenElement = document.fullscreenElement;
-      const active = fullscreenElement !== null && fullscreenElement === iframe;
-      const next = previewFullscreenTransition(fullscreen, {
-        fullscreenActive: active,
-        windowWasMaximized,
-      });
-      fullscreen = { mirrored: next.mirrored, corrected: next.corrected };
-      void applyPreviewFullscreenAction(win, next.action).catch((err) => {
-        // 窗口侧失败不该影响预览本身: 元素全屏照常生效, 只是窗口形态可能不对
-        console.error('预览全屏补正失败', err);
-      });
-    };
-
-    // 先取一次, 之后靠 resize 跟上 (打开/关闭项目都会改窗口形态, 见 lib/window.ts)
-    syncWindowWasMaximized();
-    const unlistenResize = win.onResized(syncWindowWasMaximized);
-    document.addEventListener('fullscreenchange', onFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', onFullscreenChange);
-      void unlistenResize.then((off) => off());
-      // 面板卸载会把 iframe 一起摘掉, 元素全屏随之结束, 而那次 fullscreenchange 我们未必还能听到
-      if (fullscreen.corrected) {
-        void applyPreviewFullscreenAction(win, { kind: 'restore-maximized' }).catch(() => {});
-      }
-    };
-  });
 </script>
 
 <div class="preview-panel">

@@ -9,5 +9,11 @@
     "**/.svelte-kit": true
   },
   // Python
-  "python.analysis.typeCheckingMode": "strict"
+  "python.analysis.typeCheckingMode": "strict",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  // CMake
+  "cmake.sourceDirectory": "${workspaceFolder}"
 }

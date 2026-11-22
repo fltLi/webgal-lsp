@@ -23,9 +23,14 @@
     description={request.description}
     iconName={request.danger ? 'Warning' : request.info ? 'Info' : 'QuestionCircle'}
     size="small"
+    flush={!request.detail}
     onClose={close}
   >
-    <span></span>
+    <!-- 长串 (完整路径、错误原文) 放正文: 标题下那行是 12px 副标题, 塞路径会被挤成一团,
+         而且它不保留换行 —— 提示类消息常用 `\n\n` 分段。`.confirm-message` 是 `pre-wrap`。 -->
+    {#if request.detail}
+      <p class="confirm-message" title={request.detail}>{request.detail}</p>
+    {/if}
 
     {#snippet footer()}
       {#if request.info}

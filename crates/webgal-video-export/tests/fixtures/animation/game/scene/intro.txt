@@ -1,0 +1,2 @@
+intro:第一行|第二行 -animation=pixelateEffect -fontColor=rgba(255,204,204,1) -backgroundColor=rgba(0,0,255,0.5) -backgroundImage=bg.png;
+intro:第三行 -delayTime=300;

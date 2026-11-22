@@ -12,8 +12,10 @@ import { useAppStore } from './state/store.svelte';
 
 export interface PendingConfirm {
   title: string;
-  /** 补充说明 (可以是多段文字) */
+  /** 补充说明 (副标题, 一两句话; 不要塞路径这类长串, 也不要依赖 `\n` 换行) */
   description?: string;
+  /** 正文里的"具体对象或原文" (完整路径、错误信息等); 保留换行并允许长串换行 */
+  detail?: string;
   /** 确认按钮的文案 */
   confirmLabel?: string;
   /** 取消按钮的文案 */
@@ -37,7 +39,9 @@ export function requestConfirm(options: PendingConfirm): void {
 
 /** 请求一次纯提示 (只有一个"知道了"按钮)。 */
 export function requestAlert(title: string, description?: string): void {
-  requestConfirm({ title, description, confirmLabel: '知道了', info: true, action: () => {} });
+  // 提示的正文几乎都是"对象 + 多行错误原文"(调用方普遍用 `\n\n` 分段, 也常带绝对路径)。
+  // 放到正文的 `detail` 而不是标题下的 12px 副标题: 后者不保留换行, 长路径也没法断行。
+  requestConfirm({ title, detail: description, confirmLabel: '知道了', info: true, action: () => {} });
 }
 
 /** 界面读取当前请求。 */

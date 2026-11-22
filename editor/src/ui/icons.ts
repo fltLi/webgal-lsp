@@ -76,6 +76,7 @@
   | 'Star'
   | 'StarFilled'
   | 'Stop'
+  | 'Video'
   | 'Subtract'
   | 'TabDesktop'
   | 'Warning'
@@ -153,6 +154,7 @@ export const ICON_NAMES: readonly IconName[] = [
   'Star',
   'StarFilled',
   'Stop',
+  'Video',
   'Subtract',
   'TabDesktop',
   'Warning',
@@ -232,6 +234,7 @@ import squareMultipleRaw from '@fluentui/svg-icons/icons/square_multiple_20_regu
 import starRaw from '@fluentui/svg-icons/icons/star_20_regular.svg?raw';
 import starFilledRaw from '@fluentui/svg-icons/icons/star_20_filled.svg?raw';
 import stopRaw from '@fluentui/svg-icons/icons/stop_20_regular.svg?raw';
+import videoRaw from '@fluentui/svg-icons/icons/video_20_regular.svg?raw';
 import subtractRaw from '@fluentui/svg-icons/icons/subtract_20_regular.svg?raw';
 import tabDesktopRaw from '@fluentui/svg-icons/icons/tab_desktop_20_regular.svg?raw';
 import warningRaw from '@fluentui/svg-icons/icons/warning_20_regular.svg?raw';
@@ -308,6 +311,7 @@ export const ICON_SVG: Record<IconName, string> = {
   Star: starRaw,
   StarFilled: starFilledRaw,
   Stop: stopRaw,
+  Video: videoRaw,
   Subtract: subtractRaw,
   TabDesktop: tabDesktopRaw,
   Warning: warningRaw,

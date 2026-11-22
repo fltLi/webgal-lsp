@@ -1,0 +1,4 @@
+choose:甲:end|乙:end;
+label:end;
+end;
+

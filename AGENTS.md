@@ -23,6 +23,7 @@
 | --- | --- | --- |
 | `crates/` 的 `webgal-language-core` / `language-service` / `language-server` / `simulate` / `sentence-macro` | 维护者主导（文件头基本没有 AI 标识） | 先给方案再动手；改动要小、要解释 |
 | `editor/`（前端 Svelte 5 + SvelteKit，后端 Tauri 2 / crate `webgal-ink`）、`crates/expression`、`webgal-snapshot` | AI 主导（文件头多数带标识） | 可自己拿主意，但要补测试、说清边界 |
+| 视频导出：`crates/webgal-video-export`、`crates/webgal-video-render-sys`、`native/webgal-video-render` | AI 主导（新模块，文件头均带标识） | 可重构；但 ABI 与计划结构要同步 Rust/C++ 两侧并跑两端测试。视频导出**仅 Windows**，最近几个版本没有跨平台计划 |
 | `crates/count`、`path-tree`、`json-language-service` | 混合 | 看多数；拿不准就当维护者主导 |
 
 判据是**你要动的那一块**里多数文件带不带 AI 标识（粒度是模块，子模块可以自成一块）。实用形式：
@@ -72,7 +73,18 @@
   （`vite` / `vitest` / `tauri` 的 bin 都带 `#!/usr/bin/env node`），所以别用 `bun --bun run`。
 - Tauri 2 系统依赖：Windows 用 WebView2；Linux 的包名清单以 `.github/workflows/ci.yml` 的
   `editor-native` job 为准（会随发行版改动），照抄它安装即可。
+- **Windows 上编译 `webgal-ink` 还需要原生工具链**：CMake ≥ 3.28、Ninja、Vulkan SDK、vcpkg（必须是
+  **带 `.git` 的克隆**，`vcpkg.json` 的 `builtin-baseline` 要用 `git show` 解析版本）。
+  **CI 不再依赖 windows-latest 预装 Vulkan SDK**：`.github/actions/setup-vulkan` 在缺失时用
+  `choco install vulkan-sdk` 安装并导出 `VULKAN_SDK` / `PATH`；`.github/actions/setup-vcpkg`
+  负责解析 baseline（镜像里的 vcpkg 比 baseline 旧时按 SHA 拉取一次）。
+  默认特性 `video-export` 会在 `crates/webgal-video-render-sys/build.rs` 里现场构建并静态链接
+  C++ 渲染器（见下方"视频导出"）。没有这些工具链时用 `--no-default-features` 关掉视频导出，
+  其余功能照常编译。
 - 需要 wasm 时（playground / 浏览器侧）额外装 `wasm32-unknown-unknown` 与 `wasm-pack`，见第 5 节。
+- **Python 脚本的检查工具**：本地装 `black` / `pyright` / `types-requests`（`python -m pip install …`，
+  版本以 `.github/workflows/ci.yml` 的 `python` job 为准）。配置统一在根 `pyproject.toml`，与
+  `.vscode/settings.json` 的 `python.analysis.typeCheckingMode` 保持一致。
 - `editor/dist` **不在版本控制里**，但 Tauri 构建要求它存在：第一次编译前先在 `editor/` 跑
   `bun run build`（或手工放一个占位 `editor/dist/index.html`），否则构建脚本直接失败。
 
@@ -94,12 +106,30 @@ bun run format                       # 本子模块的 Prettier（配置仍取�
 
 # 根目录的编排脚本（串行跑各子模块，CI 用的就是这些检查）
 bun run lint                         # 四个子模块的 lint
-bun run type-check                   # 四个子模块的 type-check
+bun run type-check                   # 四个子模块的 type-check + Python 的 pyright
 bun run test                         # editor 与 novel-preprocess 的 vitest
 bun run check                        # build:wasm + format-check + lint + type-check + test
 
+# Python 脚本的格式化与检查已并入上面的 format / format-check / type-check;
+# 也可以直接调用（scripts/ 与 crates/webgal-language-service/scripts/）
+python -m black scripts crates/webgal-language-service/scripts
+python -m pyright                    # 严格模式，配置在根 pyproject.toml
+
 cargo check -p webgal-ink            # 只查编辑器后端；需要 editor/dist 与系统依赖
 cargo clippy -p webgal-ink -- --deny warnings
+
+# 视频导出：export 直接依赖 sys；sys 的 build.rs 构建并静态链接 C++ 渲染器
+cargo check -p webgal-video-export
+cargo test -p webgal-video-export    # Windows 上会一并编译渲染器
+cargo test -p webgal-video-render-sys  # 只测 C ABI 封装；C++ 用 RelWithDebInfo
+cargo check -p webgal-ink --no-default-features   # 不编 C++（stub 路径），仍需要 editor/dist
+# 只改 C++ 时：仓库根是唯一的 CMake workspace（子目录没有 presets）
+cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
+
+# 真实 GPU 导出验收（可选）：设 WEBGAL_RENDER_GPU_TEST=1 后 render_export 会渲染 fixture；
+# 再用 WEBGAL_RENDER_GPU_PROJECT / _RESOLUTION / _SPEED / _OUTPUT / _LIVE2D_CORE 指向样本。
+# 不要给 _PROJECT 设空串——那会覆盖默认 fixture 路径。
+cargo test -p webgal-video-export --test render_export -- --nocapture
 
 # 改了 crates/webgal-language-service/src/wasm.rs 时额外跑（它只随 wasm32 编译，宿主目标查不到）
 cargo check -p webgal-language-service --features simulate-diagnose --target wasm32-unknown-unknown
@@ -119,9 +149,25 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
 - **`editor/scripts/` 的两个类名护栏已接进 `lint`，是致命检查**：`check-css-classes.mjs` 核对模板里
   用到的类名在 `styles.css` 里都有规则（并报告一遍无人引用的类名，**只报告、不要据此删 CSS**），
   `check-dynamic-classes.mjs` 核对运行期拼出来的类名。
-- CI 分四个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
-  type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、`playground`
-  （wasm + 构建）。本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
+- **Python 的严格模式由 `pyproject.toml` 决定，不要只依赖编辑器设置**：`[tool.pyright]` 的 `include`
+  锁定了 `scripts/` 与 `crates/webgal-language-service/scripts/`，新增 Python 脚本要放进这两个目录（或同步
+  改 `include`）；`.vscode/settings.json` 只是把同一套规则同步给 Pylance。`types-requests` 是
+  `update-document.py` 的 `requests` 存根，缺了会让严格模式报 `reportMissingTypeStubs`。
+- **新增 / 删除语言或文件类型时，过一遍 `scripts/source-composition.py`**：语言清单、扩展名表、
+  按文件名识别的特例、配色、模块分组与 HTML 页脚说明都在这个脚本里。漏改不会让任何检查变红，
+  只会让源码画像悄悄失真。
+- CI 分七个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
+  type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、
+  `video-export-cpp`（根 workspace 的 format-check + build + tidy + ctest）、
+  `video-export-rust`（Windows，`cargo test` 两个视频导出 crate + `cargo build -p webgal-ink`，
+  验证 build.rs 能找到 CMake/vcpkg/Vulkan SDK 并完成静态链接）、`playground`（wasm + 构建）、
+  `python`（black + pyright）。
+  本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
+- **视频导出没有 CLI、没有 JSON、没有独立渲染器进程**：`webgal-video-export` 直接依赖
+  `webgal-video-render-sys`（计划映射、视频时长探测与渲染入口都在 export 侧），后者用 C ABI
+  （`native/webgal-video-render/include/webgal-video-render.h`）把计划写进 C++ 侧再同步导出；
+  Ink 的 `video-export` 特性只依赖 `webgal-video-export`。想加单帧/调试渲染时扩展这个 ABI，
+  **不要**恢复命令行或 plan.json。
 
 ### 测试写在哪儿
 
@@ -166,8 +212,14 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   service/lsp.rs            把内置语言服务器桥到本地 WebSocket（每次连接 = 一个新 LSP 实例）
   service/preview.rs        预览静态服务器 + /api/webgalsync WebSocket 网关（兼容两代引擎）
   service/highlight.rs / snapshot.rs / git.rs / fs.rs / browser.rs / game_config.rs / startup.rs
+  service/video_export.rs    视频导出 Tauri command：计划 → C ABI → 后台导出/进度/取消
+  service/video_export_stub.rs  未启用 `video-export` 或非 Windows 构建时的同签名占位实现
   service/voice/            GSOV 进程、音频、缓存、对白重排（见 docs/voice-guide.md）
   capabilities/default.json 前后端能力白名单
+crates/webgal-video-export/ 视频导出: 读取项目、编译时间线、映射计划并探测/渲染视频
+crates/webgal-video-render-sys/ C ABI 绑定; build.rs 构建并静态链接 C++ 渲染器 (仅 Windows)
+native/webgal-video-render/ C++ Vulkan 离屏渲染器 (静态库; 仓库根是唯一的 CMake workspace)
+CMakeLists.txt / CMakePresets.json / vcpkg.json  原生代码 workspace 入口 (只服务 native/)
 ```
 
 上面只列稳定结构，具体文件名与内容以实际目录为准（`ls editor/src` 比记忆可靠）。
@@ -238,6 +290,11 @@ editor/src-tauri/src/       后端 (crate 名 webgal-ink)
   "Found version mismatched Tauri packages"）。所以 `editor/package.json` 里那几个 `@tauri-apps/*`
   **写精确版本**，别用 `^`——宽范围在换锁文件或重新解析时会漂到更高的次版本。升级时两边一起动：
   改 `editor/src-tauri/Cargo.toml` 的 crate 版本 + `cargo update`，再把 JS 侧对齐到同一主次版本。
+- **视频渲染器的 C ABI 与延迟加载是两条硬约束**：改 `native/.../include/webgal-video-render.h`
+  的字段/参数/枚举时，`WEBGAL_ABI_VERSION` 与 `crates/webgal-video-render-sys` 的
+  `EXPECTED_ABI_VERSION` 必须同时 +1（Rust 侧在创建计划与 render 前校验）；
+  改 `vulkan-1.dll` 的加载方式时，`/DELAYLOAD` 只能写在**最终链接**（CMake 的 INTERFACE
+  选项 + 几个 Rust build.rs），链接器指令不会生效。
 
 ## 4. 语言服务接入（Ink 侧最容易踩的地方）
 
@@ -307,6 +364,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 新目录、模块边界或状态组织方式变了 | 第 3 节的架构图（它只允许列稳定结构） |
 | 改了 `.svelte` 的**样式作用域策略**（新增 / 移除 `<style>` 块、改用 `:global()`） | 第 3 节「组件不带 `<style>` 块」一条 |
 | 增删了 `editor/scripts/` 下的检查脚本，或把它接进 `lint` / `check` | 第 2 节命令块（说明它是护栏还是报告工具） |
+| 新增 / 移动 Python 脚本，或调整 Python 检查工具 | 根 `pyproject.toml` 的 `[tool.pyright] include`、第 2 节命令块与 CI 的 `python` job |
+| 仓库新增 / 删除语言、扩展名或模块目录（影响源码普查） | `scripts/source-composition.py` 的语言清单 / 扩展名表 / 配色 / 模块分组 / 页脚，见第 2 节最后一条 |
 | 踩到一个耗掉一轮以上调试时间的坑 | 第 7 节排错表 + 对应章节的约定；**能写进代码注释的就写进代码**，别挤占本文件 |
 | CI 增删了检查项 | 第 2 节关于 CI 覆盖范围的说明 |
 | 区域归属变了（某模块由 AI 主导转为人主导，或反之） | 第 1 节的区域表 |
@@ -326,7 +385,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 ## 7. AI 标识与排错速查
 
 新增文件或整段生成的代码要标注（见 README 的 AI 使用声明）：`.ts` / `.js` 写
-`// This file is generated by AI.`，`.svelte` / `.html` / Markdown 写 `<!-- This file is generated by AI. -->`，
+`// This file is generated by AI.`，`.py` / `.toml` / `.yml` 写 `# This file is generated by AI.`，
+`.svelte` / `.html` / Markdown 写 `<!-- This file is generated by AI. -->`，
 部分生成写 `partially generated by AI.`；纯润色（行文、注释措辞）不需要。标识放在**文件第 1 行**（`app.html`
 例外：必须让 `<!doctype html>` 在最前，否则浏览器进入怪异模式），紧跟一行文件用途。
 
@@ -336,6 +396,19 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 现象 | 处理 |
 | --- | --- |
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
+| `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器；Vulkan SDK 可以 `choco install vulkan-sdk` |
+| `cargo` 报 `RuntimeLibrary` 不匹配 / `_calloc_dbg` 未解析 | 渲染器的 C++ 运行时和 rustc 不一致。`build.rs` 已把 dev 配置映到 `RelWithDebInfo`（rustc 在 MSVC 上始终用 release CRT）；自己手动 CMake 构建时要跟着用 Release/RelWithDebInfo，别用 Debug |
+| CMake 配置报 `while checking out baseline from commit …` / `fatal: not a git repository` | `vcpkg.json` 有 `builtin-baseline`，vcpkg 必须是有 git 历史的克隆；解压安装的 vcpkg 先在根目录 `git init` 并 `git fetch --depth 1 origin <baseline>`，或直接换成 `git clone` |
+| 没有 Vulkan 的机器上编辑器启动时报缺 `vulkan-1.dll` / 点导出只弹一句泛化错误 | 检查 `/DELAYLOAD` 是否真的落在了最终链接：`dumpbin /imports <exe>` 应出现 `delay load imports` 段。`/DELAYLOAD` 写成 `#pragma comment(linker, …)` **不生效**，必须在 CMake INTERFACE 选项与两个 Rust `build.rs` 里传 |
+| 导出报“渲染器 ABI 版本不匹配” | 旧静态库 + 新头文件；`cargo clean -p webgal-video-render-sys` 后重编。改 ABI 时两侧版本常量要同时 +1 |
+| `cargo test -p webgal-video-export --test render_export` 报 `InvalidProject { path: "", ... }` | 环境里把 `WEBGAL_RENDER_GPU_PROJECT` 设成了空串，覆盖了 fixture 默认路径；删掉该变量再跑 |
+| 导出报 `model3.json 中不存在表情/motion` | 先确认 `FileReferences.Expressions` / `Motions` 里确有该名字；渲染器在加载时缓存这两张表，不再逐帧读盘 |
+| `playVideo` 画面出现斜向条纹/逐行错位 | Media Foundation 的 RGB32 缓冲区可能按 16 像素对齐（如 1918×1080 实际为 1920×1088），`MF_MT_DEFAULT_STRIDE` 仍是 1918×4；行距必须从 buffer 长度推断，见 `media/video.cpp` 的 `decode()` |
+| **任意视频/预览全屏后底部留一条黑带** | 最大化窗口 + 无边框全屏时 tao 不清最大化状态；`editor/src/lib/fullscreen.ts` 全局监听 `fullscreenchange` 并复用 `preview/fullscreen.ts` 的顺序补正，预览 iframe 与原生 `<video>` 共用这一处 |
+| 导出的视频没有声音 / 图层开关无效 | 检查 `ExportConfig.include_audio` 与 `layers`；计划完成后会按它们裁剪 `plan.audio` / `plan.background` / `plan.figures` / UI，不在渲染器里猜 |
+| 长片导出（带 BGM/语音）卡在进度 0%、内存持续上涨、MP4 只有文件头 | Media Foundation 的 MP4 muxer 要音视频按时间戳交织；先写完视频再补音频会把视频样本压在队列里（实测 70 s 就开始卡）。音频必须边渲染边写，见 `native/webgal-video-render/src/pipeline/export.cpp` 的 `write_audio_until`，不要改回"渲染完再混音写入" |
+| 导出的 WAV 超过 4 GiB | 现在会自动改用 RF64（64 位长度，见 `media/wav.cpp`）；个别老工具不认 RF64 时再改用 MP4（AAC） |
+| 仓库里出现 `target-xxx/` 之类的目录 | 设了自定义 `CARGO_TARGET_DIR`（例如验证 `+crt-static` 时）。`.gitignore` 的 `target-*/` 已覆盖；不需要就删掉，它会占几 GB |
 | **界面整窗空白，前端完全不启动，控制台也没有报错** | 直接看 dev server 吐的 HTML：`curl http://localhost:1420/`。若 `%sveltekit.body%` 还是**字面量**，说明 `app.html` 的注释里写了那两个占位符，被构建替换掉、把真正的注入点挤掉了（见第 3 节）。这类故障类型检查、构建、单测全绿 |
 | **调试已启动，但桌面上看不到窗口，也没有报错** | 主窗口是 `visible: false` 隐藏创建的，只有首帧之后那一次 `revealWindow()` 会显示它——**前端没跑起来就是这类症状**。别猜：先 `curl http://localhost:1420/` 看 dev server 返回的 HTML（注入脚本在不在、占位符有没有留成字面量，见上一行），再看 `tauri dev` 有没有真的跑到 `webgal-ink.exe`（1420 被占时 `vite dev` 会因 `strictPort` 失败，`beforeDevCommand` 一挂就不会启动应用）。`+layout.svelte` 的保险丝会在约 12s 后兜底显示窗口并打 `[boot]` 警告 |
 | Linux 上 `webgal-ink` 编译失败 | 装 Tauri 系统依赖（见第 2 节），或只验证语言侧并加 `--exclude webgal-ink` |
@@ -353,6 +426,8 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | PowerShell 里 `cargo … 2>&1 \| …` 报 `NativeCommandError`、exit=1 | PowerShell 把 cargo 的 stderr 当成错误，**不是编译失败**；改用 `cmd /c "cargo check … > log 2>&1"` 再读 `$LASTEXITCODE` |
 | 用 PowerShell 数文件行数，结果比实际少 | Windows PowerShell 5.1 的 `Get-Content` 按 GBK 解码无 BOM 的 UTF-8，会丢行并产生乱码。用 `[System.IO.File]::ReadAllLines($p, [System.Text.UTF8Encoding]::new($false)).Count` |
 | PowerShell 里 `$bytes[16..19]` 读出的字节序是反的 | PowerShell 的数组切片对反向区间会倒序返回，`[16..19]` 拿到的是 big-endian。二进制解析用 `[BitConverter]`，别手工下标 |
+| **改了 `native/` 的头文件后 `cmake --build` 什么都不编，跑起来行为还是旧的（甚至触发 STL 断言 "null pointer cannot point to a block of non-zero size"）** | 本机 MSVC 的输出是本地化文案（`注意: 包含文件:`），Ninja 的 `msvc_deps_prefix` 匹配不上，头文件依赖一条也没记（`ninja -t deps <obj>` 显示 `#deps 0`）。**改头文件后必须 `cmake --build --preset … --clean-first`**；要让增量构建恢复正常，得让 cl 输出英文（`VSLANG=1033`），或者把 `msvc_deps_prefix` 调对 |
+| `cargo check -p webgal-ink` 报 `LNK1104: 无法打开文件 target\debug\build\webgal-sentence-macro\…\webgal_sentence_macro-*.dll` | 这个 proc-macro DLL 被编辑器的 `rust-analyzer-proc-macro-srv` 进程加载着（不是编译错误）。结束那几个 `rust-analyzer-proc-macro-srv`（rust-analyzer 会自己重启它们）或稍后重试；别用并发跑两个 cargo 命令，那把锁也会由另一个 cargo 自己造成 |
 | playground 行为与源码不一致 | `pkg/` 是旧产物，重跑 `bun run build:wasm` |
 | `tauri build` 报 `Found version mismatched Tauri packages` | 前端包与 crate 的主次版本不一致，见第 3 节「Tauri 的前端包与 crate 必须同主次版本」 |
 | **任何构建报 "Tsconfig not found … editor/.svelte-kit/tsconfig.json"** | 说明有任务在转换 `editor/` 下的源码：`editor/tsconfig.json` 的 `extends` 指向 `svelte-kit sync` 的生成物，而只构建其它模块的任务里不会有它。**别从别的子模块 import `editor/src/**`**——Playground 曾经这么做，代价是 CI 里要放一个占位 tsconfig（已移除）。确实要共享，就把那份代码提成独立子模块 |

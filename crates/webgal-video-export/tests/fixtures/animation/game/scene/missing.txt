@@ -1,0 +1,1 @@
+changeBg:bg.png -enter=nope -next;
