@@ -20,7 +20,7 @@ import { createId, validateTemplate } from './lib/engineTemplate';
 import { gameConfigSummary, setGameConfigValues } from './lib/gameConfig';
 import { baseName, joinPath } from './lib/paths';
 import { recentMetaOf, upsertRecentProject } from './lib/recentProjects';
-import { collectLocalTabs, loadSession, saveSession, sessionFromTabs } from './lib/session';
+import { activeRestoredTabId, collectLocalTabs, loadSession, saveSession, sessionFromTabs } from './lib/session';
 import { toUri } from './lib/uri';
 import { lspClient } from './lsp/client';
 import { disposeModel } from './lsp/monaco';
@@ -381,23 +381,30 @@ export async function restoreSession(projectPath: string): Promise<void> {
   const session = loadSession(projectPath);
   if (!session) return;
 
-  let activeTabId: string | null = null;
+  const restoredTabs: { path: string; tabId: string }[] = [];
   for (const entry of session.tabs) {
     if (!(await fs.exists(entry.path)).exists) continue;
-    if (entry.kind === 'scene') {
-      await openFile(entry.path);
-      activeTabId = sceneTabId(entry.path);
-    } else if (entry.kind === 'config') {
-      await openProjectConfig(projectPath);
-      activeTabId = configTabId(entry.path);
-    } else if (entry.kind === 'resource') {
-      await openResourceFile(entry.path, entry.resourceKind ?? 'text');
-      activeTabId = resourceTabId(entry.path);
+    let tabId: string;
+    switch (entry.kind) {
+      case 'scene':
+        await openFile(entry.path);
+        tabId = sceneTabId(entry.path);
+        break;
+      case 'config':
+        await openProjectConfig(projectPath);
+        tabId = configTabId(entry.path);
+        break;
+      case 'resource':
+        await openResourceFile(entry.path, entry.resourceKind ?? 'text');
+        tabId = resourceTabId(entry.path);
+        break;
     }
-    // 会话记录的是最后一次活动项的路径; 只有它真的被恢复出来才激活
-    if (session.activeTab !== entry.path || !activeTabId) continue;
-    useAppStore.getState().activateTab(activeTabId);
+    restoredTabs.push({ path: entry.path, tabId });
   }
+
+  // 标签逐一打开时都会暂时激活自己; 全部恢复后再选回会话里记录的活动标签。
+  const activeTabId = activeRestoredTabId(session.activeTab, restoredTabs);
+  if (activeTabId) useAppStore.getState().activateTab(activeTabId);
 }
 
 /**

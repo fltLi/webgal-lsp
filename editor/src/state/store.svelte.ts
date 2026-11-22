@@ -181,6 +181,15 @@ export const actions = {
     const next = { ...appStore.settings, ...patch };
     saveSettings(next);
     const wasAutoSync = appStore.settings.autoSyncPreview;
+
+    if (wasAutoSync && patch.autoSyncPreview === false && Object.keys(patch).length === 1) {
+      // 不替换 settings 根对象: PreviewPanel 的站点 effect 不应因关闭实时同步而重挂 iframe。
+      appStore.settings.autoSyncPreview = false;
+      appStore.livePreviewMarker = null;
+      changed();
+      return;
+    }
+
     appStore.settings = next;
     // 关掉「预览」开关就是关掉整套实时预览: 指示器一并撤下, 不留残影
     if (wasAutoSync && !next.autoSyncPreview) appStore.livePreviewMarker = null;

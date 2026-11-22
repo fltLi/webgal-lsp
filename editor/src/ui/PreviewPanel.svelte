@@ -102,6 +102,8 @@
         const id = createId();
         await previewClient.bindEmbeddedLaunchId(id);
         if (cancelled) return;
+        // 明确形成 ready 上升沿, 让 CodeEditor 在 iframe 重挂后把当前位置同步给新引擎。
+        actions.setPreview({ previewReady: false });
         launchId = id;
         frame = { url, key: id };
       } catch (e) {
@@ -129,6 +131,8 @@
   function reload(): void {
     if (!frame) return;
     const id = createId();
+    // 旧版引擎重连时未必会先报告未就绪; 刷新前主动复位, 保证重连后会补发当前位置。
+    actions.setPreview({ previewReady: false });
     launchId = id;
     void previewClient.bindEmbeddedLaunchId(id);
     // 换 key 而不是改 src: 强制 iframe 完整重挂

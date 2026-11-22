@@ -79,6 +79,19 @@ export function sessionFromTabs(tabs: readonly TabLike[], activeTabId: string | 
   };
 }
 
+/** 从已恢复的标签中找回会话记录的活动标签; 同路径多种类型时保留原有的最后匹配行为。 */
+export function activeRestoredTabId(
+  activePath: string | null,
+  restoredTabs: readonly { path: string; tabId: string }[]
+): string | null {
+  if (activePath === null) return null;
+  let activeTabId: string | null = null;
+  for (const tab of restoredTabs) {
+    if (tab.path === activePath) activeTabId = tab.tabId;
+  }
+  return activeTabId;
+}
+
 function normalizeEntry(item: unknown): LocalTabEntry | null {
   if (typeof item === 'string' && item.trim()) {
     return { kind: 'scene', path: item };

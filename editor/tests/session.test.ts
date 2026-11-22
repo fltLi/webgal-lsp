@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  activeRestoredTabId,
   collectSceneTabs,
   normalizeSession,
   SESSION_TAB_LIMIT,
@@ -76,6 +77,21 @@ describe('sessionFromTabs', () => {
   it('激活的不是场景卡时不记激活项', () => {
     const tabs = [tab('scene:a', 'scene', 'C:\\p\\a.txt'), tab('workbench', 'voice-workbench', '')];
     expect(sessionFromTabs(tabs, 'workbench').activeTab).toBeNull();
+  });
+});
+
+describe('activeRestoredTabId', () => {
+  it('恢复顺序中活动标签不是最后一项时仍返回它', () => {
+    const restoredTabs = [
+      { path: 'C:\\p\\active.txt', tabId: 'scene:active' },
+      { path: 'C:\\p\\last.txt', tabId: 'scene:last' },
+    ];
+    expect(activeRestoredTabId('C:\\p\\active.txt', restoredTabs)).toBe('scene:active');
+  });
+
+  it('活动标签未恢复时返回 null', () => {
+    expect(activeRestoredTabId('C:\\p\\deleted.txt', [{ path: 'C:\\p\\other.txt', tabId: 'scene:other' }])).toBeNull();
+    expect(activeRestoredTabId(null, [])).toBeNull();
   });
 });
 
