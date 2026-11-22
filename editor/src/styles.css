@@ -864,7 +864,7 @@ body.resizing {
 }
 
 /* -------- 状态栏 -------- */
-.status-bar {
+.app-status-bar.status-bar {
   display: flex;
   align-items: center;
   gap: 16px;

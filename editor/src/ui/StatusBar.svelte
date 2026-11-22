@@ -87,7 +87,10 @@
   const gsvTone = $derived(generating ? 'generating' : appStore.voiceStatus);
 </script>
 
-<div class="status-bar" title={appStore.lspActivity ?? appStore.lspError ?? appStore.voiceStatusDetail ?? undefined}>
+<div
+  class="status-bar app-status-bar"
+  title={appStore.lspActivity ?? appStore.lspError ?? appStore.voiceStatusDetail ?? undefined}
+>
   <!--
     "就绪"说的是连接, 不是"答得上来": 语言服务处理大批文件变更时会长时间不答复任何请求, 这时照旧
     写"就绪"等于骗人 —— 有请求超时未答就改说"响应缓慢", 答复一到自动恢复。
