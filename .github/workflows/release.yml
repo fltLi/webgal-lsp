@@ -62,30 +62,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      # Windows 上 Ink 默认开启 video-export, 会在 build.rs 里编译并静态链接 C++ 渲染器,
-      # 因此需要 vcpkg 依赖缓存 (Vulkan SDK 与 MSVC 在 windows-latest 镜像里已有)。
+      # Windows 上 Ink 默认开启 video-export, 会在 build.rs 里编译并静态链接 C++ 渲染器。
+      # windows-latest 镜像不再预装 Vulkan SDK, 由 action 安装并导出 VULKAN_SDK / PATH。
+      - uses: ./.github/actions/setup-vulkan
+        if: matrix.os == 'windows-latest'
+
+      # 缓存 key 同时包含 vcpkg.json 的 builtin-baseline 与 manifest 哈希;
+      # action 负责在镜像的 vcpkg 里解析（必要时拉取）这个 baseline。
+      - uses: ./.github/actions/setup-vcpkg
+        if: matrix.os == 'windows-latest'
+        id: vcpkg
+
       - name: Cache vcpkg packages
         if: matrix.os == 'windows-latest'
         uses: actions/cache@v4
         with:
           path: build/vcpkg_installed
-          key: vcpkg-release-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-release-${{ runner.os }}-${{ steps.vcpkg.outputs.baseline }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-release-${{ runner.os }}-
+            vcpkg-release-${{ runner.os }}-${{ steps.vcpkg.outputs.baseline }}-
 
       - name: Verify native toolchain
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           if (-not $env:VULKAN_SDK -or -not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) {
-            throw "Vulkan SDK 未安装或 VULKAN_SDK 未设置"
+            throw "setup-vulkan 没有导出可用的 VULKAN_SDK: 链接渲染器需要 vulkan-1.lib"
           }
           if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-            throw "缺少 CMake"
+            throw "缺少 CMake (需要 >= 3.28): 渲染器的 build.rs 要调用它"
           }
           if (-not $env:VCPKG_INSTALLATION_ROOT -and
               -not (Get-Command vcpkg -ErrorAction SilentlyContinue)) {
-            throw "找不到 vcpkg（VCPKG_INSTALLATION_ROOT 或 PATH）"
+            throw "找不到 vcpkg（VCPKG_INSTALLATION_ROOT 或 PATH）: 渲染器依赖 catch2/stb/drlibs/nlohmann-json"
           }
 
       - uses: actions/setup-node@v4

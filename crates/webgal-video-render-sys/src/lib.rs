@@ -24,6 +24,12 @@ pub struct WebgalPlan {
     _private: [u8; 0],
 }
 
+/// 与 `webgal-video-render.h` 的 `WEBGAL_ABI_VERSION` 一致。
+///
+/// 静态库是构建期链进来的, 正常构建不会错位; 这个校验挡的是"头文件更新了、
+/// CMake 产物还是旧的"(例如手动清过 `target/` 却复用了外部 build 目录)。
+pub const EXPECTED_ABI_VERSION: u32 = 1;
+
 /// Live2D 眨眼参数; 单位毫秒。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +403,7 @@ struct WebgalRenderOptions {
 }
 
 unsafe extern "C" {
+    fn webgal_abi_version() -> u32;
     fn webgal_plan_create() -> *mut WebgalPlan;
     fn webgal_plan_destroy(plan: *mut WebgalPlan);
 
@@ -678,6 +685,7 @@ pub struct PlanBuilder {
 impl PlanBuilder {
     /// 创建一个空计划。
     pub fn new() -> Result<Self, Error> {
+        ensure_abi()?;
         let raw = unsafe { webgal_plan_create() };
         if raw.is_null() {
             return Err(Error::new(Status::PlanIncomplete, "无法分配渲染计划"));
@@ -997,6 +1005,26 @@ fn probe_duration(path: &Path, probe: ProbeDurationFn, label: &str) -> Result<u6
     ))
 }
 
+/// 读取渲染器编译时的 C ABI 版本。
+pub fn abi_version() -> u32 {
+    unsafe { webgal_abi_version() }
+}
+
+/// 两侧 ABI 不一致时拒绝继续: 继续调用只会让结构体字段错位。
+fn ensure_abi() -> Result<(), Error> {
+    let actual = abi_version();
+    if actual == EXPECTED_ABI_VERSION {
+        return Ok(());
+    }
+    Err(Error::new(
+        Status::RenderFailed,
+        format!(
+            "渲染器 ABI 版本不匹配: 期望 {EXPECTED_ABI_VERSION}, 实际 {actual}; \
+             请清理构建缓存 (`cargo clean`) 后重新编译"
+        ),
+    ))
+}
+
 /// 同步执行一次导出; 成功返回 `Ok(())`。
 ///
 /// 该函数会阻塞到渲染结束, 调用方应放到后台任务里。
@@ -1005,6 +1033,7 @@ pub fn render(
     options: &RenderOptions,
     callbacks: Callbacks<'_>,
 ) -> Result<(), Error> {
+    ensure_abi()?;
     let output = cstring(&options.output.to_string_lossy())?;
     let live2d = optional_cstring(options.live2d_core.as_deref().map(path_text).as_deref())?;
     let ffmpeg = optional_cstring(options.ffmpeg.as_deref().map(path_text).as_deref())?;
@@ -1230,6 +1259,13 @@ mod tests {
         assert_eq!(Status::from_code(2), Status::PlanIncomplete);
         assert_eq!(Status::from_code(4), Status::Cancelled);
         assert_eq!(Status::from_code(9), Status::Unknown(9));
+    }
+
+    #[test]
+    fn abi_version_matches_the_header() {
+        // 静态库与头文件来自同一次 C++ 构建; 不一致说明产物过期。
+        assert_eq!(abi_version(), EXPECTED_ABI_VERSION);
+        assert!(ensure_abi().is_ok());
     }
 
     #[test]

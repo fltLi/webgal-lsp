@@ -180,6 +180,38 @@ void log_output_size(const std::filesystem::path& output, std::uint64_t duration
     webgal::log::info(message.str());
 }
 
+/// 日志里的稳定错误码: 用户反馈时贴 `[RENDER_FAILED]` 这类标记就能定位阶段。
+const char* status_name(Status status) {
+    switch (status) {
+    case WEBGAL_STATUS_OK:
+        return "OK";
+    case WEBGAL_STATUS_INVALID_ARGUMENT:
+        return "INVALID_ARGUMENT";
+    case WEBGAL_STATUS_PLAN_INCOMPLETE:
+        return "PLAN_INCOMPLETE";
+    case WEBGAL_STATUS_RENDER_FAILED:
+        return "RENDER_FAILED";
+    case WEBGAL_STATUS_CANCELLED:
+        return "CANCELLED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/// 计划摘要: 只记计数, 不记路径与台词, 用户贴日志时不泄露脚本内容。
+std::string plan_summary(const webgal::job::Plan& plan) {
+    std::ostringstream message;
+    message << "plan: " << plan.output_w << 'x' << plan.output_h << " @" << plan.fps_num << '/'
+            << plan.fps_den << "fps, " << plan.duration_us / 1000 << "ms"
+            << ", background=" << plan.background.size() << ", stage=" << plan.stage.size()
+            << ", figures=" << plan.figures.size() << ", text=" << plan.texts.size()
+            << ", choices=" << plan.choices.size() << ", intro=" << plan.intros.size()
+            << ", video=" << plan.videos.size() << ", audio=" << plan.audio.size()
+            << ", particles=" << plan.particles.size() << ", assets=" << plan.assets.size()
+            << ", ui=" << (plan.ui_enabled ? "on" : "off");
+    return message.str();
+}
+
 [[nodiscard]] Status export_video(const webgal::job::Plan& plan,
                                   const std::filesystem::path& output, int encoder,
                                   const webgal::run::Context& context, std::string& error) {
@@ -236,8 +268,11 @@ void log_output_size(const std::filesystem::path& output, std::uint64_t duration
     }
 
     const auto context = make_context(options, callbacks);
+    webgal::log::info("renderer ABI " + std::to_string(WEBGAL_ABI_VERSION) + ", " +
+                      plan_summary(plan.plan));
 
     if (options.audio_only != 0) {
+        webgal::log::info("仅导出音轨");
         if (!webgal::media::render_audio(plan.plan, output, context, error)) {
             std::error_code code;
             std::filesystem::remove(output, code);
@@ -259,6 +294,10 @@ void log_output_size(const std::filesystem::path& output, std::uint64_t duration
 } // namespace
 
 extern "C" {
+
+uint32_t webgal_abi_version(void) {
+    return WEBGAL_ABI_VERSION;
+}
 
 void webgal_transform_default(WebgalTransform* transform) {
     if (transform == nullptr) {
@@ -776,13 +815,18 @@ int webgal_render_run(const WebgalPlan* plan, const WebgalRenderOptions* options
         std::string error;
         const Status status = run_render(*plan, *options, callbacks, error);
         if (status != WEBGAL_STATUS_OK) {
+            webgal::log::error(std::string("导出失败 [") + status_name(status) +
+                               "]: " + (error.empty() ? "未知原因" : error));
             write_error(error_buffer, error_buffer_len, error.empty() ? "导出失败" : error);
         }
         return status;
     } catch (const std::exception& exception) {
-        write_error(error_buffer, error_buffer_len, std::string("渲染器异常: ") + exception.what());
+        const std::string message = std::string("渲染器异常: ") + exception.what();
+        webgal::log::error("导出失败 [RENDER_FAILED]: " + message);
+        write_error(error_buffer, error_buffer_len, message);
         return WEBGAL_STATUS_RENDER_FAILED;
     } catch (...) {
+        webgal::log::error("导出失败 [RENDER_FAILED]: 渲染器抛出未知异常");
         write_error(error_buffer, error_buffer_len, "渲染器抛出未知异常");
         return WEBGAL_STATUS_RENDER_FAILED;
     }

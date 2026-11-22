@@ -32,6 +32,7 @@
 #include "common/context.hpp"
 #include "common/log.hpp"
 #include "common/path.hpp"
+#include "common/vulkan_loader.hpp"
 #include "live2d/core_loader.hpp"
 #include "live2d/layout.hpp"
 #include "live2d/model.hpp"
@@ -478,6 +479,8 @@ const char* vk_name(VkResult result) {
         return "VK_ERROR_INITIALIZATION_FAILED";
     case VK_ERROR_DEVICE_LOST:
         return "VK_ERROR_DEVICE_LOST";
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+        return "VK_ERROR_INCOMPATIBLE_DRIVER";
     case VK_ERROR_EXTENSION_NOT_PRESENT:
         return "VK_ERROR_EXTENSION_NOT_PRESENT";
     case VK_ERROR_FEATURE_NOT_PRESENT:
@@ -492,6 +495,9 @@ bool ok(VkResult result, const char* what, std::string& error) {
         return true;
     }
     error = std::string(what) + " 失败: " + vk_name(result);
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+        error += " (显存/内存不足: 请降低导出分辨率, 或关闭抗锯齿后再试)";
+    }
     return false;
 }
 
@@ -1642,6 +1648,19 @@ bool Renderer::prepare_text(const job::Plan& plan, std::string& error) {
 }
 
 bool Renderer::create_instance(std::string& error) {
+    // `vulkan-1.dll` 是延迟加载的; 缺 DLL 时 delay-load 抛结构化异常, 穿不过 C ABI。
+    // 所以在任何 `vk*` 调用之前先用普通加载探一次, 给出可操作的说明。
+    if (!webgal::vk::ensure_loader(error)) {
+        return false;
+    }
+    if (const auto version = webgal::vk::loader_version();
+        version.has_value() &&
+        (version->at(0) < 1 || (version->at(0) == 1 && version->at(1) < 3))) {
+        error = "Vulkan 运行库版本过旧 (" + webgal::vk::version_text(*version) +
+                "), 视频导出需要 Vulkan 1.3: 请更新显卡驱动或安装最新的 Vulkan Runtime。";
+        return false;
+    }
+
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "webgal-video-render";
@@ -1653,16 +1672,31 @@ bool Renderer::create_instance(std::string& error) {
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     info.pApplicationInfo = &app;
-    return ok(vkCreateInstance(&info, nullptr, &instance_), "vkCreateInstance", error);
+    const VkResult result = vkCreateInstance(&info, nullptr, &instance_);
+    if (result == VK_ERROR_INCOMPATIBLE_DRIVER) {
+        error = "Vulkan 驱动过旧或与运行库不匹配 (vkCreateInstance 返回 "
+                "VK_ERROR_INCOMPATIBLE_DRIVER): 请更新显卡驱动。";
+        return false;
+    }
+    return ok(result, "vkCreateInstance", error);
+}
+
+/// 把"这台设备为什么不可用"拼进错误信息; 只有全部设备都不合格时才会用到。
+void append_rejected(std::string& rejected, const char* name, const std::string& reason) {
+    if (!rejected.empty()) {
+        rejected += ", ";
+    }
+    rejected += std::string(name) + " (" + reason + ")";
 }
 
 bool Renderer::create_device(std::string& error) {
     std::uint32_t count = 0;
-    if (!ok(vkEnumeratePhysicalDevices(instance_, &count, nullptr), "枚举 Vulkan 设备", error) ||
-        count == 0) {
-        if (error.empty()) {
-            error = "没有可用的 Vulkan 设备";
-        }
+    if (!ok(vkEnumeratePhysicalDevices(instance_, &count, nullptr), "枚举 Vulkan 设备", error)) {
+        return false;
+    }
+    if (count == 0) {
+        error = "Vulkan 运行库已加载, 但系统里没有 Vulkan 设备。虚拟机 / 远程桌面 (RDP) / "
+                "Microsoft Basic Display 适配器通常不支持: 请更新显卡驱动, 或改用物理机导出。";
         return false;
     }
     std::vector<VkPhysicalDevice> devices(count);
@@ -1671,31 +1705,57 @@ bool Renderer::create_device(std::string& error) {
         return false;
     }
 
+    // 逐台检查: 图形队列、Vulkan 1.3、dynamic rendering。全部不合格时把每台设备
+    // 的具体缺口带进错误信息, 比只报"没有可用的 Vulkan 设备"好定位。
+    std::string rejected;
     for (const auto device : devices) {
         std::uint32_t family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, nullptr);
         std::vector<VkQueueFamilyProperties> families(family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families.data());
+        std::uint32_t graphics = std::numeric_limits<std::uint32_t>::max();
         for (std::uint32_t index = 0; index < family_count; ++index) {
             if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
-                physical_ = device;
-                queue_family_ = index;
+                graphics = index;
                 break;
             }
         }
-        if (physical_ != VK_NULL_HANDLE) {
-            break;
+
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(device, &properties);
+        const char* name = properties.deviceName[0] != '\0' ? properties.deviceName : "未知设备";
+        if (graphics == std::numeric_limits<std::uint32_t>::max()) {
+            append_rejected(rejected, name, "没有图形队列");
+            continue;
         }
+        if (properties.apiVersion < VK_API_VERSION_1_3) {
+            append_rejected(rejected, name,
+                            "驱动只支持 Vulkan " +
+                                std::to_string(VK_API_VERSION_MAJOR(properties.apiVersion)) + "." +
+                                std::to_string(VK_API_VERSION_MINOR(properties.apiVersion)));
+            continue;
+        }
+        VkPhysicalDeviceVulkan13Features checked13{};
+        checked13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        VkPhysicalDeviceFeatures2 checked{};
+        checked.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        checked.pNext = &checked13;
+        vkGetPhysicalDeviceFeatures2(device, &checked);
+        if (checked13.dynamicRendering != VK_TRUE) {
+            append_rejected(rejected, name, "缺少 VK_KHR_dynamic_rendering");
+            continue;
+        }
+        physical_ = device;
+        queue_family_ = graphics;
+        break;
     }
     if (physical_ == VK_NULL_HANDLE) {
-        error = "找不到图形队列";
-        return false;
-    }
-
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physical_, &properties);
-    if (properties.apiVersion < VK_API_VERSION_1_3) {
-        error = "需要 Vulkan 1.3";
+        error = "没有可用的 Vulkan 1.3 设备 (需要 VK_KHR_dynamic_rendering); 虚拟机、远程桌面 "
+                "(RDP)、Microsoft Basic Display 与过旧的集显通常不满足";
+        if (!rejected.empty()) {
+            error += "; 已检测到: " + rejected;
+        }
+        error += "。请更新显卡驱动, 或改用支持 Vulkan 1.3 的机器导出。";
         return false;
     }
 
@@ -1718,7 +1778,13 @@ bool Renderer::create_device(std::string& error) {
     info.pQueueCreateInfos = &queue_info;
     info.pEnabledFeatures = &features;
 
-    if (!ok(vkCreateDevice(physical_, &info, nullptr, &device_), "创建 Vulkan 设备", error)) {
+    const VkResult device_result = vkCreateDevice(physical_, &info, nullptr, &device_);
+    if (device_result == VK_ERROR_FEATURE_NOT_PRESENT) {
+        error = "创建 Vulkan 设备失败: 驱动声明支持 Vulkan 1.3, 但实际不支持 "
+                "dynamic rendering (VK_KHR_dynamic_rendering); 请更新显卡驱动。";
+        return false;
+    }
+    if (!ok(device_result, "创建 Vulkan 设备", error)) {
         return false;
     }
     vkGetDeviceQueue(device_, queue_family_, 0, &queue_);
@@ -6553,9 +6619,11 @@ void Renderer::destroy() {
             vkDestroyFence(device_, fence_, nullptr);
         }
         vkDestroyDevice(device_, nullptr);
+        device_ = VK_NULL_HANDLE;
     }
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
+        instance_ = VK_NULL_HANDLE;
     }
 }
 

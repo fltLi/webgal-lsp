@@ -12,6 +12,7 @@ add_executable(webgal-render-tests
     render_test.cpp
     shaders_test.cpp
     video_test.cpp
+    vulkan_loader_test.cpp
     wav_test.cpp
 )
 

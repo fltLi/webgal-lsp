@@ -5,6 +5,9 @@
 // 这里刻意不依赖仓库里的示例工程与字体: 场景由测试自己写 PNG 生成, UI 关掉,
 // 因此任何机器上都能跑。没有 Vulkan 设备时 (CI runner) 直接跳过。
 
+// `std::getenv` 在 MSVC 上会报 C4996 (unsafe), 而 CI 预设是 /W4 /WX。
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -871,6 +874,9 @@ TEST_CASE("shockwave refracts the ring") {
                             Rgba{128, 128, 128, 255}));
     REQUIRE(write_stripes_png(project_root() / "game" / "figure" / "fig.png", 32, 32, 2));
     const auto refracted = render_one(plan, 0, 0);
+    if (refracted.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << refracted.error);
+    }
     REQUIRE(refracted.status == RenderStatus::Ok);
     // 对照: 同一场景不带 shockwave。
     auto plain_plan = make_plan();
@@ -925,6 +931,9 @@ TEST_CASE("glitch shifts slices deterministically per frame") {
     REQUIRE(write_stripes_png(project_root() / "game" / "figure" / "fig.png", 32, 32, 2));
 
     const auto first = render_one(plan, 0, 0);
+    if (first.status == RenderStatus::NoGpu) {
+        SKIP("本机没有可用的 Vulkan 设备: " << first.error);
+    }
     const auto again = render_one(plan, 0, 0);
     const auto later = render_one(plan, 500'000, 0);
     REQUIRE(first.status == RenderStatus::Ok);

@@ -231,7 +231,6 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
         context.bitrate_kbps == 0 ? kDefaultBitrateKbps : context.bitrate_kbps;
 
     media::MfEncoder encoder;
-    const bool profile = std::getenv("WEBGAL_RENDER_PROFILE") != nullptr;
     const auto clock_now = [] { return std::chrono::steady_clock::now(); };
     const auto export_started = clock_now();
     const auto init_started = clock_now();
@@ -326,18 +325,18 @@ bool export_native(const job::Plan& plan, const std::filesystem::path& output,
     if (!encoder.finish(error)) {
         return false;
     }
-    if (profile) {
-        const auto finish_finished = clock_now();
-        const auto milliseconds = [](auto from, auto to) {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
-        };
-        std::ostringstream message;
-        message << "profile: export total=" << milliseconds(export_started, finish_finished)
-                << "ms init=" << milliseconds(init_started, init_finished)
-                << "ms render=" << milliseconds(render_started, render_finished)
-                << "ms finalize=" << milliseconds(render_finished, finish_finished) << "ms";
-        log::info(message.str());
-    }
+    const auto finish_finished = clock_now();
+    // 阶段耗时一直记: 用户反馈"导出很慢/卡住"时, 这行能直接区分初始化解码与渲染/封装。
+    // 逐帧明细仍由 `WEBGAL_RENDER_PROFILE=1` 打开 (见 stage/renderer.cpp)。
+    const auto milliseconds = [](auto from, auto to) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+    };
+    std::ostringstream message;
+    message << "export: 后端=Media Foundation init=" << milliseconds(init_started, init_finished)
+            << "ms render=" << milliseconds(render_started, render_finished)
+            << "ms finalize=" << milliseconds(render_finished, finish_finished)
+            << "ms total=" << milliseconds(export_started, finish_finished) << "ms";
+    log::info(message.str());
     return true;
 }
 
@@ -357,6 +356,7 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
     const double fps = static_cast<double>(plan.fps_num) / static_cast<double>(plan.fps_den);
 
     const auto work_dir = temp_work_dir();
+    const auto export_started = std::chrono::steady_clock::now();
     std::error_code code;
     std::filesystem::create_directories(work_dir, code);
     if (code) {
@@ -428,6 +428,11 @@ bool export_ffmpeg(const job::Plan& plan, const std::filesystem::path& output,
         }
         ok = false;
     }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - export_started)
+                             .count();
+    log::info("export: 后端=外部 ffmpeg total=" + std::to_string(elapsed) + "ms" +
+              (cancelled ? " (已取消)" : ""));
     std::filesystem::remove_all(work_dir, code);
     return ok;
 }

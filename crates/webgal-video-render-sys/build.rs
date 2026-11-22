@@ -79,6 +79,13 @@ fn main() {
     ] {
         println!("cargo:rustc-link-lib={library}");
     }
+
+    // vulkan-1.dll 延迟加载: 没有 Vulkan 运行库的机器也要能启动编辑器。
+    // `cargo:rustc-link-arg` 只作用于本 crate 的测试/示例目标, **不会**传给
+    // 下游二进制; 所以 `webgal-video-export` 与 `webgal-ink` 各自的 build.rs
+    // 里有一份同样的声明, 三处要一起改 (见 native/.../vulkan_loader.cpp)。
+    println!("cargo:rustc-link-arg=/DELAYLOAD:vulkan-1.dll");
+    println!("cargo:rustc-link-lib=delayimp");
 }
 
 fn env_or_panic(name: &str) -> String {

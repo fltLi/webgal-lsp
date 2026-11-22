@@ -27,6 +27,22 @@ extern "C" {
 
 typedef struct WebgalPlan WebgalPlan;
 
+/*
+ * C ABI 版本。
+ *
+ * 任何会让两侧结构体/参数列表不再对齐的改动都要同时改这里与
+ * crates/webgal-video-render-sys 的 `EXPECTED_ABI_VERSION`:
+ *   - `WebgalTransform` / `WebgalRenderOptions` / `WebgalRenderCallbacks` 增删字段或改顺序;
+ *   - 计划构建函数增删参数;
+ *   - 枚举取值重排。
+ * Rust 侧在创建计划与调用 render 之前校验, 不一致就直接报错, 避免
+ * "旧静态库 + 新头文件" 静默错位。
+ */
+#define WEBGAL_ABI_VERSION 1U
+
+/* 返回本库编译时的 ABI 版本; 用于 Rust 侧启动校验。 */
+uint32_t webgal_abi_version(void);
+
 typedef enum WebgalStatus {
     WEBGAL_STATUS_OK = 0,
     WEBGAL_STATUS_INVALID_ARGUMENT = 1,

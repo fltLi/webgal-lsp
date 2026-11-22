@@ -73,7 +73,11 @@
   （`vite` / `vitest` / `tauri` 的 bin 都带 `#!/usr/bin/env node`），所以别用 `bun --bun run`。
 - Tauri 2 系统依赖：Windows 用 WebView2；Linux 的包名清单以 `.github/workflows/ci.yml` 的
   `editor-native` job 为准（会随发行版改动），照抄它安装即可。
-- **Windows 上编译 `webgal-ink` 还需要原生工具链**：CMake ≥ 3.28、Ninja、Vulkan SDK、vcpkg。
+- **Windows 上编译 `webgal-ink` 还需要原生工具链**：CMake ≥ 3.28、Ninja、Vulkan SDK、vcpkg（必须是
+  **带 `.git` 的克隆**，`vcpkg.json` 的 `builtin-baseline` 要用 `git show` 解析版本）。
+  **CI 不再依赖 windows-latest 预装 Vulkan SDK**：`.github/actions/setup-vulkan` 在缺失时用
+  `choco install vulkan-sdk` 安装并导出 `VULKAN_SDK` / `PATH`；`.github/actions/setup-vcpkg`
+  负责解析 baseline（镜像里的 vcpkg 比 baseline 旧时按 SHA 拉取一次）。
   默认特性 `video-export` 会在 `crates/webgal-video-render-sys/build.rs` 里现场构建并静态链接
   C++ 渲染器（见下方"视频导出"）。没有这些工具链时用 `--no-default-features` 关掉视频导出，
   其余功能照常编译。
@@ -118,6 +122,7 @@ cargo clippy -p webgal-ink -- --deny warnings
 cargo check -p webgal-video-export
 cargo test -p webgal-video-export    # Windows 上会一并编译渲染器
 cargo test -p webgal-video-render-sys  # 只测 C ABI 封装；C++ 用 RelWithDebInfo
+cargo check -p webgal-ink --no-default-features   # 不编 C++（stub 路径），仍需要 editor/dist
 # 只改 C++ 时：仓库根是唯一的 CMake workspace（子目录没有 presets）
 cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
 
@@ -151,9 +156,11 @@ cargo check -p webgal-language-service --features simulate-diagnose --target was
 - **新增 / 删除语言或文件类型时，过一遍 `scripts/source-composition.py`**：语言清单、扩展名表、
   按文件名识别的特例、配色、模块分组与 HTML 页脚说明都在这个脚本里。漏改不会让任何检查变红，
   只会让源码画像悄悄失真。
-- CI 分六个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
+- CI 分七个 job：`rust`（cargo fmt + clippy + test，共享 `target/`）、`editor`（format-check + lint +
   type-check + test + **build**，纯 node/bun）、`editor-native`（`webgal-ink` 的 clippy）、
-  `video-export-cpp`（根 workspace 的 format-check + build + tidy + ctest）、`playground`（wasm + 构建）、
+  `video-export-cpp`（根 workspace 的 format-check + build + tidy + ctest）、
+  `video-export-rust`（Windows，`cargo test` 两个视频导出 crate + `cargo build -p webgal-ink`，
+  验证 build.rs 能找到 CMake/vcpkg/Vulkan SDK 并完成静态链接）、`playground`（wasm + 构建）、
   `python`（black + pyright）。
   本地根目录 `bun run check` 覆盖除 clippy 之外的全部检查。
 - **视频导出没有 CLI、没有 JSON、没有独立渲染器进程**：`webgal-video-export` 直接依赖
@@ -283,6 +290,11 @@ CMakeLists.txt / CMakePresets.json / vcpkg.json  原生代码 workspace 入口 (
   "Found version mismatched Tauri packages"）。所以 `editor/package.json` 里那几个 `@tauri-apps/*`
   **写精确版本**，别用 `^`——宽范围在换锁文件或重新解析时会漂到更高的次版本。升级时两边一起动：
   改 `editor/src-tauri/Cargo.toml` 的 crate 版本 + `cargo update`，再把 JS 侧对齐到同一主次版本。
+- **视频渲染器的 C ABI 与延迟加载是两条硬约束**：改 `native/.../include/webgal-video-render.h`
+  的字段/参数/枚举时，`WEBGAL_ABI_VERSION` 与 `crates/webgal-video-render-sys` 的
+  `EXPECTED_ABI_VERSION` 必须同时 +1（Rust 侧在创建计划与 render 前校验）；
+  改 `vulkan-1.dll` 的加载方式时，`/DELAYLOAD` 只能写在**最终链接**（CMake 的 INTERFACE
+  选项 + 几个 Rust build.rs），链接器指令不会生效。
 
 ## 4. 语言服务接入（Ink 侧最容易踩的地方）
 
@@ -384,8 +396,11 @@ Rust 侧约定：所有语句类型、参数名、默认值、参数依赖、关
 | 现象 | 处理 |
 | --- | --- |
 | 编译 `webgal-ink` 报缺前端产物 | `editor/dist` 不存在，先在 `editor/` 跑 `bun run build` |
-| `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器 |
+| `cargo build -p webgal-ink` 报找不到 `vulkan-1.lib` / `glslc` / CMake / vcpkg | 默认特性 `video-export` 要现场编译 C++ 渲染器（见第 2 节环境）。装齐工具链，或 `--no-default-features` 只编编辑器；Vulkan SDK 可以 `choco install vulkan-sdk` |
 | `cargo` 报 `RuntimeLibrary` 不匹配 / `_calloc_dbg` 未解析 | 渲染器的 C++ 运行时和 rustc 不一致。`build.rs` 已把 dev 配置映到 `RelWithDebInfo`（rustc 在 MSVC 上始终用 release CRT）；自己手动 CMake 构建时要跟着用 Release/RelWithDebInfo，别用 Debug |
+| CMake 配置报 `while checking out baseline from commit …` / `fatal: not a git repository` | `vcpkg.json` 有 `builtin-baseline`，vcpkg 必须是有 git 历史的克隆；解压安装的 vcpkg 先在根目录 `git init` 并 `git fetch --depth 1 origin <baseline>`，或直接换成 `git clone` |
+| 没有 Vulkan 的机器上编辑器启动时报缺 `vulkan-1.dll` / 点导出只弹一句泛化错误 | 检查 `/DELAYLOAD` 是否真的落在了最终链接：`dumpbin /imports <exe>` 应出现 `delay load imports` 段。`/DELAYLOAD` 写成 `#pragma comment(linker, …)` **不生效**，必须在 CMake INTERFACE 选项与两个 Rust `build.rs` 里传 |
+| 导出报“渲染器 ABI 版本不匹配” | 旧静态库 + 新头文件；`cargo clean -p webgal-video-render-sys` 后重编。改 ABI 时两侧版本常量要同时 +1 |
 | `cargo test -p webgal-video-export --test render_export` 报 `InvalidProject { path: "", ... }` | 环境里把 `WEBGAL_RENDER_GPU_PROJECT` 设成了空串，覆盖了 fixture 默认路径；删掉该变量再跑 |
 | 导出报 `model3.json 中不存在表情/motion` | 先确认 `FileReferences.Expressions` / `Motions` 里确有该名字；渲染器在加载时缓存这两张表，不再逐帧读盘 |
 | `playVideo` 画面出现斜向条纹/逐行错位 | Media Foundation 的 RGB32 缓冲区可能按 16 像素对齐（如 1918×1080 实际为 1920×1088），`MF_MT_DEFAULT_STRIDE` 仍是 1918×4；行距必须从 buffer 长度推断，见 `media/video.cpp` 的 `decode()` |

@@ -208,20 +208,20 @@ struct MfEncoder::Impl {
         if (SUCCEEDED(transform->GetOutputCurrentType(0, &negotiated)) && negotiated != nullptr) {
             UINT32 profile = 0;
             UINT32 level = 0;
-            UINT32 matrix = 0;
+            UINT32 yuv_matrix = 0;
             UINT32 range = 0;
             negotiated->GetUINT32(MF_MT_MPEG2_PROFILE, &profile);
             negotiated->GetUINT32(MF_MT_MPEG2_LEVEL, &level);
-            negotiated->GetUINT32(MF_MT_YUV_MATRIX, &matrix);
+            negotiated->GetUINT32(MF_MT_YUV_MATRIX, &yuv_matrix);
             negotiated->GetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, &range);
             settings.profile = profile;
             settings.level = level;
             // 以矩阵系数判断实际口径: VUI 里的 primaries 由编码器自己决定写不写,
             // 只有矩阵 (与范围) 才是必须跟转换公式对齐的东西。
             if (range == MFNominalRange_16_235) {
-                if (matrix == MFVideoTransferMatrix_BT709) {
+                if (yuv_matrix == MFVideoTransferMatrix_BT709) {
                     settings.color = "BT.709";
-                } else if (matrix == MFVideoTransferMatrix_BT601) {
+                } else if (yuv_matrix == MFVideoTransferMatrix_BT601) {
                     settings.color = "BT.601";
                 }
             }

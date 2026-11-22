@@ -90,6 +90,7 @@ set(WEBGAL_RENDER_INTERNAL_INCLUDES
 add_library(webgal-video-render STATIC
     src/bridge/api.cpp
     src/common/log.cpp
+    src/common/vulkan_loader.cpp
     src/live2d/core_loader.cpp
     src/live2d/model.cpp
     src/live2d/physics.cpp
@@ -135,6 +136,10 @@ endif()
 if(MSVC)
     # 源文件是 UTF-8 且包含中文注释; 不指定编码时 MSVC 会按系统代码页解释.
     target_compile_options(webgal-video-render PRIVATE /utf-8)
+    # vulkan-1.dll 延迟加载: 没有 Vulkan 运行库的机器也要能启动编辑器。
+    # 静态库自己不做最终链接, 所以用 INTERFACE 传给测试可执行文件;
+    # Rust 侧同样的 flag 在 build.rs 里 (见 src/common/vulkan_loader.cpp)。
+    target_link_options(webgal-video-render INTERFACE /DELAYLOAD:vulkan-1.dll)
     # stb_vorbis 的 C 实现按 C++ 编译, 只关闭它触发的未初始化告警.
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/stb_vorbis_impl.cpp"
