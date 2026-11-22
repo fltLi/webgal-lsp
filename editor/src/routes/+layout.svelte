@@ -25,6 +25,7 @@
   import { armWindowRevealFailsafe } from '../lib/boot';
   import { applyTheme, resolveTheme } from '../lib/theme';
   import { lspClient } from '../lsp/client';
+  import { registerLinkOpener } from '../lsp/link-opener';
   import { setMonacoTheme, setupMonaco } from '../lsp/monaco';
   import { openStartupProject, startSessionTracking } from '../project';
   import { actions, appStore } from '../state/store.svelte';
@@ -87,6 +88,7 @@
   onMount(() => {
     // Monaco 的注册是应用级一次性动作 (语言、全部 provider、两套主题)。
     setupMonaco();
+    registerLinkOpener();
 
     /*
      * 主题要在 Monaco 注册之后重新落地一次。`$effect` 与 `onMount` 的先后顺序没有保证:
